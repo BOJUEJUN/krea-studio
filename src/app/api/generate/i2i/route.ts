@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildI2IPayload,
-  findModel,
-  runModel,
-  uploadMedia,
+  buildCustomI2INodes,
+  createCustomTask,
+  customWorkflowIds,
+  getAccountStatus,
+  uploadInputForWorkflow,
+  waitForCustomTask,
 } from "@/lib/runninghub";
+import { appendHistory } from "@/lib/history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +18,12 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const prompt = String(form.get("prompt") || "").trim();
     const file = form.get("image") as File | null;
-    const modelId = String(form.get("modelId") || "jimeng-4.6");
+    const denoise = Number(form.get("denoise") || 0.5);
+    const seedRaw = form.get("seed");
+    const seed =
+      seedRaw === null || seedRaw === undefined || seedRaw === ""
+        ? Math.floor(Math.random() * 1e12)
+        : Number(seedRaw);
 
     if (!prompt) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
@@ -24,53 +32,63 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "请上传参考图" }, { status: 400 });
     }
 
-    const model = findModel("i2i", modelId);
-    if (!model) {
-      return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
+    const ids = customWorkflowIds();
+    if (!ids.i2i) {
+      return NextResponse.json(
+        { ok: false, error: "未配置图生图工作流" },
+        { status: 400 }
+      );
     }
 
-    // Official contract: upload first, then submit with URL
-    const imageUrl = await uploadMedia(file, file.name || "input.png");
-
-    const width = form.get("width") ? Number(form.get("width")) : undefined;
-    const height = form.get("height") ? Number(form.get("height")) : undefined;
-
-    const payload = buildI2IPayload({
-      modelId,
+    const imageFileName = await uploadInputForWorkflow(file, file.name || "input.png");
+    const nodeInfoList = buildCustomI2INodes({
       prompt,
-      imageUrl,
-      width,
-      height,
+      seed,
+      denoise,
+      imageFileName,
     });
 
-    const result = await runModel({
-      endpoint: model.endpoint,
-      payload,
-      timeoutMs: 180_000,
-    });
+    const taskId = await createCustomTask({ workflowId: ids.i2i, nodeInfoList });
+    const result = await waitForCustomTask(taskId, { timeoutMs: 180_000 });
 
-    if (result.status !== "SUCCESS") {
+    if (!result.outputs.length) {
       return NextResponse.json(
         {
           ok: false,
-          error:
-            result.raw.errorMessage ||
-            result.raw.errorCode ||
-            `任务失败 (${result.status})`,
-          taskId: result.taskId,
+          error: result.errorMessage || `任务未返回图片 (${result.status})`,
+          taskId,
           status: result.status,
         },
         { status: 502 }
       );
     }
 
+    let account: any = null;
+    try {
+      account = (await getAccountStatus())?.data || null;
+    } catch {}
+
+    try {
+      await appendHistory({
+        id: `${Date.now()}`,
+        mode: "i2i",
+        prompt,
+        url: result.outputs[0],
+        cost: result.cost || null,
+        seed,
+        taskId,
+        createdAt: Date.now(),
+      });
+    } catch {}
+
     return NextResponse.json({
       ok: true,
-      taskId: result.taskId,
-      model: model.name,
+      taskId,
+      seed,
       imageUrl: result.outputs[0],
       images: result.outputs,
-      raw: result.raw,
+      cost: result.cost || null,
+      account,
     });
   } catch (e: any) {
     return NextResponse.json(

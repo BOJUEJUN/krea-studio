@@ -1,19 +1,9 @@
 /**
- * RunningHub OpenAPI v2 client — follows developer-kit contract strictly.
- * Base: https://www.runninghub.cn/openapi/v2
- * Auth: Authorization: Bearer <RH_API_KEY>
+ * RunningHub client — standard OpenAPI v2 + custom workflow create.
  */
 
 const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
-
-export type RHStatus =
-  | "CREATE"
-  | "QUEUED"
-  | "RUNNING"
-  | "SUCCESS"
-  | "FAILED"
-  | "CANCEL"
-  | "UNKNOWN";
+const RH_HOST = "https://www.runninghub.cn";
 
 export type RHResultItem = {
   url?: string;
@@ -24,82 +14,11 @@ export type RHResultItem = {
   outputType?: string;
 };
 
-export type RHQueryResponse = {
-  taskId?: string;
-  status?: string;
-  errorCode?: string;
-  errorMessage?: string;
-  results?: RHResultItem[] | null;
-  usage?: unknown;
+export type NodeOverride = {
+  nodeId: string;
+  fieldName: string;
+  fieldValue: string | number;
 };
-
-export type RHRunResult = {
-  taskId: string;
-  status: RHStatus;
-  outputs: string[];
-  raw: RHQueryResponse;
-};
-
-export type ModelSpec = {
-  id: string;
-  endpoint: string;
-  name: string;
-  desc: string;
-  kind: "t2i" | "i2i";
-};
-
-/** Curated CN-available endpoints verified via smoke tests. */
-export const T2I_MODELS: ModelSpec[] = [
-  {
-    id: "jimeng-4.6",
-    endpoint: "bytedance/jimeng-4.6/text-to-image",
-    name: "即梦 4.6",
-    desc: "快 · 便宜 · 动漫/写实都稳",
-    kind: "t2i",
-  },
-  {
-    id: "seedream-v5-pro",
-    endpoint: "seedream-v5-pro/text-to-image",
-    name: "Seedream V5 Pro",
-    desc: "质感强 · 商业摄影风",
-    kind: "t2i",
-  },
-  {
-    id: "qwen-image-3.0-pro",
-    endpoint: "alibaba/qwen-image-3.0-pro/text-to-image",
-    name: "千问 3.0 Pro",
-    desc: "中文提示词友好",
-    kind: "t2i",
-  },
-  {
-    id: "wan-2.7",
-    endpoint: "alibaba/wan-2.7/text-to-image",
-    name: "万相 2.7",
-    desc: "细节丰富 · 略慢",
-    kind: "t2i",
-  },
-];
-
-export const I2I_MODELS: ModelSpec[] = [
-  {
-    id: "jimeng-4.6",
-    endpoint: "bytedance/jimeng-4.6/image-to-image",
-    name: "即梦 4.6",
-    desc: "改图快 · 成本低",
-    kind: "i2i",
-  },
-  {
-    id: "seedream-v5-pro",
-    endpoint: "seedream-v5-pro/image-to-image",
-    name: "Seedream V5 Pro",
-    desc: "重绘质感更好",
-    kind: "i2i",
-  },
-];
-
-function baseUrl() {
-  return process.env.RH_API_BASE_URL || DEFAULT_BASE;
-}
 
 function apiKey(): string {
   const key =
@@ -109,9 +28,7 @@ function apiKey(): string {
 }
 
 function authHeaders(json = true): Record<string, string> {
-  const h: Record<string, string> = {
-    Authorization: `Bearer ${apiKey()}`,
-  };
+  const h: Record<string, string> = { Authorization: `Bearer ${apiKey()}` };
   if (json) h["Content-Type"] = "application/json";
   return h;
 }
@@ -121,16 +38,214 @@ async function parseJson(res: Response): Promise<any> {
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`RunningHub 非 JSON 响应 (HTTP ${res.status}): ${text.slice(0, 240)}`);
+    throw new Error(`RunningHub 非 JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
   }
 }
 
-/** POST {base}/media/upload/binary — field name: file */
+export function customWorkflowIds() {
+  return {
+    t2i: process.env.CUSTOM_T2I_WORKFLOW_ID || "",
+    i2i: process.env.CUSTOM_I2I_WORKFLOW_ID || "",
+  };
+}
+
+export function envNum(name: string, fallback: number): number {
+  const v = process.env[name];
+  const n = v ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Official: POST /task/openapi/create with workflowId + nodeInfoList */
+export async function createCustomTask(opts: {
+  workflowId: string;
+  nodeInfoList: NodeOverride[];
+}): Promise<string> {
+  const res = await fetch(`${RH_HOST}/task/openapi/create`, {
+    method: "POST",
+    headers: authHeaders(true),
+    body: JSON.stringify({
+      apiKey: apiKey(),
+      workflowId: opts.workflowId,
+      nodeInfoList: opts.nodeInfoList,
+    }),
+    cache: "no-store",
+  });
+  const json = await parseJson(res);
+  if (json.code !== 0) {
+    throw new Error(json.msg || JSON.stringify(json));
+  }
+  const taskId = json.data?.taskId;
+  if (!taskId) throw new Error("未返回 taskId");
+  return String(taskId);
+}
+
+/** Official outputs poll — data may be array of file items */
+export async function queryCustomTask(taskId: string): Promise<{
+  status: string;
+  outputs: string[];
+  cost?: string;
+  errorMessage?: string;
+  raw: any;
+}> {
+  const res = await fetch(`${RH_HOST}/task/openapi/outputs`, {
+    method: "POST",
+    headers: authHeaders(true),
+    body: JSON.stringify({ apiKey: apiKey(), taskId }),
+    cache: "no-store",
+  });
+  const json = await parseJson(res);
+
+  const outputs: string[] = [];
+  let cost: string | undefined;
+  let errorMessage: string | undefined;
+  let status = "";
+
+  // 804 = still running
+  if (json.code === 804) {
+    return { status: "RUNNING", outputs: [], raw: json };
+  }
+
+  // data is array of output files when done
+  if (Array.isArray(json.data)) {
+    for (const item of json.data) {
+      if (!item || typeof item !== "object") continue;
+      const url = item.fileUrl || item.url;
+      if (typeof url === "string" && url.startsWith("http")) outputs.push(url);
+      const m = item.consumeMoney ?? item.thirdPartyConsumeMoney;
+      if (m != null && m !== "" && cost === undefined) cost = String(m);
+    }
+    if (outputs.length) status = "SUCCESS";
+  } else if (json.data && typeof json.data === "object") {
+    const data = json.data;
+    status = String(data.taskStatus || data.status || "");
+    const walk = (v: any) => {
+      if (!v) return;
+      if (typeof v === "string" && /^https?:\/\//.test(v)) outputs.push(v);
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (typeof v === "object") {
+        if (typeof v.url === "string") outputs.push(v.url);
+        if (typeof v.fileUrl === "string") outputs.push(v.fileUrl);
+        Object.values(v).forEach(walk);
+      }
+    };
+    walk(data.outputs);
+    walk(data.images);
+    walk(data.files);
+    const fr = data.failedReason;
+    if (fr && typeof fr === "object") {
+      errorMessage =
+        fr.exception_message ||
+        (fr.node_name ? `节点 ${fr.node_name} 失败` : undefined) ||
+        (fr.traceback ? String(fr.traceback).slice(0, 180) : undefined);
+    }
+  }
+
+  if (json.code && json.code !== 0 && json.code !== 804 && json.msg && !outputs.length) {
+    // 805 = status error (often audit fail)
+    if (json.code === 805) {
+      const fr = (json.data as any)?.failedReason;
+      errorMessage =
+        errorMessage ||
+        fr?.exception_message ||
+        fr?.traceback ||
+        json.msg;
+      status = "FAILED";
+    } else if (!status) {
+      status = "RUNNING";
+    }
+  }
+
+  const uniq = Array.from(new Set(outputs)).filter((u) => u.includes("http"));
+  if (!status) {
+    if (uniq.length) status = "SUCCESS";
+    else if (errorMessage) status = "FAILED";
+    else status = "RUNNING";
+  }
+
+  return { status: status.toUpperCase(), outputs: uniq, cost, errorMessage, raw: json };
+}
+
+export async function waitForCustomTask(
+  taskId: string,
+  opts?: { timeoutMs?: number; intervalMs?: number }
+): Promise<{
+  status: string;
+  outputs: string[];
+  cost?: string;
+  errorMessage?: string;
+  raw: any;
+}> {
+  const timeoutMs = opts?.timeoutMs ?? 180_000;
+  const intervalMs = opts?.intervalMs ?? 3000;
+  const start = Date.now();
+  let last: any = { status: "RUNNING", outputs: [], raw: {} };
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      last = await queryCustomTask(taskId);
+    } catch (e: any) {
+      last = { status: "RUNNING", outputs: [], errorMessage: e?.message, raw: {} };
+      await new Promise((s) => setTimeout(s, intervalMs));
+      continue;
+    }
+    if (last.status === "SUCCESS" && last.outputs.length) return last;
+    if (last.status === "FAILED" || last.status === "CANCEL") return last;
+    await new Promise((s) => setTimeout(s, intervalMs));
+  }
+  return { ...last, status: "FAILED", errorMessage: last.errorMessage || "轮询超时" };
+}
+
+/** Standard model API (v2) — keep as fallback */
+export async function runStandardModel(opts: {
+  endpoint: string;
+  payload: Record<string, unknown>;
+}): Promise<{ taskId: string; outputs: string[]; status: string; raw: any; cost?: string }> {
+  const res = await fetch(`${DEFAULT_BASE}/${opts.endpoint.replace(/^\//, "")}`, {
+    method: "POST",
+    headers: authHeaders(true),
+    body: JSON.stringify(opts.payload),
+    cache: "no-store",
+  });
+  const json = await parseJson(res);
+  const taskId = json?.taskId || "";
+  if (!taskId) throw new Error(json?.errorMessage || json?.msg || "提交失败");
+
+  const start = Date.now();
+  while (Date.now() - start < 180_000) {
+    const q = await fetch(`${DEFAULT_BASE}/query`, {
+      method: "POST",
+      headers: authHeaders(true),
+      body: JSON.stringify({ taskId }),
+      cache: "no-store",
+    });
+    const rj = await parseJson(q);
+    const st = String(rj.status || "").toUpperCase();
+    if (st === "SUCCESS") {
+      const outputs: string[] = [];
+      if (Array.isArray(rj.results)) {
+        for (const r of rj.results) {
+          if (typeof r === "string") outputs.push(r);
+          else if (r?.url) outputs.push(r.url);
+        }
+      }
+      const cost =
+        rj.usage?.thirdPartyConsumeMoney != null
+          ? String(rj.usage.thirdPartyConsumeMoney)
+          : undefined;
+      return { taskId, outputs, status: st, raw: rj, cost };
+    }
+    if (st === "FAILED" || st === "CANCEL") {
+      throw new Error(rj.errorMessage || `任务失败 ${st}`);
+    }
+    await new Promise((s) => setTimeout(s, 3000));
+  }
+  throw new Error("轮询超时");
+}
+
 export async function uploadMedia(file: Blob, filename = "input.png"): Promise<string> {
   const form = new FormData();
   form.append("file", file, filename);
-
-  const res = await fetch(`${baseUrl()}/media/upload/binary`, {
+  const res = await fetch(`${DEFAULT_BASE}/media/upload/binary`, {
     method: "POST",
     headers: authHeaders(false),
     body: form,
@@ -138,224 +253,81 @@ export async function uploadMedia(file: Blob, filename = "input.png"): Promise<s
   });
   const json = await parseJson(res);
   const url = json?.data?.download_url;
-  if (!url) {
-    throw new Error(json?.msg || json?.message || "上传失败");
-  }
+  if (!url) throw new Error(json?.msg || "上传失败");
   return url as string;
 }
 
-/** POST {base}/{endpoint} → taskId */
-export async function submitTask(
-  endpoint: string,
-  payload: Record<string, unknown>
+/** For custom i2i, RH LoadImage accepts fileName from /task/openapi/upload */
+export async function uploadInputForWorkflow(
+  file: Blob,
+  filename = "input.png"
 ): Promise<string> {
-  const res = await fetch(`${baseUrl()}/${endpoint.replace(/^\//, "")}`, {
+  const form = new FormData();
+  form.append("apiKey", apiKey());
+  form.append("fileType", "input");
+  form.append("file", file, filename);
+  const res = await fetch(`${RH_HOST}/task/openapi/upload`, {
     method: "POST",
-    headers: authHeaders(true),
-    body: JSON.stringify(payload),
+    body: form,
     cache: "no-store",
   });
   const json = await parseJson(res);
-
-  // Compliance / offline models return taskId="" with errorCode
-  const taskId = json?.taskId || json?.task_id || "";
-  if (!taskId) {
-    const msg =
-      json?.errorMessage ||
-      json?.msg ||
-      `提交失败 code=${json?.errorCode || "?"}`;
-    throw new Error(msg);
-  }
-  return String(taskId);
+  const name = json?.data?.fileName;
+  if (!name) throw new Error(json?.msg || "上传失败");
+  return name as string;
 }
 
-export function normalizeStatus(s?: string): RHStatus {
-  const v = (s || "").toUpperCase();
-  if (
-    v === "CREATE" ||
-    v === "QUEUED" ||
-    v === "RUNNING" ||
-    v === "SUCCESS" ||
-    v === "FAILED" ||
-    v === "CANCEL"
-  ) {
-    return v;
-  }
-  return "UNKNOWN";
-}
-
-export function extractOutputs(raw: RHQueryResponse): string[] {
-  const out: string[] = [];
-  const results = raw.results;
-  if (Array.isArray(results)) {
-    for (const r of results) {
-      if (!r) continue;
-      if (typeof r === "string") {
-        out.push(r);
-        continue;
-      }
-      const url = r.url || r.outputUrl;
-      if (url) out.push(url);
-      else {
-        const t = r.text || r.content || r.output;
-        if (t) out.push(t);
-      }
-    }
-  }
-  return out;
-}
-
-/** POST {base}/query {"taskId"} */
-export async function queryTask(taskId: string): Promise<RHQueryResponse> {
-  const res = await fetch(`${baseUrl()}/query`, {
-    method: "POST",
-    headers: authHeaders(true),
-    body: JSON.stringify({ taskId }),
-    cache: "no-store",
-  });
-  return parseJson(res);
-}
-
-/** Poll until terminal or timeout. Never forever. */
-export async function waitForTask(
-  taskId: string,
-  opts?: { timeoutMs?: number; intervalMs?: number }
-): Promise<RHRunResult> {
-  const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const intervalMs = opts?.intervalMs ?? 3000;
-  const start = Date.now();
-  let last: RHQueryResponse = { taskId, status: "UNKNOWN" };
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      last = await queryTask(taskId);
-    } catch (e) {
-      // tolerate transient poll failures
-      await new Promise((s) => setTimeout(s, intervalMs));
-      continue;
-    }
-    const status = normalizeStatus(last.status);
-    if (status === "SUCCESS") {
-      return { taskId, status, outputs: extractOutputs(last), raw: last };
-    }
-    if (status === "FAILED" || status === "CANCEL") {
-      return { taskId, status, outputs: [], raw: last };
-    }
-    await new Promise((s) => setTimeout(s, intervalMs));
-  }
-
-  return {
-    taskId,
-    status: "FAILED",
-    outputs: [],
-    raw: {
-      ...last,
-      errorMessage: last.errorMessage || `轮询超时 (${Math.round(timeoutMs / 1000)}s)`,
-    },
-  };
-}
-
-export async function runModel(opts: {
-  endpoint: string;
-  payload: Record<string, unknown>;
-  timeoutMs?: number;
-}): Promise<RHRunResult> {
-  const taskId = await submitTask(opts.endpoint, opts.payload);
-  return waitForTask(taskId, { timeoutMs: opts.timeoutMs });
-}
-
-export function findModel(kind: "t2i" | "i2i", id: string): ModelSpec | undefined {
-  const list = kind === "t2i" ? T2I_MODELS : I2I_MODELS;
-  return list.find((m) => m.id === id) || list[0];
-}
-
-/** Build payload from registry-validated fields only. */
-export function buildT2IPayload(opts: {
-  modelId: string;
-  prompt: string;
-  width?: number;
-  height?: number;
-  seed?: number;
-  aspectRatio?: string;
-}): Record<string, unknown> {
-  const model = findModel("t2i", opts.modelId);
-  const ep = model?.endpoint || "";
-  const body: Record<string, unknown> = { prompt: opts.prompt };
-
-  if (ep.includes("jimeng-4.6")) {
-    if (opts.width && opts.height) {
-      body.width = opts.width;
-      body.height = opts.height;
-    }
-    body.forceSingle = true;
-    if (opts.seed !== undefined) {
-      // jimeng schema has no seed field in registry — omit rather than invent
-    }
-  } else if (ep.includes("seedream-v5-pro")) {
-    body.resolution = "1k";
-    if (opts.width && opts.height) {
-      body.resolution = "empty";
-      body.width = opts.width;
-      body.height = opts.height;
-    }
-  } else if (ep.includes("qwen-image-3.0-pro")) {
-    const size = opts.width && opts.height ? `${opts.width}*${opts.height}` : "1024*1024";
-    body.size = size;
-    body.imageNum = 1;
-    if (opts.seed !== undefined) body.seed = opts.seed;
-  } else if (ep.includes("wan-2.7")) {
-    body.width = opts.width || 1024;
-    body.height = opts.height || 1024;
-  } else if (ep.includes("rhart-image-g-2")) {
-    if (opts.aspectRatio && opts.aspectRatio !== "empty") {
-      body.aspectRatio = opts.aspectRatio;
-    }
-    body.resolution = "1k";
-  }
-
-  return body;
-}
-
-export function buildI2IPayload(opts: {
-  modelId: string;
-  prompt: string;
-  imageUrl: string;
-  width?: number;
-  height?: number;
-}): Record<string, unknown> {
-  const model = findModel("i2i", opts.modelId);
-  const ep = model?.endpoint || "";
-  const body: Record<string, unknown> = { prompt: opts.prompt };
-
-  if (ep.includes("jimeng-4.6")) {
-    body.imageUrls = [opts.imageUrl];
-    body.forceSingle = true;
-    if (opts.width && opts.height) {
-      body.width = opts.width;
-      body.height = opts.height;
-    }
-  } else if (ep.includes("seedream-v5-pro")) {
-    body.imageUrls = [opts.imageUrl];
-    body.resolution = "1k";
-  } else if (ep.includes("rhart-image-g-2")) {
-    body.imageUrls = [opts.imageUrl];
-    body.resolution = "1k";
-  } else {
-    // fallback shape used by several registry entries
-    body.imageUrls = [opts.imageUrl];
-  }
-
-  return body;
-}
-
-/** Account status — legacy endpoint still used by RunningHub console. */
 export async function getAccountStatus() {
-  const key = apiKey();
-  const res = await fetch("https://www.runninghub.cn/uc/openapi/accountStatus", {
+  const res = await fetch(`${RH_HOST}/uc/openapi/accountStatus`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ apikey: key }),
+    body: JSON.stringify({ apikey: apiKey() }),
     cache: "no-store",
   });
   return parseJson(res);
+}
+
+export function buildCustomT2INodes(opts: {
+  prompt: string;
+  seed: number;
+  width?: number;
+  height?: number;
+}): NodeOverride[] {
+  const promptNode = process.env.T2I_PROMPT_NODE || "208";
+  const seedNode = process.env.T2I_SEED_NODE || "215";
+  const widthNode = process.env.T2I_WIDTH_NODE || "423";
+  const heightNode = process.env.T2I_HEIGHT_NODE || "423";
+  const list: NodeOverride[] = [
+    { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
+    { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
+  ];
+  if (opts.width) {
+    list.push({ nodeId: widthNode, fieldName: "width", fieldValue: opts.width });
+  }
+  if (opts.height) {
+    list.push({ nodeId: heightNode, fieldName: "height", fieldValue: opts.height });
+  }
+  return list;
+}
+
+export function buildCustomI2INodes(opts: {
+  prompt: string;
+  seed: number;
+  denoise: number;
+  imageFileName: string;
+}): NodeOverride[] {
+  const promptNode = process.env.I2I_PROMPT_NODE || "208";
+  const seedNode = process.env.I2I_SEED_NODE || "215";
+  const denoiseNode = process.env.I2I_DENOISE_NODE || "215";
+  const imageNode = process.env.I2I_IMAGE_NODE || "213";
+  return [
+    { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
+    { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
+    { nodeId: denoiseNode, fieldName: "denoise", fieldValue: opts.denoise },
+    {
+      nodeId: imageNode,
+      fieldName: "image",
+      fieldValue: opts.imageFileName,
+    },
+  ];
 }

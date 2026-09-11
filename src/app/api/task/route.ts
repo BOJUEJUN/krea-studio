@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { queryTask, extractOutputs, normalizeStatus } from "@/lib/runninghub";
+import { queryCustomTask } from "@/lib/runninghub";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,13 +11,14 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "缺少 taskId" }, { status: 400 });
   }
   try {
-    const raw = await queryTask(taskId);
+    const r = await queryCustomTask(taskId);
     return NextResponse.json({
       ok: true,
       taskId,
-      status: normalizeStatus(raw.status),
-      outputs: extractOutputs(raw),
-      raw,
+      status: r.status,
+      outputs: r.outputs,
+      cost: r.cost,
+      error: r.errorMessage,
     });
   } catch (e: any) {
     return NextResponse.json(

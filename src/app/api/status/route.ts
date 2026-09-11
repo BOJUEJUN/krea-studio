@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getAccountStatus, I2I_MODELS, T2I_MODELS } from "@/lib/runninghub";
+import { customWorkflowIds, getAccountStatus } from "@/lib/runninghub";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,10 +7,12 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const account = await getAccountStatus();
+    const ids = customWorkflowIds();
     return NextResponse.json({
       ok: true,
-      mode: "standard-model-api",
-      models: { t2i: T2I_MODELS, i2i: I2I_MODELS },
+      mode: "custom-lora",
+      brand: "棕色尘埃风格化",
+      workflows: { t2i: ids.t2i, i2i: ids.i2i },
       account: account?.data || null,
     });
   } catch (e: any) {
