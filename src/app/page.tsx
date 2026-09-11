@@ -4,19 +4,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 type Mode = "t2i" | "i2i";
 
+type ModelInfo = {
+  id: string;
+  endpoint: string;
+  name: string;
+  desc: string;
+  kind: "t2i" | "i2i";
+};
+
 type GalleryItem = {
   id: string;
   mode: Mode;
   prompt: string;
   url: string;
-  seed?: number;
+  model?: string;
   createdAt: number;
 };
 
 const RES_PRESETS = [
   { label: "1:1", w: 1024, h: 1024 },
-  { label: "3:4", w: 896, h: 1152 },
-  { label: "4:3", w: 1152, h: 896 },
+  { label: "3:4", w: 768, h: 1024 },
+  { label: "4:3", w: 1024, h: 768 },
   { label: "16:9", w: 1280, h: 720 },
   { label: "9:16", w: 720, h: 1280 },
 ];
@@ -26,8 +34,12 @@ export default function StudioPage() {
   const [prompt, setPrompt] = useState("");
   const [width, setWidth] = useState(1024);
   const [height, setHeight] = useState(1024);
-  const [seed, setSeed] = useState<string>("");
-  const [denoise, setDenoise] = useState(0.5);
+  const [t2iModel, setT2iModel] = useState("jimeng-4.6");
+  const [i2iModel, setI2iModel] = useState("jimeng-4.6");
+  const [models, setModels] = useState<{ t2i: ModelInfo[]; i2i: ModelInfo[] }>({
+    t2i: [],
+    i2i: [],
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -54,12 +66,10 @@ export default function StudioPage() {
           setStatus({ ready: false, message: d.error || "服务未就绪" });
           return;
         }
-        const ready = d.workflows?.t2iConfigured || d.workflows?.i2iConfigured;
+        if (d.models) setModels(d.models);
         setStatus({
-          ready: Boolean(ready),
-          message: ready
-            ? "RunningHub 已连接"
-            : "RunningHub 已连接，但尚未配置工作流 ID",
+          ready: true,
+          message: "RunningHub 已连接",
           coins: d.account?.remainCoins,
           money: d.account?.remainMoney,
         });
@@ -88,8 +98,7 @@ export default function StudioPage() {
       setPreview(null);
       return;
     }
-    const url = URL.createObjectURL(file);
-    setPreview(url);
+    setPreview(URL.createObjectURL(file));
   }, []);
 
   const generate = useCallback(async () => {
@@ -109,9 +118,9 @@ export default function StudioPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: prompt.trim(),
+            modelId: t2iModel,
             width,
             height,
-            seed: seed === "" ? undefined : Number(seed),
           }),
         });
       } else {
@@ -123,8 +132,7 @@ export default function StudioPage() {
         const fd = new FormData();
         fd.append("prompt", prompt.trim());
         fd.append("image", fileBlobRef.current);
-        fd.append("denoise", String(denoise));
-        if (seed !== "") fd.append("seed", seed);
+        fd.append("modelId", i2iModel);
         res = await fetch("/api/generate/i2i", { method: "POST", body: fd });
       }
 
@@ -147,7 +155,7 @@ export default function StudioPage() {
             mode,
             prompt: prompt.trim(),
             url,
-            seed: data.seed,
+            model: data.model,
             createdAt: Date.now(),
           },
           ...g,
@@ -158,32 +166,32 @@ export default function StudioPage() {
     } finally {
       setLoading(false);
     }
-  }, [mode, prompt, width, height, seed, denoise]);
+  }, [mode, prompt, width, height, t2iModel, i2iModel]);
+
+  const modelList = mode === "t2i" ? models.t2i : models.i2i;
+  const activeModel = mode === "t2i" ? t2iModel : i2iModel;
+  const setActiveModel = mode === "t2i" ? setT2iModel : setI2iModel;
 
   return (
     <div className="min-h-screen">
-      {/* ambient */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -left-40 top-[-10%] h-[480px] w-[480px] rounded-full bg-accent/20 blur-[120px]" />
         <div className="absolute right-[-10%] top-[30%] h-[420px] w-[420px] rounded-full bg-mint/10 blur-[120px]" />
       </div>
 
       <div className="relative mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        {/* header */}
         <header className="mb-6 flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-lg font-semibold text-white shadow-glow">
-                K
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight text-ink-50">
-                  Krea Studio
-                </h1>
-                <p className="text-xs text-ink-400">
-                  RunningHub · Krea 2 Turbo · 自定义 LoRA
-                </p>
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent text-lg font-semibold text-white shadow-glow">
+              K
+            </div>
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight text-ink-50">
+                Krea Studio
+              </h1>
+              <p className="text-xs text-ink-400">
+                RunningHub OpenAPI · 标准模型 · 文生图 / 图生图
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3 text-xs text-ink-400">
@@ -212,9 +220,7 @@ export default function StudioPage() {
         </header>
 
         <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
-          {/* controls */}
           <section className="rounded-2xl border border-white/8 bg-ink-900/80 p-5 shadow-card backdrop-blur-xl">
-            {/* mode tabs */}
             <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl bg-ink-800 p-1">
               {(
                 [
@@ -237,6 +243,37 @@ export default function StudioPage() {
             </div>
 
             <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-ink-400">
+              模型
+            </label>
+            <div className="mb-4 grid gap-2">
+              {(modelList.length
+                ? modelList
+                : [
+                    {
+                      id: "jimeng-4.6",
+                      name: "即梦 4.6",
+                      desc: "加载中…",
+                      endpoint: "",
+                      kind: mode,
+                    } as ModelInfo,
+                  ]
+              ).map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setActiveModel(m.id)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition ${
+                    activeModel === m.id
+                      ? "border-accent/60 bg-accent/15"
+                      : "border-white/10 bg-ink-800/60 hover:border-white/20"
+                  }`}
+                >
+                  <div className="text-sm font-medium text-ink-50">{m.name}</div>
+                  <div className="text-[11px] text-ink-400">{m.desc}</div>
+                </button>
+              ))}
+            </div>
+
+            <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-ink-400">
               提示词
             </label>
             <textarea
@@ -245,7 +282,7 @@ export default function StudioPage() {
               rows={5}
               placeholder={
                 mode === "t2i"
-                  ? "例如：a cinematic portrait of a woman in neon rain, 35mm, shallow depth of field"
+                  ? "例如：一只橘猫坐在窗台上晒太阳，写实摄影，柔和自然光"
                   : "描述你希望参考图如何变化…"
               }
               className="mb-4 w-full resize-y rounded-xl border border-white/10 bg-ink-800/80 px-3 py-3 text-sm text-ink-50 outline-none ring-accent/40 transition placeholder:text-ink-600 focus:ring-2"
@@ -291,7 +328,7 @@ export default function StudioPage() {
             )}
 
             {mode === "t2i" && (
-              <div className="mb-4">
+              <div className="mb-5">
                 <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-ink-400">
                   画幅
                 </label>
@@ -318,40 +355,6 @@ export default function StudioPage() {
                 </div>
               </div>
             )}
-
-            {mode === "i2i" && (
-              <div className="mb-4">
-                <div className="mb-2 flex items-center justify-between text-xs text-ink-400">
-                  <span className="font-medium uppercase tracking-wider">重绘幅度</span>
-                  <span className="font-mono text-accent-glow">{denoise.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min={0.1}
-                  max={1}
-                  step={0.05}
-                  value={denoise}
-                  onChange={(e) => setDenoise(Number(e.target.value))}
-                  className="w-full"
-                />
-                <p className="mt-1 text-[11px] text-ink-600">
-                  越低越贴近原图，越高越自由发挥（默认 0.5）
-                </p>
-              </div>
-            )}
-
-            <div className="mb-5">
-              <label className="mb-2 block text-xs font-medium uppercase tracking-wider text-ink-400">
-                随机种子（可选）
-              </label>
-              <input
-                value={seed}
-                onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))}
-                placeholder="留空则随机"
-                inputMode="numeric"
-                className="w-full rounded-xl border border-white/10 bg-ink-800/80 px-3 py-2.5 font-mono text-sm text-ink-50 outline-none ring-accent/40 transition placeholder:text-ink-600 focus:ring-2"
-              />
-            </div>
 
             <button
               onClick={generate}
@@ -381,7 +384,6 @@ export default function StudioPage() {
             )}
           </section>
 
-          {/* result */}
           <section className="flex min-h-[520px] flex-col rounded-2xl border border-white/8 bg-ink-900/60 p-5 shadow-card backdrop-blur-xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-sm font-medium text-ink-200">输出</h2>
@@ -418,14 +420,12 @@ export default function StudioPage() {
                   </div>
                   <p className="text-sm text-ink-300">输入提示词，生成你的第一张图</p>
                   <p className="mt-2 text-xs leading-relaxed text-ink-600">
-                    底层走 RunningHub 的 Krea 2 Turbo + 你的自定义 LoRA，API
-                    Key 只保存在服务器端。
+                    API Key 只保存在服务器端，朋友打开网页即可直接使用。
                   </p>
                 </div>
               )}
             </div>
 
-            {/* gallery */}
             {gallery.length > 0 && (
               <div className="mt-5">
                 <h3 className="mb-3 text-xs font-medium uppercase tracking-wider text-ink-400">
@@ -457,7 +457,7 @@ export default function StudioPage() {
         </div>
 
         <footer className="mt-8 text-center text-[11px] text-ink-600">
-          Krea Studio · 仅供学习与创作使用 · 生成内容由使用者自行负责
+          Krea Studio · RunningHub 标准模型 API · 生成内容由使用者自行负责
         </footer>
       </div>
     </div>

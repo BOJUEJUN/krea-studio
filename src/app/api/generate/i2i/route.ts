@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  createTask,
-  createWorkflowTask,
-  requireWorkflowIds,
-  uploadInputImage,
-  waitForTask,
+  buildI2IPayload,
+  findModel,
+  runModel,
+  uploadMedia,
 } from "@/lib/runninghub";
-import { buildI2INodes } from "@/lib/workflow-map";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,12 +15,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const prompt = String(form.get("prompt") || "").trim();
     const file = form.get("image") as File | null;
-    const denoise = Number(form.get("denoise") || 0.5);
-    const seedRaw = form.get("seed");
-    const seed =
-      seedRaw === null || seedRaw === undefined || seedRaw === ""
-        ? Math.floor(Math.random() * 1e15)
-        : Number(seedRaw);
+    const modelId = String(form.get("modelId") || "jimeng-4.6");
 
     if (!prompt) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
@@ -31,41 +24,40 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "请上传参考图" }, { status: 400 });
     }
 
-    const ids = requireWorkflowIds();
-    if (!ids.i2i) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error:
-            "尚未配置 RUNNINGHUB_I2I_WORKFLOW_ID。请先在 RunningHub 上传 LoRA 并发布图生图工作流，再把 ID 写入 .env.local。",
-        },
-        { status: 400 }
-      );
+    const model = findModel("i2i", modelId);
+    if (!model) {
+      return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
     }
 
-    const fileName = await uploadInputImage(file, file.name || "input.png");
-    const nodeInfoList = buildI2INodes({
+    // Official contract: upload first, then submit with URL
+    const imageUrl = await uploadMedia(file, file.name || "input.png");
+
+    const width = form.get("width") ? Number(form.get("width")) : undefined;
+    const height = form.get("height") ? Number(form.get("height")) : undefined;
+
+    const payload = buildI2IPayload({
+      modelId,
       prompt,
-      seed,
-      denoise,
-      imageFileName: fileName,
+      imageUrl,
+      width,
+      height,
     });
 
-    let taskId: string;
-    try {
-      taskId = await createTask({ workflowId: ids.i2i, nodeInfoList });
-    } catch {
-      taskId = await createWorkflowTask({ workflowId: ids.i2i, nodeInfoList });
-    }
-
-    const result = await waitForTask(taskId);
+    const result = await runModel({
+      endpoint: model.endpoint,
+      payload,
+      timeoutMs: 180_000,
+    });
 
     if (result.status !== "SUCCESS") {
       return NextResponse.json(
         {
           ok: false,
-          error: result.errorMessage || "生成失败",
-          taskId,
+          error:
+            result.raw.errorMessage ||
+            result.raw.errorCode ||
+            `任务失败 (${result.status})`,
+          taskId: result.taskId,
           status: result.status,
         },
         { status: 502 }
@@ -74,10 +66,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      taskId,
-      seed,
-      imageUrl: result.imageUrl,
-      images: result.images,
+      taskId: result.taskId,
+      model: model.name,
+      imageUrl: result.outputs[0],
+      images: result.outputs,
+      raw: result.raw,
     });
   } catch (e: any) {
     return NextResponse.json(

@@ -1,19 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getAccountStatus, requireWorkflowIds } from "@/lib/runninghub";
+import { NextResponse } from "next/server";
+import { getAccountStatus, I2I_MODELS, T2I_MODELS } from "@/lib/runninghub";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const ids = requireWorkflowIds();
     const account = await getAccountStatus();
     return NextResponse.json({
       ok: true,
-      workflows: {
-        t2iConfigured: Boolean(ids.t2i),
-        i2iConfigured: Boolean(ids.i2i),
-      },
+      mode: "standard-model-api",
+      models: { t2i: T2I_MODELS, i2i: I2I_MODELS },
       account: account?.data || null,
     });
   } catch (e: any) {

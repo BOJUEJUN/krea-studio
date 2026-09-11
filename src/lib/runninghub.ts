@@ -1,195 +1,361 @@
-const BASE = "https://www.runninghub.cn";
+/**
+ * RunningHub OpenAPI v2 client — follows developer-kit contract strictly.
+ * Base: https://www.runninghub.cn/openapi/v2
+ * Auth: Authorization: Bearer <RH_API_KEY>
+ */
 
-export type NodeOverride = {
-  nodeId: string;
-  fieldName: string;
-  fieldValue: string | number;
-};
+const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
 
-export type TaskStatus =
+export type RHStatus =
+  | "CREATE"
   | "QUEUED"
   | "RUNNING"
   | "SUCCESS"
   | "FAILED"
+  | "CANCEL"
   | "UNKNOWN";
 
-export type TaskResult = {
-  taskId: string;
-  status: TaskStatus;
-  imageUrl?: string;
-  images?: string[];
-  errorMessage?: string;
-  errorCode?: string;
+export type RHResultItem = {
+  url?: string;
+  outputUrl?: string;
+  text?: string;
+  content?: string;
+  output?: string;
+  outputType?: string;
 };
 
+export type RHQueryResponse = {
+  taskId?: string;
+  status?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  results?: RHResultItem[] | null;
+  usage?: unknown;
+};
+
+export type RHRunResult = {
+  taskId: string;
+  status: RHStatus;
+  outputs: string[];
+  raw: RHQueryResponse;
+};
+
+export type ModelSpec = {
+  id: string;
+  endpoint: string;
+  name: string;
+  desc: string;
+  kind: "t2i" | "i2i";
+};
+
+/** Curated CN-available endpoints verified via smoke tests. */
+export const T2I_MODELS: ModelSpec[] = [
+  {
+    id: "jimeng-4.6",
+    endpoint: "bytedance/jimeng-4.6/text-to-image",
+    name: "即梦 4.6",
+    desc: "快 · 便宜 · 动漫/写实都稳",
+    kind: "t2i",
+  },
+  {
+    id: "seedream-v5-pro",
+    endpoint: "seedream-v5-pro/text-to-image",
+    name: "Seedream V5 Pro",
+    desc: "质感强 · 商业摄影风",
+    kind: "t2i",
+  },
+  {
+    id: "qwen-image-3.0-pro",
+    endpoint: "alibaba/qwen-image-3.0-pro/text-to-image",
+    name: "千问 3.0 Pro",
+    desc: "中文提示词友好",
+    kind: "t2i",
+  },
+  {
+    id: "wan-2.7",
+    endpoint: "alibaba/wan-2.7/text-to-image",
+    name: "万相 2.7",
+    desc: "细节丰富 · 略慢",
+    kind: "t2i",
+  },
+];
+
+export const I2I_MODELS: ModelSpec[] = [
+  {
+    id: "jimeng-4.6",
+    endpoint: "bytedance/jimeng-4.6/image-to-image",
+    name: "即梦 4.6",
+    desc: "改图快 · 成本低",
+    kind: "i2i",
+  },
+  {
+    id: "seedream-v5-pro",
+    endpoint: "seedream-v5-pro/image-to-image",
+    name: "Seedream V5 Pro",
+    desc: "重绘质感更好",
+    kind: "i2i",
+  },
+];
+
+function baseUrl() {
+  return process.env.RH_API_BASE_URL || DEFAULT_BASE;
+}
+
 function apiKey(): string {
-  const key = process.env.RUNNINGHUB_API_KEY;
+  const key =
+    process.env.RUNNINGHUB_API_KEY || process.env.RH_API_KEY || "";
   if (!key) throw new Error("缺少 RUNNINGHUB_API_KEY");
   return key;
 }
 
-export function requireWorkflowIds() {
-  return {
-    t2i: process.env.RUNNINGHUB_T2I_WORKFLOW_ID || "",
-    i2i: process.env.RUNNINGHUB_I2I_WORKFLOW_ID || "",
+function authHeaders(json = true): Record<string, string> {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${apiKey()}`,
   };
+  if (json) h["Content-Type"] = "application/json";
+  return h;
 }
 
-async function rhFetch(path: string, init?: RequestInit) {
-  const res = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers || {}),
-    },
-    cache: "no-store",
-  });
+async function parseJson(res: Response): Promise<any> {
   const text = await res.text();
-  let json: any = null;
   try {
-    json = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
-    throw new Error(`RunningHub 返回非 JSON（HTTP ${res.status}）: ${text.slice(0, 200)}`);
+    throw new Error(`RunningHub 非 JSON 响应 (HTTP ${res.status}): ${text.slice(0, 240)}`);
   }
-  return json;
 }
 
-/** 上传输入图，返回 RunningHub 文件名 */
-export async function uploadInputImage(
-  file: File | Blob,
-  filename = "input.png"
-): Promise<string> {
+/** POST {base}/media/upload/binary — field name: file */
+export async function uploadMedia(file: Blob, filename = "input.png"): Promise<string> {
   const form = new FormData();
-  form.append("apiKey", apiKey());
-  form.append("fileType", "input");
   form.append("file", file, filename);
 
-  const res = await fetch(`${BASE}/task/openapi/upload`, {
+  const res = await fetch(`${baseUrl()}/media/upload/binary`, {
     method: "POST",
+    headers: authHeaders(false),
     body: form,
     cache: "no-store",
   });
-  const json = await res.json();
-  if (json.code !== 0 || !json.data?.fileName) {
-    throw new Error(json.msg || "上传失败");
+  const json = await parseJson(res);
+  const url = json?.data?.download_url;
+  if (!url) {
+    throw new Error(json?.msg || json?.message || "上传失败");
   }
-  return json.data.fileName as string;
+  return url as string;
 }
 
-/** 提交工作流任务（AI 应用 / 已发布工作流） */
-export async function createTask(opts: {
-  workflowId: string;
-  nodeInfoList: NodeOverride[];
-}): Promise<string> {
-  const { workflowId, nodeInfoList } = opts;
-  // 兼容 webappId / workflowId 两种形态
-  const numericId = Number(workflowId);
-  const payload: Record<string, unknown> = {
-    apiKey: apiKey(),
-    nodeInfoList,
-  };
-  if (Number.isFinite(numericId)) {
-    payload.webappId = numericId;
-  } else {
-    payload.workflowId = workflowId;
-  }
-
-  const json = await rhFetch("/task/openapi/ai-app/run", {
+/** POST {base}/{endpoint} → taskId */
+export async function submitTask(
+  endpoint: string,
+  payload: Record<string, unknown>
+): Promise<string> {
+  const res = await fetch(`${baseUrl()}/${endpoint.replace(/^\//, "")}`, {
     method: "POST",
+    headers: authHeaders(true),
     body: JSON.stringify(payload),
+    cache: "no-store",
   });
+  const json = await parseJson(res);
 
-  if (json.code !== 0) {
-    throw new Error(json.msg || JSON.stringify(json));
+  // Compliance / offline models return taskId="" with errorCode
+  const taskId = json?.taskId || json?.task_id || "";
+  if (!taskId) {
+    const msg =
+      json?.errorMessage ||
+      json?.msg ||
+      `提交失败 code=${json?.errorCode || "?"}`;
+    throw new Error(msg);
   }
-  const taskId = json.data?.taskId;
-  if (!taskId) throw new Error("未返回 taskId");
   return String(taskId);
 }
 
-/** 也支持经典 create 接口（工作流 API） */
-export async function createWorkflowTask(opts: {
-  workflowId: string;
-  nodeInfoList: NodeOverride[];
-}): Promise<string> {
-  const json = await rhFetch("/task/openapi/create", {
-    method: "POST",
-    body: JSON.stringify({
-      apiKey: apiKey(),
-      workflowId: opts.workflowId,
-      nodeInfoList: opts.nodeInfoList,
-    }),
-  });
-  if (json.code !== 0) throw new Error(json.msg || JSON.stringify(json));
-  return String(json.data?.taskId || json.data);
+export function normalizeStatus(s?: string): RHStatus {
+  const v = (s || "").toUpperCase();
+  if (
+    v === "CREATE" ||
+    v === "QUEUED" ||
+    v === "RUNNING" ||
+    v === "SUCCESS" ||
+    v === "FAILED" ||
+    v === "CANCEL"
+  ) {
+    return v;
+  }
+  return "UNKNOWN";
 }
 
-export async function queryTask(taskId: string): Promise<TaskResult> {
-  const json = await rhFetch("/task/openapi/query", {
-    method: "POST",
-    body: JSON.stringify({ apiKey: apiKey(), taskId }),
-  });
-
-  if (json.code !== 0) {
-    return {
-      taskId,
-      status: "FAILED",
-      errorMessage: json.msg || "查询失败",
-    };
-  }
-
-  const data = json.data || {};
-  const status = (data.taskStatus || data.status || "UNKNOWN") as TaskStatus;
-
-  // 输出可能是 results 数组，或 outputs / imageUrl
-  const images: string[] = [];
-  if (Array.isArray(data.results)) {
-    for (const r of data.results) {
-      if (typeof r === "string") images.push(r);
-      else if (r?.url) images.push(r.url);
-      else if (r?.fileUrl) images.push(r.fileUrl);
+export function extractOutputs(raw: RHQueryResponse): string[] {
+  const out: string[] = [];
+  const results = raw.results;
+  if (Array.isArray(results)) {
+    for (const r of results) {
+      if (!r) continue;
+      if (typeof r === "string") {
+        out.push(r);
+        continue;
+      }
+      const url = r.url || r.outputUrl;
+      if (url) out.push(url);
+      else {
+        const t = r.text || r.content || r.output;
+        if (t) out.push(t);
+      }
     }
   }
-  if (Array.isArray(data.outputs)) {
-    for (const o of data.outputs) {
-      if (typeof o === "string") images.push(o);
-      else if (o?.url) images.push(o.url);
-    }
-  }
-  if (typeof data.imageUrl === "string") images.push(data.imageUrl);
-
-  return {
-    taskId,
-    status,
-    images,
-    imageUrl: images[0],
-    errorMessage: data.errorMessage || data.failMsg,
-    errorCode: data.errorCode,
-  };
+  return out;
 }
 
-/** 轮询直到完成 */
+/** POST {base}/query {"taskId"} */
+export async function queryTask(taskId: string): Promise<RHQueryResponse> {
+  const res = await fetch(`${baseUrl()}/query`, {
+    method: "POST",
+    headers: authHeaders(true),
+    body: JSON.stringify({ taskId }),
+    cache: "no-store",
+  });
+  return parseJson(res);
+}
+
+/** Poll until terminal or timeout. Never forever. */
 export async function waitForTask(
   taskId: string,
   opts?: { timeoutMs?: number; intervalMs?: number }
-): Promise<TaskResult> {
+): Promise<RHRunResult> {
   const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const intervalMs = opts?.intervalMs ?? 2500;
+  const intervalMs = opts?.intervalMs ?? 3000;
   const start = Date.now();
+  let last: RHQueryResponse = { taskId, status: "UNKNOWN" };
 
   while (Date.now() - start < timeoutMs) {
-    const r = await queryTask(taskId);
-    if (r.status === "SUCCESS") return r;
-    if (r.status === "FAILED") return r;
+    try {
+      last = await queryTask(taskId);
+    } catch (e) {
+      // tolerate transient poll failures
+      await new Promise((s) => setTimeout(s, intervalMs));
+      continue;
+    }
+    const status = normalizeStatus(last.status);
+    if (status === "SUCCESS") {
+      return { taskId, status, outputs: extractOutputs(last), raw: last };
+    }
+    if (status === "FAILED" || status === "CANCEL") {
+      return { taskId, status, outputs: [], raw: last };
+    }
     await new Promise((s) => setTimeout(s, intervalMs));
   }
-  return { taskId, status: "FAILED", errorMessage: "轮询超时" };
+
+  return {
+    taskId,
+    status: "FAILED",
+    outputs: [],
+    raw: {
+      ...last,
+      errorMessage: last.errorMessage || `轮询超时 (${Math.round(timeoutMs / 1000)}s)`,
+    },
+  };
 }
 
+export async function runModel(opts: {
+  endpoint: string;
+  payload: Record<string, unknown>;
+  timeoutMs?: number;
+}): Promise<RHRunResult> {
+  const taskId = await submitTask(opts.endpoint, opts.payload);
+  return waitForTask(taskId, { timeoutMs: opts.timeoutMs });
+}
+
+export function findModel(kind: "t2i" | "i2i", id: string): ModelSpec | undefined {
+  const list = kind === "t2i" ? T2I_MODELS : I2I_MODELS;
+  return list.find((m) => m.id === id) || list[0];
+}
+
+/** Build payload from registry-validated fields only. */
+export function buildT2IPayload(opts: {
+  modelId: string;
+  prompt: string;
+  width?: number;
+  height?: number;
+  seed?: number;
+  aspectRatio?: string;
+}): Record<string, unknown> {
+  const model = findModel("t2i", opts.modelId);
+  const ep = model?.endpoint || "";
+  const body: Record<string, unknown> = { prompt: opts.prompt };
+
+  if (ep.includes("jimeng-4.6")) {
+    if (opts.width && opts.height) {
+      body.width = opts.width;
+      body.height = opts.height;
+    }
+    body.forceSingle = true;
+    if (opts.seed !== undefined) {
+      // jimeng schema has no seed field in registry — omit rather than invent
+    }
+  } else if (ep.includes("seedream-v5-pro")) {
+    body.resolution = "1k";
+    if (opts.width && opts.height) {
+      body.resolution = "empty";
+      body.width = opts.width;
+      body.height = opts.height;
+    }
+  } else if (ep.includes("qwen-image-3.0-pro")) {
+    const size = opts.width && opts.height ? `${opts.width}*${opts.height}` : "1024*1024";
+    body.size = size;
+    body.imageNum = 1;
+    if (opts.seed !== undefined) body.seed = opts.seed;
+  } else if (ep.includes("wan-2.7")) {
+    body.width = opts.width || 1024;
+    body.height = opts.height || 1024;
+  } else if (ep.includes("rhart-image-g-2")) {
+    if (opts.aspectRatio && opts.aspectRatio !== "empty") {
+      body.aspectRatio = opts.aspectRatio;
+    }
+    body.resolution = "1k";
+  }
+
+  return body;
+}
+
+export function buildI2IPayload(opts: {
+  modelId: string;
+  prompt: string;
+  imageUrl: string;
+  width?: number;
+  height?: number;
+}): Record<string, unknown> {
+  const model = findModel("i2i", opts.modelId);
+  const ep = model?.endpoint || "";
+  const body: Record<string, unknown> = { prompt: opts.prompt };
+
+  if (ep.includes("jimeng-4.6")) {
+    body.imageUrls = [opts.imageUrl];
+    body.forceSingle = true;
+    if (opts.width && opts.height) {
+      body.width = opts.width;
+      body.height = opts.height;
+    }
+  } else if (ep.includes("seedream-v5-pro")) {
+    body.imageUrls = [opts.imageUrl];
+    body.resolution = "1k";
+  } else if (ep.includes("rhart-image-g-2")) {
+    body.imageUrls = [opts.imageUrl];
+    body.resolution = "1k";
+  } else {
+    // fallback shape used by several registry entries
+    body.imageUrls = [opts.imageUrl];
+  }
+
+  return body;
+}
+
+/** Account status — legacy endpoint still used by RunningHub console. */
 export async function getAccountStatus() {
-  const json = await rhFetch("/uc/openapi/accountStatus", {
+  const key = apiKey();
+  const res = await fetch("https://www.runninghub.cn/uc/openapi/accountStatus", {
     method: "POST",
-    body: JSON.stringify({ apikey: apiKey() }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ apikey: key }),
+    cache: "no-store",
   });
-  return json;
+  return parseJson(res);
 }

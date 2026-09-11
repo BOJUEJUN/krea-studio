@@ -1,15 +1,14 @@
 # Krea Studio
 
-基于 **RunningHub** 的 Krea 2 Turbo + 自定义 LoRA 的 AI 生图站点。  
+基于 **RunningHub OpenAPI v2 标准模型 API** 的 AI 生图站点。  
 API Key 只保存在服务器端，适合分享给朋友通过网页使用。
 
 ## 功能
 
-- 文生图（可选画幅 1:1 / 3:4 / 4:3 / 16:9 / 9:16）
-- 图生图（可调重绘幅度）
-- 随机种子
-- 会话画廊
-- 账户余额状态条
+- 文生图：即梦 4.6 / Seedream V5 Pro / 千问 3.0 Pro / 万相 2.7
+- 图生图：即梦 4.6 / Seedream V5 Pro
+- 画幅预设、会话画廊、账户余额状态
+- 官方契约：`Authorization: Bearer` + `/media/upload/binary` + submit + `/query` 轮询
 
 ## 本地启动（朋友可访问）
 
@@ -21,69 +20,38 @@ npm run dev
 
 默认监听 `0.0.0.0:3000`。
 
-- 本机访问：http://localhost:3000
-- 局域网访问：http://<你的内网IP>:3000  
-  同一 Wi-Fi 下的朋友直接打开即可。
+- 本机：http://localhost:3000
+- 局域网：http://<内网IP>:3000
 
-查看本机 IP：
+## 公网部署（Vercel）
 
-```bash
-ipconfig getifaddr en0
+1. 仓库：https://github.com/BOJUEJUN/krea-studio
+2. Vercel → Import → 配置环境变量 `RUNNINGHUB_API_KEY`
+3. Deploy，把链接发给朋友
+
+## 接入契约（已按官方 developer-kit 实现）
+
+```
+Base: https://www.runninghub.cn/openapi/v2
+Auth: Authorization: Bearer <KEY>
+上传: POST /media/upload/binary  (multipart field: file) → data.download_url
+提交: POST /{endpoint}           → taskId
+轮询: POST /query {"taskId"}     → SUCCESS / FAILED / CANCEL
+结果: results[].url
 ```
 
-## 给朋友公网访问（推荐 Vercel）
+可用模型 endpoint 来自官方 `model-registry.public.json`，未编造参数。
 
-1. 把本目录推到 GitHub。
-2. 打开 [vercel.com](https://vercel.com) → Import 仓库。
-3. 在 **Environment Variables** 里配置：
-   - `RUNNINGHUB_API_KEY`
-   - `RUNNINGHUB_T2I_WORKFLOW_ID`
-   - `RUNNINGHUB_I2I_WORKFLOW_ID`
-4. Deploy。得到公网链接后直接发给朋友。
+## 关于自定义 Krea 2 + LoRA
 
-## 配置 RunningHub 工作流（必须）
-
-### 1. 上传 LoRA
-
-你附带的 `zsca0901_000013000.safetensors`（218MB）需要先上传到 RunningHub 模型库：
-
-1. 登录 [runninghub.cn](https://www.runninghub.cn)
-2. 工作台 → 模型管理 / 个人模型 → 上传 LoRA
-3. 文件名保持 `zsca0901_000013000.safetensors`
-
-### 2. 发布两个工作流
-
-分别导入仓库根目录下的：
-
-- `krea 2常规文生图.json`
-- `krea 2常规图生图.json`
-
-在 RunningHub 的 ComfyUI / 工作流编辑器中导入，确认 LoRA 节点指向你上传的文件，然后 **发布为 API 可调用工作流**。
-
-### 3. 把 ID 写入 `.env.local`
-
-```env
-RUNNINGHUB_API_KEY=你的key
-RUNNINGHUB_T2I_WORKFLOW_ID=文生图工作流ID
-RUNNINGHUB_I2I_WORKFLOW_ID=图生图工作流ID
-```
-
-节点 ID 默认按你给的工作流 JSON：
-
-| 用途 | 节点 | 字段 |
-|------|------|------|
-| 提示词 | 208 | text |
-| 种子 | 215 | seed |
-| 画幅 | 423 | width / height |
-| 重绘幅度 | 215 | denoise |
-| 参考图 | 213 | image |
-
-若发布后节点 ID 变了，改 `.env.local` 里对应变量即可。
+你提供的 ComfyUI 工作流（`zsca0901_000013000.safetensors`）需要先在 RunningHub
+网页端上传 LoRA 并发布为 AI 应用 / 工作流后，才能走 `ai-app/run` 路径。  
+当前站点默认走**标准模型 API**，开箱即可出图。
 
 ## 脚本
 
 ```bash
-npm run dev    # 开发，绑定 0.0.0.0:3000
-npm run build  # 生产构建
-npm start      # 生产启动，绑定 0.0.0.0:3000
+npm run dev    # 开发，0.0.0.0:3000
+npm run build
+npm start      # 生产，0.0.0.0:3000
 ```
