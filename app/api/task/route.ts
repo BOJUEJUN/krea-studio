@@ -12,14 +12,17 @@ export async function GET(req: Request) {
   }
   try {
     const r = await queryCustomTask(taskId);
-    return NextResponse.json({
-      ok: true,
-      taskId,
-      status: r.status,
-      outputs: r.outputs,
-      cost: r.cost,
-      error: r.errorMessage,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        taskId,
+        status: r.status,
+        outputs: r.outputs,
+        cost: r.cost,
+        error: r.errorMessage,
+      },
+      { headers: { "Cache-Control": "no-store" } }
+    );
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "查询失败" },

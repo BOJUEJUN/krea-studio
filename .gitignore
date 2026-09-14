@@ -6,3 +6,14 @@ out
 .DS_Store
 *.log
 data/history.json
+.vercel
+.env*
+DEPLOY.md
+
+# Local Netlify folder
+.netlify
+.vinext
+dist
+.wrangler
+.sites-runtime
+.dev.vars

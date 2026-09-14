@@ -4,6 +4,10 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "棕色尘埃风格化",
   description: "AI 文生图与图生图 · 棕色尘埃风格",
+  icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
+  },
 };
 
 export const viewport: Viewport = {

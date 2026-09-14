@@ -2,8 +2,17 @@
  * RunningHub client — standard OpenAPI v2 + custom workflow create.
  */
 
+import { env } from "cloudflare:workers";
+
 const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
 const RH_HOST = "https://www.runninghub.cn";
+
+function envValue(name: string): string {
+  const runtime = env as unknown as Record<string, unknown>;
+  const value = runtime?.[name];
+  if (typeof value === "string") return value;
+  return process.env[name] || "";
+}
 
 export type RHResultItem = {
   url?: string;
@@ -21,8 +30,7 @@ export type NodeOverride = {
 };
 
 function apiKey(): string {
-  const key =
-    process.env.RUNNINGHUB_API_KEY || process.env.RH_API_KEY || "";
+  const key = envValue("RUNNINGHUB_API_KEY") || envValue("RH_API_KEY");
   if (!key) throw new Error("缺少 RUNNINGHUB_API_KEY");
   return key;
 }
@@ -44,13 +52,13 @@ async function parseJson(res: Response): Promise<any> {
 
 export function customWorkflowIds() {
   return {
-    t2i: process.env.CUSTOM_T2I_WORKFLOW_ID || "",
-    i2i: process.env.CUSTOM_I2I_WORKFLOW_ID || "",
+    t2i: envValue("CUSTOM_T2I_WORKFLOW_ID"),
+    i2i: envValue("CUSTOM_I2I_WORKFLOW_ID"),
   };
 }
 
 export function envNum(name: string, fallback: number): number {
-  const v = process.env[name];
+  const v = envValue(name);
   const n = v ? Number(v) : NaN;
   return Number.isFinite(n) ? n : fallback;
 }
@@ -140,19 +148,18 @@ export async function queryCustomTask(taskId: string): Promise<{
     }
   }
 
-  if (json.code && json.code !== 0 && json.code !== 804 && json.msg && !outputs.length) {
-    // 805 = status error (often audit fail)
-    if (json.code === 805) {
-      const fr = (json.data as any)?.failedReason;
-      errorMessage =
-        errorMessage ||
-        fr?.exception_message ||
-        fr?.traceback ||
-        json.msg;
-      status = "FAILED";
-    } else if (!status) {
-      status = "RUNNING";
-    }
+  if (json.code && json.code !== 0 && json.code !== 804 && !outputs.length) {
+    const fr = (json.data as any)?.failedReason;
+    errorMessage =
+      errorMessage ||
+      fr?.exception_message ||
+      fr?.traceback ||
+      json.msg ||
+      `RunningHub 错误码 ${json.code}`;
+    status = "FAILED";
+  } else if (json.code === 0 && Array.isArray(json.data) && !outputs.length) {
+    errorMessage = "任务已完成但未返回图片";
+    status = "FAILED";
   }
 
   const uniq = Array.from(new Set(outputs)).filter((u) => u.includes("http"));
@@ -293,10 +300,10 @@ export function buildCustomT2INodes(opts: {
   width?: number;
   height?: number;
 }): NodeOverride[] {
-  const promptNode = process.env.T2I_PROMPT_NODE || "208";
-  const seedNode = process.env.T2I_SEED_NODE || "215";
-  const widthNode = process.env.T2I_WIDTH_NODE || "423";
-  const heightNode = process.env.T2I_HEIGHT_NODE || "423";
+  const promptNode = envValue("T2I_PROMPT_NODE") || "208";
+  const seedNode = envValue("T2I_SEED_NODE") || "215";
+  const widthNode = envValue("T2I_WIDTH_NODE") || "423";
+  const heightNode = envValue("T2I_HEIGHT_NODE") || "423";
   const list: NodeOverride[] = [
     { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
     { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
@@ -316,10 +323,10 @@ export function buildCustomI2INodes(opts: {
   denoise: number;
   imageFileName: string;
 }): NodeOverride[] {
-  const promptNode = process.env.I2I_PROMPT_NODE || "208";
-  const seedNode = process.env.I2I_SEED_NODE || "215";
-  const denoiseNode = process.env.I2I_DENOISE_NODE || "215";
-  const imageNode = process.env.I2I_IMAGE_NODE || "213";
+  const promptNode = envValue("I2I_PROMPT_NODE") || "208";
+  const seedNode = envValue("I2I_SEED_NODE") || "215";
+  const denoiseNode = envValue("I2I_DENOISE_NODE") || "215";
+  const imageNode = envValue("I2I_IMAGE_NODE") || "213";
   return [
     { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
     { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
