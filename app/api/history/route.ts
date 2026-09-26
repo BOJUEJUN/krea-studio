@@ -18,7 +18,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as Record<string, unknown>;
     const url = String(body.url || "");
     if (!url) {
       return NextResponse.json({ ok: false, error: "缺少 url" }, { status: 400 });

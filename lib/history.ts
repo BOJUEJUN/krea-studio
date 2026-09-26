@@ -1,4 +1,5 @@
-import { env } from "cloudflare:workers";
+import { promises as fs } from "fs";
+import path from "path";
 
 export type HistoryItem = {
   id: string;
@@ -11,57 +12,29 @@ export type HistoryItem = {
   createdAt: number;
 };
 
+const DATA_DIR = path.join(process.cwd(), "data");
+const FILE = path.join(DATA_DIR, "history.json");
 const MAX_ITEMS = 200;
 
-function db(): D1Database {
-  const database = env.DB;
-  if (!database) throw new Error("历史记录暂时不可用");
-  return database;
+async function ensure() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
 }
 
 export async function readHistory(): Promise<HistoryItem[]> {
-  const result = await db()
-    .prepare(
-      `SELECT id, mode, prompt, url, cost, seed, task_id AS taskId,
-              created_at AS createdAt
-         FROM generation_history
-        ORDER BY created_at DESC
-        LIMIT ?`
-    )
-    .bind(MAX_ITEMS)
-    .all<HistoryItem>();
-  return result.results ?? [];
+  try {
+    const raw = await fs.readFile(FILE, "utf-8");
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function appendHistory(item: HistoryItem): Promise<HistoryItem[]> {
-  const database = db();
-  const statements = [
-    database
-      .prepare("DELETE FROM generation_history WHERE id = ? OR url = ? OR (? IS NOT NULL AND task_id = ?)")
-      .bind(item.id, item.url, item.taskId ?? null, item.taskId ?? null),
-    database
-      .prepare(
-        `INSERT INTO generation_history
-          (id, mode, prompt, url, cost, seed, task_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .bind(
-        item.id,
-        item.mode,
-        item.prompt,
-        item.url,
-        item.cost ?? null,
-        item.seed ?? null,
-        item.taskId ?? null,
-        item.createdAt
-      ),
-    database.prepare(
-      `DELETE FROM generation_history
-        WHERE id NOT IN (
-          SELECT id FROM generation_history ORDER BY created_at DESC LIMIT 200
-        )`
-    ),
-  ];
-  await database.batch(statements);
-  return readHistory();
+  await ensure();
+  const list = await readHistory();
+  // de-dupe by id
+  const next = [item, ...list.filter((x) => x.id !== item.id)].slice(0, MAX_ITEMS);
+  await fs.writeFile(FILE, JSON.stringify(next, null, 2), "utf-8");
+  return next;
 }

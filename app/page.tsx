@@ -38,6 +38,9 @@ const MAX_RES = 2048;
 const MIN_RES = 256;
 const EST_COST = "0.04";
 const PENDING_KEY = "krea-studio.pending-job";
+// Netlify buffers function requests and binary uploads incur Base64 overhead.
+// Leave room for multipart fields and the platform's 6 MB request limit.
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 function clampRes(n: number) {
   if (!Number.isFinite(n)) return MIN_RES;
@@ -45,6 +48,56 @@ function clampRes(n: number) {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function imageToBlob(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("参考图处理失败，请换一张图片重试"))),
+      "image/jpeg",
+      quality
+    );
+  });
+}
+
+async function prepareReferenceImage(file: File): Promise<File> {
+  if (file.size <= MAX_UPLOAD_BYTES) return file;
+
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("无法读取参考图，请换用 JPG 或 PNG 图片"));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器无法处理参考图，请换用 JPG 或 PNG 图片");
+
+    // The model works at up to 2048 px, so larger source pixels only increase upload size.
+    for (const maxSide of [2048, 1600, 1280, 1024]) {
+      const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      for (const quality of [0.92, 0.85, 0.75]) {
+        const blob = await imageToBlob(canvas, quality);
+        if (blob.size <= MAX_UPLOAD_BYTES) {
+          return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
+            type: "image/jpeg",
+          });
+        }
+      }
+    }
+    throw new Error("参考图过大，压缩后仍超过上传限制，请换一张图片");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   let res: Response;
@@ -54,6 +107,9 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
     throw new Error("网络连接失败，请检查网络后重试");
   }
   const text = await res.text();
+  if (res.status === 413) {
+    throw new Error("参考图超过网站上传限制，请换一张较小的图片重试");
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -346,7 +402,7 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", prompt.trim());
-        fd.append("image", imageFile as File);
+        fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }

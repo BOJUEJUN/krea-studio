@@ -11,7 +11,7 @@ export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as Record<string, unknown>;
     const prompt = String(body.prompt || "").trim();
     if (!prompt) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });

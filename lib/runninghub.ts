@@ -2,15 +2,10 @@
  * RunningHub client — standard OpenAPI v2 + custom workflow create.
  */
 
-import { env } from "cloudflare:workers";
-
 const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
 const RH_HOST = "https://www.runninghub.cn";
 
 function envValue(name: string): string {
-  const runtime = env as unknown as Record<string, unknown>;
-  const value = runtime?.[name];
-  if (typeof value === "string") return value;
   return process.env[name] || "";
 }
 
