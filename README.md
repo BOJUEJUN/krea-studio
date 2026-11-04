@@ -1,57 +1,55 @@
-# Krea Studio
+# AI Studio
 
-基于 **RunningHub OpenAPI v2 标准模型 API** 的 AI 生图站点。  
-API Key 只保存在服务器端，适合分享给朋友通过网页使用。
+AI 文生图 / 图生图网站，跑在 RunningHub 上发布的 Krea2 + LoRA 工作流。
+
+线上：https://krea-studio-cn.netlify.app （Netlify，站点 `krea-studio-cn`）
 
 ## 功能
 
-- 文生图：即梦 4.6 / Seedream V5 Pro / 千问 3.0 Pro / 万相 2.7
-- 图生图：即梦 4.6 / Seedream V5 Pro
-- 画幅预设、会话画廊、账户余额状态
-- 官方契约：`Authorization: Bearer` + `/media/upload/binary` + submit + `/query` 轮询
+- 模型：棕色尘埃、小小英雄、LOL 2.36MP V1.1（默认）、LOL 2.36MP、CherryCHE Skills，文生图和图生图都支持
+- 图生图可不写描述：先用 DeepSeek 看参考图反推提示词（「提示词反推」开关，默认开）
+- 所有模型 LoRA 强度统一按 2.0 发送；文生图比例预设约 2.36MP
+- 图生图结果可与参考图对比（滑动 / 左右 / 点击切换 / 叠加）
+- 历史：搜索、按模式 / 模型 / 状态筛选、分页；失败和已过期的任务也会保留
 
-## 本地启动（朋友可访问）
+## 结构
+
+| 位置 | 作用 |
+|------|------|
+| `lib/models.ts` | 模型列表（名称、封面），前后端共用，无密钥 |
+| `lib/model-workflows.ts` | 每个模型对应的 RunningHub 工作流 ID 与节点（提示词 208、种子/重绘 215、尺寸 423、参考图 213、LoRA 374/244） |
+| `lib/runninghub.ts` | 提交工作流、查询结果、上传参考图 |
+| `lib/deepseek.ts` | 参考图 → 提示词（`deepseek-flash`，中档思考） |
+| `lib/history.ts` | 历史存储：线上用 Netlify Blobs（每条任务单独一个 blob + 汇总索引），本地开发用 `data/history.json` |
+| `lib/refs.ts` | 图生图参考图存档（供对比用），`/api/ref/<任务ID>` 读取 |
+| `app/page.tsx` | 页面（左：设置，中：结果，右：历史） |
+
+加新模型：在 RunningHub 发布工作流后，在 `lib/models.ts` 加一项（含封面图，放 `public/models/`），再在 `lib/model-workflows.ts` 填上文生图 / 图生图的工作流 ID。节点结构不同的工作流需要单独写节点映射。
+
+## 环境变量
+
+本地放 `.env.local`，线上在 Netlify 后台（Site settings → Environment variables）。不要提交到 Git。
+
+| 名称 | 说明 |
+|------|------|
+| `RUNNINGHUB_API_KEY` | RunningHub API Key |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key（提示词反推） |
+| `CUSTOM_T2I_WORKFLOW_ID` / `CUSTOM_I2I_WORKFLOW_ID` | 棕色尘埃的文生图 / 图生图工作流 |
+| `T2I_*_NODE` / `I2I_*_NODE` | 棕色尘埃工作流节点（不填则用默认 208 / 215 / 423 / 213） |
+
+## 本地开发
 
 ```bash
-cd krea-studio
 npm install
-npm run dev
+npm run dev        # http://localhost:3000
 ```
 
-默认监听 `0.0.0.0:3000`。
+## 部署（Netlify CLI，手动）
 
-- 本机：http://localhost:3000
-- 局域网：http://<内网IP>:3000
-
-## 公网部署（Vercel）
-
-1. 仓库：https://github.com/BOJUEJUN/krea-studio
-2. Vercel → Import → 配置环境变量 `RUNNINGHUB_API_KEY`
-3. Deploy，把链接发给朋友
-
-## 接入契约（已按官方 developer-kit 实现）
-
-```
-Base: https://www.runninghub.cn/openapi/v2
-Auth: Authorization: Bearer <KEY>
-上传: POST /media/upload/binary  (multipart field: file) → data.download_url
-提交: POST /{endpoint}           → taskId
-轮询: POST /query {"taskId"}     → SUCCESS / FAILED / CANCEL
-结果: results[].url
-```
-
-可用模型 endpoint 来自官方 `model-registry.public.json`，未编造参数。
-
-## 关于自定义 Krea 2 + LoRA
-
-你提供的 ComfyUI 工作流（`zsca0901_000013000.safetensors`）需要先在 RunningHub
-网页端上传 LoRA 并发布为 AI 应用 / 工作流后，才能走 `ai-app/run` 路径。  
-当前站点默认走**标准模型 API**，开箱即可出图。
-
-## 脚本
+站点没有绑定 GitHub 自动部署，改完后在项目目录执行：
 
 ```bash
-npm run dev    # 开发，0.0.0.0:3000
-npm run build
-npm start      # 生产，0.0.0.0:3000
+npx netlify-cli deploy --build --prod --site caa172dd-fc25-47f5-a9e3-82b35ce14296
 ```
+
+需要先 `npx netlify-cli login`。部署前请确认代码来自 `main` 分支最新版本，避免把旧版本发上线。

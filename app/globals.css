@@ -291,72 +291,6 @@ input[type="range"] {
   }
 }
 
-/* Generating placeholder: soft colour fields drifting under a light sweep. */
-.gen-frame {
-  background: linear-gradient(160deg, #eef2ff 0%, #f6f1ff 50%, #eef8ff 100%);
-  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.06);
-  isolation: isolate;
-}
-.gen-blob {
-  position: absolute;
-  width: 70%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  filter: blur(48px);
-  opacity: 0.55;
-  mix-blend-mode: multiply;
-  will-change: transform;
-}
-.gen-blob-a {
-  background: #8fb3ff;
-  top: -15%;
-  left: -15%;
-  animation: gen-float-a 9s ease-in-out infinite alternate;
-}
-.gen-blob-b {
-  background: #c9a8ff;
-  bottom: -20%;
-  right: -15%;
-  animation: gen-float-b 11s ease-in-out infinite alternate;
-}
-.gen-blob-c {
-  background: #8fe0ff;
-  top: 30%;
-  left: 25%;
-  width: 55%;
-  opacity: 0.4;
-  animation: gen-float-c 13s ease-in-out infinite alternate;
-}
-@keyframes gen-float-a {
-  to { transform: translate3d(35%, 30%, 0) scale(1.15); }
-}
-@keyframes gen-float-b {
-  to { transform: translate3d(-30%, -35%, 0) scale(0.9); }
-}
-@keyframes gen-float-c {
-  to { transform: translate3d(-25%, 20%, 0) scale(1.2); }
-}
-.gen-sheen {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    115deg,
-    transparent 35%,
-    rgba(255, 255, 255, 0.45) 50%,
-    transparent 65%
-  );
-  background-size: 260% 100%;
-  animation: gen-sweep 3.2s cubic-bezier(0.45, 0, 0.25, 1) infinite;
-}
-@keyframes gen-sweep {
-  from { background-position: 130% 0; }
-  to { background-position: -30% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .gen-blob,
-  .gen-sheen { animation: none; }
-}
-
 /* ---- Motion polish (Apple-style easing) ---------------------------------- */
 :root {
   --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);
@@ -448,43 +382,6 @@ textarea {
     transition: none;
     animation: none;
   }
-}
-
-/* ---- Loading variants (see /lab) ---------------------------------------- */
-.loading-breathe {
-  animation: loading-breathe 2.6s var(--ease-standard) infinite alternate;
-}
-@keyframes loading-breathe {
-  from { transform: scale(0.97); }
-  to { transform: scale(1.03); }
-}
-.loading-fade {
-  animation: apple-chip-in 0.5s var(--ease-out-expo) both;
-}
-.loading-aurora {
-  background: conic-gradient(from 0deg, #a8c0ff, #d7b8ff, #9fe8ff, #ffd1e8, #a8c0ff);
-  filter: blur(40px);
-  animation: loading-spin 14s linear infinite;
-}
-@keyframes loading-spin {
-  to { transform: rotate(360deg); }
-}
-.loading-shimmer-text {
-  background: linear-gradient(90deg, #6e6e73 0%, #1d1d1f 45%, #6e6e73 90%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: loading-text 2.4s linear infinite;
-}
-@keyframes loading-text {
-  from { background-position: 100% 0; }
-  to { background-position: -100% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .loading-breathe,
-  .loading-aurora,
-  .loading-shimmer-text { animation: none; }
 }
 
 /* Reference drop zone feedback while an image is dragged. */

@@ -1,24 +1,14 @@
 /**
- * RunningHub client — standard OpenAPI v2 + custom workflow create.
+ * RunningHub client: run published workflows (task/openapi/create + outputs).
  */
 
 import { LORA_STRENGTH } from "./models";
 
-const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
 const RH_HOST = "https://www.runninghub.cn";
 
 function envValue(name: string): string {
   return process.env[name] || "";
 }
-
-export type RHResultItem = {
-  url?: string;
-  outputUrl?: string;
-  text?: string;
-  content?: string;
-  output?: string;
-  outputType?: string;
-};
 
 export type NodeOverride = {
   nodeId: string;
@@ -45,12 +35,6 @@ async function parseJson(res: Response): Promise<any> {
   } catch {
     throw new Error(`RunningHub 非 JSON (HTTP ${res.status}): ${text.slice(0, 200)}`);
   }
-}
-
-export function envNum(name: string, fallback: number): number {
-  const v = envValue(name);
-  const n = v ? Number(v) : NaN;
-  return Number.isFinite(n) ? n : fallback;
 }
 
 /** Official: POST /task/openapi/create with workflowId + nodeInfoList */
@@ -174,99 +158,6 @@ export async function queryCustomTask(taskId: string): Promise<{
   return { status: status.toUpperCase(), outputs: uniq, cost, errorMessage, raw: json };
 }
 
-export async function waitForCustomTask(
-  taskId: string,
-  opts?: { timeoutMs?: number; intervalMs?: number }
-): Promise<{
-  status: string;
-  outputs: string[];
-  cost?: string;
-  errorMessage?: string;
-  raw: any;
-}> {
-  const timeoutMs = opts?.timeoutMs ?? 180_000;
-  const intervalMs = opts?.intervalMs ?? 3000;
-  const start = Date.now();
-  let last: any = { status: "RUNNING", outputs: [], raw: {} };
-
-  while (Date.now() - start < timeoutMs) {
-    try {
-      last = await queryCustomTask(taskId);
-    } catch (e: any) {
-      last = { status: "RUNNING", outputs: [], errorMessage: e?.message, raw: {} };
-      await new Promise((s) => setTimeout(s, intervalMs));
-      continue;
-    }
-    if (last.status === "SUCCESS" && last.outputs.length) return last;
-    if (last.status === "FAILED" || last.status === "CANCEL") return last;
-    await new Promise((s) => setTimeout(s, intervalMs));
-  }
-  return { ...last, status: "FAILED", errorMessage: last.errorMessage || "轮询超时" };
-}
-
-/** Standard model API (v2) — keep as fallback */
-export async function runStandardModel(opts: {
-  endpoint: string;
-  payload: Record<string, unknown>;
-}): Promise<{ taskId: string; outputs: string[]; status: string; raw: any; cost?: string }> {
-  const res = await fetch(`${DEFAULT_BASE}/${opts.endpoint.replace(/^\//, "")}`, {
-    method: "POST",
-    headers: authHeaders(true),
-    body: JSON.stringify(opts.payload),
-    cache: "no-store",
-  });
-  const json = await parseJson(res);
-  const taskId = json?.taskId || "";
-  if (!taskId) throw new Error(json?.errorMessage || json?.msg || "提交失败");
-
-  const start = Date.now();
-  while (Date.now() - start < 180_000) {
-    const q = await fetch(`${DEFAULT_BASE}/query`, {
-      method: "POST",
-      headers: authHeaders(true),
-      body: JSON.stringify({ taskId }),
-      cache: "no-store",
-    });
-    const rj = await parseJson(q);
-    const st = String(rj.status || "").toUpperCase();
-    if (st === "SUCCESS") {
-      const outputs: string[] = [];
-      if (Array.isArray(rj.results)) {
-        for (const r of rj.results) {
-          if (typeof r === "string") outputs.push(r);
-          else if (r?.url) outputs.push(r.url);
-        }
-      }
-      const cost =
-        rj.usage?.thirdPartyConsumeMoney != null
-          ? String(rj.usage.thirdPartyConsumeMoney)
-          : undefined;
-      return { taskId, outputs, status: st, raw: rj, cost };
-    }
-    if (st === "FAILED" || st === "CANCEL") {
-      throw new Error(rj.errorMessage || `任务失败 ${st}`);
-    }
-    await new Promise((s) => setTimeout(s, 3000));
-  }
-  throw new Error("轮询超时");
-}
-
-export async function uploadMedia(file: Blob, filename = "input.png"): Promise<string> {
-  const form = new FormData();
-  form.append("file", file, filename);
-  const res = await fetch(`${DEFAULT_BASE}/media/upload/binary`, {
-    method: "POST",
-    headers: authHeaders(false),
-    body: form,
-    cache: "no-store",
-  });
-  const json = await parseJson(res);
-  const url = json?.data?.download_url;
-  if (!url) throw new Error(json?.msg || "上传失败");
-  return url as string;
-}
-
-/** For custom i2i, RH LoadImage accepts fileName from /task/openapi/upload */
 export async function uploadInputForWorkflow(
   file: Blob,
   filename = "input.png"

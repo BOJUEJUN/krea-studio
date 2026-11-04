@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LoadingView, type LoadingVariant } from "./loading-variants";
+import { GeneratingView } from "./generating-view";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
 
@@ -53,8 +53,6 @@ const MODEL_KEY = "krea-studio.model";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
 const PANEL_LEFT_KEY = "krea-studio.panel-left";
 const PANEL_RIGHT_KEY = "krea-studio.panel-right";
-/** Loading animation; options are previewed side by side at /lab. */
-const LOADING_VARIANT: LoadingVariant = "dots";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
@@ -311,6 +309,7 @@ export default function StudioPage() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const resultRef_ = useRef<HTMLElement>(null);
   const fileBlobRef = useRef<File | null>(null);
   const timerRef = useRef<number | null>(null);
 
@@ -435,6 +434,13 @@ export default function StudioPage() {
   const onPickFile = useCallback((file: File | null) => {
     fileBlobRef.current = file;
     setPreview(file ? URL.createObjectURL(file) : null);
+  }, []);
+
+  /** Phones stack the panels inside <main>; scroll only that container. */
+  const scrollToResult = useCallback(() => {
+    const el = resultRef_.current;
+    const main = el?.closest("main");
+    if (el && main) main.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
   }, []);
 
   const flash = useCallback((text: string) => {
@@ -697,6 +703,10 @@ export default function StudioPage() {
       reference: mode === "i2i" ? preview : null,
     });
     setLoading(true);
+    // On phones the result sits below the form: bring it into view.
+    if (window.innerWidth < 1024) {
+      window.setTimeout(scrollToResult, 60);
+    }
     setResultUrl(null);
     setResultRef(null);
     setResultSize(null);
@@ -1263,7 +1273,9 @@ export default function StudioPage() {
           className="panel-resizer hidden w-1.5 shrink-0 cursor-col-resize lg:block"
         />
 
-        <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
+        <section
+          ref={resultRef_}
+          className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">结果</h2>
             {resultUrl && !loading && resultSize && (
@@ -1312,12 +1324,7 @@ export default function StudioPage() {
             }}
           >
             {loading ? (
-              <LoadingView
-                variant={LOADING_VARIANT}
-                aspect={jobVisual.aspect}
-                progress={progress}
-                reference={jobVisual.reference}
-              />
+              <GeneratingView aspect={jobVisual.aspect} progress={progress} />
             ) : resultUrl && resultRef && compareOn ? (
               <div className="h-full w-full p-2">
                 <CompareView key={`${resultKey}-${compareMode}`} before={resultRef} after={resultUrl} mode={compareMode} />
@@ -1529,6 +1536,9 @@ export default function StudioPage() {
                           setError(null);
                           setCompareOn(false);
                           showItem(g);
+                          if (window.innerWidth < 1024) {
+                            scrollToResult();
+                          }
                         } else {
                           setError(
                             g.status === "expired"

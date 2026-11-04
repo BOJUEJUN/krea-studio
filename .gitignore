@@ -17,3 +17,9 @@ dist
 .wrangler
 .sites-runtime
 .dev.vars
+
+# Generated locally
+data/
+*.tsbuildinfo
+AGENTS.md
+CLAUDE.md
