@@ -717,10 +717,8 @@ export default function StudioPage() {
           className="apple-card stagger-1 m-0 flex min-h-0 w-full shrink-0 flex-col overflow-visible rounded-[22px] lg:overflow-hidden"
           style={isDesktop ? { width: leftPx } : undefined}
         >
-          <div className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-3 py-2.5 sm:px-4">
-            <span className="text-[13px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">
-              AI Studio
-            </span>
+          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
+            <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
             {money != null && (
               <span className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]">
                 ¥{money}
@@ -1159,9 +1157,9 @@ export default function StudioPage() {
           className="hidden w-1.5 shrink-0 cursor-col-resize self-center rounded-full bg-black/[0.08] transition hover:bg-[#0071e3]/40 lg:block lg:h-16"
         />
 
-        <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] p-2 sm:p-3 lg:min-h-0">
-          <div className="mb-2 flex min-h-[28px] shrink-0 flex-wrap items-center gap-2 px-1">
-            <h2 className="text-[13px] font-medium text-[#1d1d1f]">结果</h2>
+        <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
+          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4">
+            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">结果</h2>
             {resultUrl && !loading && resultSize && (
               <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] tabular-nums text-[#6e6e73]">
                 {resultSize.w} × {resultSize.h}
@@ -1200,7 +1198,7 @@ export default function StudioPage() {
             </div>
           </div>
           <div
-            className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px]"
+            className="relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
             style={{
               background:
                 "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,245,247,0.96))",
@@ -1248,14 +1246,14 @@ export default function StudioPage() {
         </section>
 
         <aside className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[300px] xl:w-[340px]">
+          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
+            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
+            <span className="truncate text-[11px] tabular-nums text-[#86868b]">
+              {histStats.done} 张{histStats.failed ? ` · 失败 ${histStats.failed}` : ""}
+              {histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 共 ¥{histStats.cost}
+            </span>
+          </div>
           <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">
-            <div className="mb-2 flex items-baseline justify-between gap-2">
-              <h2 className="text-[13px] font-semibold text-[#1d1d1f]">历史</h2>
-              <span className="truncate text-[11px] tabular-nums text-[#86868b]">
-                {histStats.done} 张{histStats.failed ? ` · 失败 ${histStats.failed}` : ""}
-                {histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 共 ¥{histStats.cost}
-              </span>
-            </div>
             <input
               value={histQuery}
               onChange={(e) => {
