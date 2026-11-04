@@ -8,7 +8,12 @@
 
 export type Mode = "t2i" | "i2i";
 
-export type ModelId = "brown-dust" | "little-legend" | "lol-236" | "cherryche";
+export type ModelId =
+  | "brown-dust"
+  | "little-legend"
+  | "lol-236-v11"
+  | "lol-236"
+  | "cherryche";
 
 export type FieldRef = { nodeId: string; fieldName: string };
 
@@ -20,7 +25,12 @@ export type WorkflowSpec = {
   height?: FieldRef;
   denoise?: FieldRef;
   image?: FieldRef;
+  /** LoraLoaderModelOnly strength; always sent so the site controls it. */
+  lora?: FieldRef;
 };
+
+/** LoRA strength sent with every request (workflows default to 1-1.5). */
+export const LORA_STRENGTH = 2.0;
 
 export type ModelInfo = {
   id: ModelId;
@@ -43,9 +53,15 @@ export const MODELS: ModelInfo[] = [
     cover: "/models/little-legend.jpg",
   },
   {
-    id: "lol-236",
+    id: "lol-236-v11",
     name: "LOL 2.36MP V1.1",
     tagline: "英雄联盟风格首选",
+    cover: "/models/lol-236-v11.jpg",
+  },
+  {
+    id: "lol-236",
+    name: "LOL 2.36MP",
+    tagline: "英雄联盟风格",
     cover: "/models/lol-236.jpg",
   },
   {
@@ -56,7 +72,11 @@ export const MODELS: ModelInfo[] = [
   },
 ];
 
-export const DEFAULT_MODEL: ModelId = "brown-dust";
+/** Pre-selected on the page. */
+export const DEFAULT_MODEL: ModelId = "lol-236-v11";
+
+/** Requests without a model come from pages cached before the picker existed. */
+export const LEGACY_MODEL: ModelId = "brown-dust";
 
 export function findModel(id: unknown): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id);

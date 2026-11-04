@@ -42,6 +42,7 @@ const MIN_RES = 256;
 const EST_COST = "0.04";
 const PENDING_KEY = "krea-studio.pending-job";
 const MODEL_KEY = "krea-studio.model";
+const REVERSE_KEY = "krea-studio.reverse-prompt";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
@@ -103,6 +104,40 @@ async function prepareReferenceImage(file: File): Promise<File> {
   }
 }
 
+/** Small JPEG for DeepSeek: it only needs to read the picture, not its pixels. */
+async function describeCopy(file: File): Promise<Blob> {
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("无法读取参考图，请换用 JPG 或 PNG 图片"));
+      image.src = objectUrl;
+    });
+    const scale = Math.min(1, 1024 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return file;
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return await imageToBlob(canvas, 0.85);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+// One 0-100% bar for prompt reverse + submit + generation. Each step eases
+// toward its cap; the bar only reaches 100% when the image arrives.
+const PROGRESS_STEPS = {
+  describe: { cap: 15, rate: 0.06 },
+  submit: { cap: 22, rate: 0.08 },
+  render: { cap: 97, rate: 0.012 },
+} as const;
+type ProgressStep = keyof typeof PROGRESS_STEPS;
+
 async function fetchJson(url: string, init?: RequestInit): Promise<any> {
   let res: Response;
   try {
@@ -126,6 +161,7 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
 export default function StudioPage() {
   const [mode, setMode] = useState<Mode>("i2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
+  const [reverse, setReverse] = useState(true);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [prompt, setPrompt] = useState("");
   const [width, setWidth] = useState(2048);
@@ -138,7 +174,8 @@ export default function StudioPage() {
   const [error, setError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultKey, setResultKey] = useState(0);
-  const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const stepRef = useRef<ProgressStep>("render");
   const [lastCost, setLastCost] = useState<string | null>(null);
   const [money, setMoney] = useState<string | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
@@ -194,6 +231,7 @@ export default function StudioPage() {
   useEffect(() => {
     const saved = findModel(localStorage.getItem(MODEL_KEY));
     if (saved) setModel(saved.id);
+    if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
     fetchJson("/api/status")
       .then((d) => {
         if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
@@ -217,8 +255,11 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (loading) {
-      setElapsed(0);
-      timerRef.current = window.setInterval(() => setElapsed((e) => e + 1), 1000);
+      setProgress(0);
+      timerRef.current = window.setInterval(() => {
+        const { cap, rate } = PROGRESS_STEPS[stepRef.current];
+        setProgress((p) => (p >= cap ? p : p + Math.max(0.05, (cap - p) * rate)));
+      }, 250);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -295,6 +336,8 @@ export default function StudioPage() {
       const st = String(d.status || "").toUpperCase();
       if (st === "SUCCESS" && d.outputs?.length) return d;
       if (st === "FAILED" || st === "CANCEL") {
+        // A finished-but-failed task must not be resumed by the next click.
+        localStorage.removeItem(PENDING_KEY);
         throw new Error(d.error || "任务失败");
       }
       await sleep(3000);
@@ -308,6 +351,7 @@ export default function StudioPage() {
     const url = done.outputs?.[0];
     if (!url) throw new Error(done.error || "任务完成但未返回图片");
     if (done.cost) setLastCost(String(done.cost));
+    setProgress(100);
     setResultUrl(url);
     setResultKey((k) => k + 1);
     const item: GalleryItem = {
@@ -342,6 +386,7 @@ export default function StudioPage() {
     if (busyRef.current) return;
     busyRef.current = true;
     const job = ++jobRef.current;
+    stepRef.current = "render";
     setLoading(true);
     setError(null);
     finishPending(pending, job)
@@ -387,7 +432,7 @@ export default function StudioPage() {
       localStorage.removeItem(PENDING_KEY);
     }
     setError(null);
-    if (!prompt.trim()) {
+    if ((mode === "t2i" || !reverse) && !prompt.trim()) {
       setError("请先输入描述");
       return;
     }
@@ -402,17 +447,36 @@ export default function StudioPage() {
     }
     busyRef.current = true;
     const job = ++jobRef.current;
+    stepRef.current = mode === "i2i" && reverse ? "describe" : "submit";
     setLoading(true);
     setResultUrl(null);
     setLastCost(null);
     try {
       let data: any;
+      const userPrompt = prompt.trim();
+      let finalPrompt = userPrompt;
+      if (mode === "i2i" && reverse) {
+        // Reverse a prompt from the reference first; the user's text is kept as an extra request.
+        try {
+          const fd = new FormData();
+          fd.append("image", await describeCopy(imageFile as File), "reference.jpg");
+          const described = await fetchJson("/api/describe", { method: "POST", body: fd });
+          if (!described?.ok || !described?.prompt) {
+            throw new Error(described?.error || "提示词反推失败");
+          }
+          finalPrompt = [String(described.prompt).trim(), userPrompt].filter(Boolean).join("\n");
+        } catch (e: any) {
+          if (!userPrompt) throw new Error(`${e?.message || "提示词反推失败"}，请手动填写描述后重试`);
+        }
+        if (jobRef.current !== job) return;
+        stepRef.current = "submit";
+      }
       if (mode === "t2i") {
         data = await fetchJson("/api/generate/t2i", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: prompt.trim(),
+            prompt: finalPrompt,
             model,
             width: clampRes(Number(widthText) || width),
             height: clampRes(Number(heightText) || height),
@@ -420,7 +484,7 @@ export default function StudioPage() {
         });
       } else {
         const fd = new FormData();
-        fd.append("prompt", prompt.trim());
+        fd.append("prompt", finalPrompt);
         fd.append("model", model);
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
@@ -430,12 +494,13 @@ export default function StudioPage() {
       if (!data?.ok || !data?.taskId) {
         throw new Error(data?.error || "任务创建失败");
       }
+      stepRef.current = "render";
       const pending: PendingJob = {
         taskId: String(data.taskId),
         seed: data.seed,
         mode,
         model,
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         createdAt: Date.now(),
       };
       localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
@@ -450,7 +515,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, readiness, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
+  }, [mode, model, reverse, readiness, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
 
   const btnPrice = lastCost || EST_COST;
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
@@ -607,15 +672,47 @@ export default function StudioPage() {
             )}
 
             <div className="mb-4">
-              <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                描述
-              </label>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                  描述
+                </label>
+                {mode === "i2i" && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={reverse}
+                    onClick={() => {
+                      const next = !reverse;
+                      setReverse(next);
+                      localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
+                    }}
+                    className="reverse-switch flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-[#6e6e73] transition hover:bg-black/[0.04] active:scale-[0.97]"
+                  >
+                    提示词反推
+                    <span
+                      className={`relative inline-block h-[18px] w-[30px] rounded-full transition-colors ${
+                        reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-[left] ${
+                          reverse ? "left-[14px]" : "left-[2px]"
+                        }`}
+                      />
+                    </span>
+                  </button>
+                )}
+              </div>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={4}
                 placeholder={
-                  mode === "t2i" ? "描述你想要的画面…" : "希望参考图如何变化…"
+                  mode === "t2i"
+                    ? "描述你想要的画面…"
+                    : reverse
+                      ? "可不填：会根据参考图自动反推提示词，这里可补充想要的变化"
+                      : "希望参考图如何变化…"
                 }
                 className="w-full resize-y rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
               />
@@ -743,13 +840,15 @@ export default function StudioPage() {
           <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
             <button
               onClick={generate}
-              disabled={loading || !prompt.trim() || !modelReady}
+              disabled={
+                loading || !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
+              }
               className="apple-btn-primary flex w-full items-center justify-center gap-2 py-3.5 text-[15px]"
             >
               {loading ? (
                 <>
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                  生成中 {elapsed}s
+                  生成中 {Math.floor(progress)}%
                 </>
               ) : !modelReady ? (
                 <span>{findModel(model)?.name} 待接入</span>
@@ -805,7 +904,13 @@ export default function StudioPage() {
                   }}
                 />
                 <p className="text-[14px] text-[#6e6e73]">生成中</p>
-                <p className="text-[12px] tabular-nums text-[#aeaeb2]">{elapsed}s</p>
+                <div className="h-1.5 w-44 overflow-hidden rounded-full bg-black/[0.06]">
+                  <div
+                    className="h-full rounded-full bg-[#0071e3] transition-[width] duration-300"
+                    style={{ width: `${Math.floor(progress)}%` }}
+                  />
+                </div>
+                <p className="text-[12px] tabular-nums text-[#6e6e73]">{Math.floor(progress)}%</p>
               </div>
             ) : resultUrl ? (
               // eslint-disable-next-line @next/next/no-img-element

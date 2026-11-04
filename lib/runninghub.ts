@@ -2,6 +2,8 @@
  * RunningHub client — standard OpenAPI v2 + custom workflow create.
  */
 
+import { LORA_STRENGTH } from "./models";
+
 const DEFAULT_BASE = "https://www.runninghub.cn/openapi/v2";
 const RH_HOST = "https://www.runninghub.cn";
 
@@ -75,6 +77,16 @@ export async function createCustomTask(opts: {
   return String(taskId);
 }
 
+/** RunningHub's content review rejects some outputs at the SaveImage node. */
+function auditMessage(fr: any): string | undefined {
+  if (!fr || typeof fr !== "object") return undefined;
+  const text = `${fr.exception_type || ""} ${fr.traceback || ""}`;
+  if (/Audit|平台禁止/i.test(text)) {
+    return "生成结果未通过 RunningHub 内容审核（平台禁止色情、暴力等内容），请调整描述后重试";
+  }
+  return undefined;
+}
+
 /** Official outputs poll — data may be array of file items */
 export async function queryCustomTask(taskId: string): Promise<{
   status: string;
@@ -96,8 +108,8 @@ export async function queryCustomTask(taskId: string): Promise<{
   let errorMessage: string | undefined;
   let status = "";
 
-  // 804 = still running
-  if (json.code === 804) {
+  // 804 = running, 813 = queued: both are still in progress, not failures.
+  if (json.code === 804 || json.code === 813 || /RUNNING|QUEUED/i.test(String(json.msg || ""))) {
     return { status: "RUNNING", outputs: [], raw: json };
   }
 
@@ -130,6 +142,7 @@ export async function queryCustomTask(taskId: string): Promise<{
     const fr = data.failedReason;
     if (fr && typeof fr === "object") {
       errorMessage =
+        auditMessage(fr) ||
         fr.exception_message ||
         (fr.node_name ? `节点 ${fr.node_name} 失败` : undefined) ||
         (fr.traceback ? String(fr.traceback).slice(0, 180) : undefined);
@@ -140,6 +153,7 @@ export async function queryCustomTask(taskId: string): Promise<{
     const fr = (json.data as any)?.failedReason;
     errorMessage =
       errorMessage ||
+      auditMessage(fr) ||
       fr?.exception_message ||
       fr?.traceback ||
       json.msg ||
@@ -305,5 +319,6 @@ export function buildWorkflowNodes(
   add(spec.height, input.height);
   add(spec.denoise, input.denoise);
   add(spec.image, input.imageFileName);
+  add(spec.lora, LORA_STRENGTH);
   return list;
 }

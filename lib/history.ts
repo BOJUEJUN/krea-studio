@@ -1,6 +1,5 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { getStore } from "@netlify/blobs";
 
 export type HistoryItem = {
   id: string;
@@ -24,13 +23,66 @@ const LEGACY_FILE = path.join(process.cwd(), "data", "history.json");
 /**
  * Netlify functions have a read-only, per-instance filesystem, so history
  * lives in Netlify Blobs there. Local `next dev` keeps using data/history.json.
+ *
+ * Talks to the Blobs edge directly: the @netlify/blobs client hung inside the
+ * Next.js handler (its retry loop waits 5 s x 5), which timed the function out.
  */
-function onNetlify(): boolean {
-  return !!(process.env.NETLIFY_BLOBS_CONTEXT || process.env.NETLIFY);
+type BlobsContext = {
+  uncachedEdgeURL?: string;
+  edgeURL?: string;
+  token?: string;
+  siteID?: string;
+  primaryRegion?: string;
+};
+
+function blobsContext(): BlobsContext | null {
+  const raw = process.env.NETLIFY_BLOBS_CONTEXT;
+  if (!raw) return null;
+  try {
+    return JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
+  } catch {
+    return null;
+  }
 }
 
-function store() {
-  return getStore({ name: "history", consistency: "strong" });
+function blobRequest(key: string): { url: string; headers: Record<string, string> } | null {
+  const ctx = blobsContext();
+  const base = ctx?.uncachedEdgeURL || ctx?.edgeURL;
+  if (!ctx || !base || !ctx.token || !ctx.siteID) return null;
+  const region = ctx.primaryRegion ? `/region:${ctx.primaryRegion}` : "";
+  return {
+    url: `${base}${region}/${ctx.siteID}/site:history/${key}`,
+    headers: { authorization: `Bearer ${ctx.token}` },
+  };
+}
+
+async function blobGet<T>(key: string): Promise<T | null> {
+  const req = blobRequest(key);
+  if (!req) throw new Error("历史存储不可用");
+  const res = await fetch(req.url, {
+    headers: req.headers,
+    cache: "no-store",
+    signal: AbortSignal.timeout(8000),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`历史读取失败 (${res.status})`);
+  return (await res.json()) as T;
+}
+
+async function blobPut(key: string, value: unknown): Promise<void> {
+  const req = blobRequest(key);
+  if (!req) throw new Error("历史存储不可用");
+  const res = await fetch(req.url, {
+    method: "PUT",
+    headers: req.headers,
+    body: JSON.stringify(value),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`历史写入失败 (${res.status})`);
+}
+
+function onNetlify(): boolean {
+  return !!process.env.NETLIFY_BLOBS_CONTEXT;
 }
 
 async function readFileList(): Promise<HistoryItem[]> {
@@ -44,7 +96,7 @@ async function readFileList(): Promise<HistoryItem[]> {
 
 async function readAll(): Promise<HistoryItem[]> {
   if (!onNetlify()) return readFileList();
-  const saved = (await store().get(BLOB_KEY, { type: "json" })) as HistoryItem[] | null;
+  const saved = await blobGet<HistoryItem[]>(BLOB_KEY);
   if (Array.isArray(saved)) return saved;
   return readFileList();
 }
@@ -52,7 +104,7 @@ async function readAll(): Promise<HistoryItem[]> {
 async function writeAll(list: HistoryItem[]): Promise<void> {
   const next = list.sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_ITEMS);
   if (onNetlify()) {
-    await store().setJSON(BLOB_KEY, next);
+    await blobPut(BLOB_KEY, next);
     return;
   }
   await fs.mkdir(path.dirname(LEGACY_FILE), { recursive: true });

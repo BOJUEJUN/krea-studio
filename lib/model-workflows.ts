@@ -2,8 +2,7 @@
  * Server-only: which RunningHub workflow each model/mode runs.
  *
  * 棕色尘埃 keeps reading its IDs from the existing environment variables.
- * The other models are placeholders until their published workflows arrive:
- * fill in `workflowId` and the node IDs shown in the RunningHub workflow editor.
+ * A null workflow shows the model as 待接入 for that mode.
  */
 
 import type { Mode, ModelId, WorkflowSpec } from "./models";
@@ -22,6 +21,7 @@ function brownDust(mode: Mode): WorkflowSpec | null {
       seed: { nodeId: envValue("T2I_SEED_NODE") || "215", fieldName: "seed" },
       width: { nodeId: envValue("T2I_WIDTH_NODE") || "423", fieldName: "width" },
       height: { nodeId: envValue("T2I_HEIGHT_NODE") || "423", fieldName: "height" },
+      lora: { nodeId: "374", fieldName: "strength_model" },
     };
   }
   const workflowId = envValue("CUSTOM_I2I_WORKFLOW_ID");
@@ -32,19 +32,48 @@ function brownDust(mode: Mode): WorkflowSpec | null {
     seed: { nodeId: envValue("I2I_SEED_NODE") || "215", fieldName: "seed" },
     denoise: { nodeId: envValue("I2I_DENOISE_NODE") || "215", fieldName: "denoise" },
     image: { nodeId: envValue("I2I_IMAGE_NODE") || "213", fieldName: "image" },
+    lora: { nodeId: "244", fieldName: "strength_model" },
   };
 }
 
-// 待接入：拿到 RunningHub 发布后的工作流 ID 与节点 ID 再填写。
-const PENDING: Record<Exclude<ModelId, "brown-dust">, Record<Mode, WorkflowSpec | null>> = {
-  "little-legend": { t2i: null, i2i: null },
-  "lol-236": { t2i: null, i2i: null },
-  cherryche: { t2i: null, i2i: null },
+/**
+ * Krea2 turbo + LoRA workflows published on RunningHub. They share one node
+ * layout: 208 prompt, 215 KSampler (seed / denoise), 423 latent size, 213 image,
+ * and the LoRA loader at 374 (text-to-image) / 244 (image-to-image).
+ */
+function krea2(workflowId: string, mode: Mode): WorkflowSpec {
+  if (mode === "t2i") {
+    return {
+      workflowId,
+      prompt: { nodeId: "208", fieldName: "text" },
+      seed: { nodeId: "215", fieldName: "seed" },
+      width: { nodeId: "423", fieldName: "width" },
+      height: { nodeId: "423", fieldName: "height" },
+      lora: { nodeId: "374", fieldName: "strength_model" },
+    };
+  }
+  return {
+    workflowId,
+    prompt: { nodeId: "208", fieldName: "text" },
+    seed: { nodeId: "215", fieldName: "seed" },
+    denoise: { nodeId: "215", fieldName: "denoise" },
+    image: { nodeId: "213", fieldName: "image" },
+    lora: { nodeId: "244", fieldName: "strength_model" },
+  };
+}
+
+const WORKFLOW_IDS: Record<Exclude<ModelId, "brown-dust">, Record<Mode, string | null>> = {
+  "little-legend": { t2i: "2117874901527912450", i2i: "2117873102267961345" },
+  "lol-236-v11": { t2i: "2117877015239028737", i2i: "2117877879672492034" },
+  // 图生图工作流 2117830038564458498 目前加载的是 CherryCHE 的 LoRA，修正后再接入。
+  "lol-236": { t2i: "2117876136859492354", i2i: null },
+  cherryche: { t2i: "2117875544472768514", i2i: "2117873712153325569" },
 };
 
 export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
   if (model === "brown-dust") return brownDust(mode);
-  return PENDING[model]?.[mode] ?? null;
+  const id = WORKFLOW_IDS[model]?.[mode];
+  return id ? krea2(id, mode) : null;
 }
 
 export function availability(model: ModelId): Record<Mode, boolean> {

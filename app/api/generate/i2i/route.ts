@@ -4,7 +4,7 @@ import {
   createCustomTask,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
-import { DEFAULT_MODEL, findModel } from "@/lib/models";
+import { LEGACY_MODEL, findModel } from "@/lib/models";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
 
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "请上传参考图" }, { status: 400 });
     }
 
-    const model = findModel(form.get("model") || DEFAULT_MODEL);
+    const model = findModel(form.get("model") || LEGACY_MODEL);
     if (!model) {
       return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
     }
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       url: "",
       seed,
       createdAt: Date.now(),
-    }).catch(() => {});
+    }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
 
     return NextResponse.json(
       { ok: true, pending: true, taskId, seed, mode: "i2i", model: model.id, prompt },
