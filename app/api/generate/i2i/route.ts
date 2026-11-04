@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildCustomI2INodes,
+  buildWorkflowNodes,
   createCustomTask,
-  customWorkflowIds,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
+import { DEFAULT_MODEL, findModel } from "@/lib/models";
+import { workflowFor } from "@/lib/model-workflows";
+import { upsertHistory } from "@/lib/history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,33 +31,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "请上传参考图" }, { status: 400 });
     }
 
-    const ids = customWorkflowIds();
-    if (!ids.i2i) {
+    const model = findModel(form.get("model") || DEFAULT_MODEL);
+    if (!model) {
+      return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
+    }
+    const spec = workflowFor(model.id, "i2i");
+    if (!spec) {
       return NextResponse.json(
-        { ok: false, error: "未配置图生图工作流" },
+        { ok: false, error: `${model.name} 的图生图还在接入中` },
         { status: 400 }
       );
     }
 
     const imageFileName = await uploadInputForWorkflow(file, file.name || "input.png");
-    const nodeInfoList = buildCustomI2INodes({
-      prompt,
-      seed,
-      denoise,
-      imageFileName,
-    });
+    const nodeInfoList = buildWorkflowNodes(spec, { prompt, seed, denoise, imageFileName });
 
-    const taskId = await createCustomTask({ workflowId: ids.i2i, nodeInfoList });
+    const taskId = await createCustomTask({ workflowId: spec.workflowId, nodeInfoList });
+
+    // Record the task right away so the image reaches history even if the page closes.
+    await upsertHistory({
+      id: taskId,
+      taskId,
+      mode: "i2i",
+      model: model.id,
+      prompt: prompt.slice(0, 2000),
+      url: "",
+      seed,
+      createdAt: Date.now(),
+    }).catch(() => {});
 
     return NextResponse.json(
-      {
-        ok: true,
-        pending: true,
-        taskId,
-        seed,
-        mode: "i2i",
-        prompt,
-      },
+      { ok: true, pending: true, taskId, seed, mode: "i2i", model: model.id, prompt },
       { status: 202 }
     );
   } catch (e: any) {

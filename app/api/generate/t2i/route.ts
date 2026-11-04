@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  buildCustomT2INodes,
-  createCustomTask,
-  customWorkflowIds,
-} from "@/lib/runninghub";
+import { buildWorkflowNodes, createCustomTask } from "@/lib/runninghub";
+import { DEFAULT_MODEL, findModel } from "@/lib/models";
+import { workflowFor } from "@/lib/model-workflows";
+import { upsertHistory } from "@/lib/history";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,10 +16,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
     }
 
-    const ids = customWorkflowIds();
-    if (!ids.t2i) {
+    const model = findModel(body.model || DEFAULT_MODEL);
+    if (!model) {
+      return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
+    }
+    const spec = workflowFor(model.id, "t2i");
+    if (!spec) {
       return NextResponse.json(
-        { ok: false, error: "未配置文生图工作流" },
+        { ok: false, error: `${model.name} 的文生图还在接入中` },
         { status: 400 }
       );
     }
@@ -30,24 +33,29 @@ export async function POST(req: NextRequest) {
         ? Math.floor(Math.random() * 1e12)
         : Number(body.seed);
 
-    const nodeInfoList = buildCustomT2INodes({
+    const nodeInfoList = buildWorkflowNodes(spec, {
       prompt,
       seed,
       width: body.width ? Number(body.width) : undefined,
       height: body.height ? Number(body.height) : undefined,
     });
 
-    const taskId = await createCustomTask({ workflowId: ids.t2i, nodeInfoList });
+    const taskId = await createCustomTask({ workflowId: spec.workflowId, nodeInfoList });
+
+    // Record the task right away so the image reaches history even if the page closes.
+    await upsertHistory({
+      id: taskId,
+      taskId,
+      mode: "t2i",
+      model: model.id,
+      prompt: prompt.slice(0, 2000),
+      url: "",
+      seed,
+      createdAt: Date.now(),
+    }).catch(() => {});
 
     return NextResponse.json(
-      {
-        ok: true,
-        pending: true,
-        taskId,
-        seed,
-        mode: "t2i",
-        prompt,
-      },
+      { ok: true, pending: true, taskId, seed, mode: "t2i", model: model.id, prompt },
       { status: 202 }
     );
   } catch (e: any) {

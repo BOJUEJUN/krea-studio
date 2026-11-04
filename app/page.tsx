@@ -1,12 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
 
-type Mode = "t2i" | "i2i";
+type Readiness = Record<string, Record<Mode, boolean>>;
 
 type GalleryItem = {
   id: string;
   mode: Mode;
+  model?: string;
   prompt: string;
   url: string;
   cost?: string | null;
@@ -19,6 +21,7 @@ type PendingJob = {
   taskId: string;
   seed?: number;
   mode: Mode;
+  model?: ModelId;
   prompt: string;
   createdAt: number;
 };
@@ -38,6 +41,7 @@ const MAX_RES = 2048;
 const MIN_RES = 256;
 const EST_COST = "0.04";
 const PENDING_KEY = "krea-studio.pending-job";
+const MODEL_KEY = "krea-studio.model";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
@@ -120,7 +124,9 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
 }
 
 export default function StudioPage() {
-  const [mode, setMode] = useState<Mode>("t2i");
+  const [mode, setMode] = useState<Mode>("i2i");
+  const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [prompt, setPrompt] = useState("");
   const [width, setWidth] = useState(2048);
   const [height, setHeight] = useState(2048);
@@ -186,9 +192,16 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
+    const saved = findModel(localStorage.getItem(MODEL_KEY));
+    if (saved) setModel(saved.id);
     fetchJson("/api/status")
       .then((d) => {
         if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
+        if (Array.isArray(d?.models)) {
+          const next: Readiness = {};
+          for (const m of d.models) if (m?.id && m?.ready) next[m.id] = m.ready;
+          setReadiness(next);
+        }
       })
       .catch(() => {});
     fetchJson("/api/history")
@@ -260,7 +273,7 @@ export default function StudioPage() {
     const start = Date.now();
     let failures = 0;
     while (jobRef.current === job) {
-      if (Date.now() - start > 180_000) {
+      if (Date.now() - start > 600_000) {
         throw new Error("生成超时，请稍后重试");
       }
       let d: any;
@@ -302,6 +315,7 @@ export default function StudioPage() {
       taskId: pending.taskId,
       seed: pending.seed,
       mode: pending.mode,
+      model: pending.model,
       prompt: pending.prompt,
       url,
       cost: done.cost || null,
@@ -377,6 +391,10 @@ export default function StudioPage() {
       setError("请先输入描述");
       return;
     }
+    if (readiness && !readiness[model]?.[mode]) {
+      setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
+      return;
+    }
     const imageFile = fileBlobRef.current;
     if (mode === "i2i" && !imageFile) {
       setError("请先上传参考图");
@@ -395,6 +413,7 @@ export default function StudioPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             prompt: prompt.trim(),
+            model,
             width: clampRes(Number(widthText) || width),
             height: clampRes(Number(heightText) || height),
           }),
@@ -402,6 +421,7 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", prompt.trim());
+        fd.append("model", model);
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
@@ -414,6 +434,7 @@ export default function StudioPage() {
         taskId: String(data.taskId),
         seed: data.seed,
         mode,
+        model,
         prompt: prompt.trim(),
         createdAt: Date.now(),
       };
@@ -429,9 +450,17 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
+  }, [mode, model, readiness, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
 
   const btnPrice = lastCost || EST_COST;
+  const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
+  const modelReady = isReady(model);
+  const pickModel = (id: ModelId) => {
+    setModel(id);
+    setError(null);
+    setLastCost(null);
+    localStorage.setItem(MODEL_KEY, id);
+  };
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
@@ -451,7 +480,7 @@ export default function StudioPage() {
         >
           <div className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-3 py-2.5 sm:px-4">
             <span className="text-[13px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">
-              棕色尘埃风格化
+              AI Studio
             </span>
             {money != null && (
               <span className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]">
@@ -480,6 +509,60 @@ export default function StudioPage() {
                   {label}
                 </button>
               ))}
+            </div>
+
+            <div className="mb-4">
+              <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                模型
+              </label>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="模型">
+                {MODELS.map((m) => {
+                  const on = model === m.id;
+                  const ready = isReady(m.id);
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => pickModel(m.id)}
+                      className={`model-card group relative overflow-hidden rounded-2xl text-left transition ${
+                        on
+                          ? "ring-2 ring-[#0071e3] ring-offset-2 ring-offset-white"
+                          : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
+                      }`}
+                    >
+                      <div className="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-[#e8e8ed] to-[#f5f5f7]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={m.cover}
+                          alt=""
+                          loading="lazy"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
+                          }}
+                          className={`h-full w-full object-cover transition duration-300 group-hover:scale-[1.04] ${
+                            ready ? "" : "grayscale-[0.6] opacity-70"
+                          }`}
+                        />
+                        {!ready && (
+                          <span className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            待接入
+                          </span>
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent px-2 pb-1.5 pt-5">
+                          <div className="truncate text-[12px] font-semibold leading-tight text-white">
+                            {m.name}
+                          </div>
+                          <div className="truncate text-[10px] leading-tight text-white/80">
+                            {m.tagline}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {mode === "i2i" && (
@@ -660,7 +743,7 @@ export default function StudioPage() {
           <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
             <button
               onClick={generate}
-              disabled={loading || !prompt.trim()}
+              disabled={loading || !prompt.trim() || !modelReady}
               className="apple-btn-primary flex w-full items-center justify-center gap-2 py-3.5 text-[15px]"
             >
               {loading ? (
@@ -668,6 +751,8 @@ export default function StudioPage() {
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
                   生成中 {elapsed}s
                 </>
+              ) : !modelReady ? (
+                <span>{findModel(model)?.name} 待接入</span>
               ) : (
                 <>
                   <span>开始生成</span>

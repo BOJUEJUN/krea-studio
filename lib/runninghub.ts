@@ -45,13 +45,6 @@ async function parseJson(res: Response): Promise<any> {
   }
 }
 
-export function customWorkflowIds() {
-  return {
-    t2i: envValue("CUSTOM_T2I_WORKFLOW_ID"),
-    i2i: envValue("CUSTOM_I2I_WORKFLOW_ID"),
-  };
-}
-
 export function envNum(name: string, fallback: number): number {
   const v = envValue(name);
   const n = v ? Number(v) : NaN;
@@ -289,47 +282,28 @@ export async function getAccountStatus() {
   return parseJson(res);
 }
 
-export function buildCustomT2INodes(opts: {
-  prompt: string;
-  seed: number;
-  width?: number;
-  height?: number;
-}): NodeOverride[] {
-  const promptNode = envValue("T2I_PROMPT_NODE") || "208";
-  const seedNode = envValue("T2I_SEED_NODE") || "215";
-  const widthNode = envValue("T2I_WIDTH_NODE") || "423";
-  const heightNode = envValue("T2I_HEIGHT_NODE") || "423";
-  const list: NodeOverride[] = [
-    { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
-    { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
-  ];
-  if (opts.width) {
-    list.push({ nodeId: widthNode, fieldName: "width", fieldValue: opts.width });
+/** Map site inputs onto a model's workflow nodes; unset fields are skipped. */
+export function buildWorkflowNodes(
+  spec: import("./models").WorkflowSpec,
+  input: {
+    prompt: string;
+    seed: number;
+    width?: number;
+    height?: number;
+    denoise?: number;
+    imageFileName?: string;
   }
-  if (opts.height) {
-    list.push({ nodeId: heightNode, fieldName: "height", fieldValue: opts.height });
-  }
+): NodeOverride[] {
+  const list: NodeOverride[] = [{ ...spec.prompt, fieldValue: input.prompt }];
+  const add = (ref: { nodeId: string; fieldName: string } | undefined, value: unknown) => {
+    if (ref && value !== undefined && value !== null && value !== "") {
+      list.push({ ...ref, fieldValue: value as string | number });
+    }
+  };
+  add(spec.seed, input.seed);
+  add(spec.width, input.width);
+  add(spec.height, input.height);
+  add(spec.denoise, input.denoise);
+  add(spec.image, input.imageFileName);
   return list;
-}
-
-export function buildCustomI2INodes(opts: {
-  prompt: string;
-  seed: number;
-  denoise: number;
-  imageFileName: string;
-}): NodeOverride[] {
-  const promptNode = envValue("I2I_PROMPT_NODE") || "208";
-  const seedNode = envValue("I2I_SEED_NODE") || "215";
-  const denoiseNode = envValue("I2I_DENOISE_NODE") || "215";
-  const imageNode = envValue("I2I_IMAGE_NODE") || "213";
-  return [
-    { nodeId: promptNode, fieldName: "text", fieldValue: opts.prompt },
-    { nodeId: seedNode, fieldName: "seed", fieldValue: opts.seed },
-    { nodeId: denoiseNode, fieldName: "denoise", fieldValue: opts.denoise },
-    {
-      nodeId: imageNode,
-      fieldName: "image",
-      fieldValue: opts.imageFileName,
-    },
-  ];
 }
