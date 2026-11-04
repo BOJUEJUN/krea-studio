@@ -47,35 +47,55 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const count = Math.min(4, Math.max(1, Math.round(Number(form.get("count") || 1)) || 1));
+    // Upload the reference once; every image of the batch reuses it.
     const imageFileName = await uploadInputForWorkflow(file, file.name || "input.png");
-    const nodeInfoList = buildWorkflowNodes(spec, { prompt, seed, denoise, imageFileName });
 
-    const taskId = await createCustomTask({ workflowId: spec.workflowId, nodeInfoList });
+    const tasks: { taskId: string; seed: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      // The first image keeps a requested seed; the others get their own.
+      const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
+      const nodeInfoList = buildWorkflowNodes(spec, { prompt, seed: s, denoise, imageFileName });
+      tasks.push({ taskId: await createCustomTask({ workflowId: spec.workflowId, nodeInfoList }), seed: s });
+    }
 
     // Keep the reference for the compare view; a failure here must not block generation.
     let refUrl: string | undefined;
     try {
-      await saveReference(taskId, file);
-      refUrl = refUrlFor(taskId);
+      await saveReference(tasks[0].taskId, file);
+      refUrl = refUrlFor(tasks[0].taskId);
     } catch (e: any) {
       console.error("[refs] save failed:", e?.message || e);
     }
 
-    // Record the task right away so the image reaches history even if the page closes.
-    await upsertHistory({
-      id: taskId,
-      taskId,
-      mode: "i2i",
-      model: model.id,
-      prompt: prompt.slice(0, 2000),
-      url: "",
-      refUrl,
-      seed,
-      createdAt: Date.now(),
-    }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
+    // Record the tasks right away so images reach history even if the page closes.
+    const now = Date.now();
+    for (const [i, t] of tasks.entries()) {
+      await upsertHistory({
+        id: t.taskId,
+        taskId: t.taskId,
+        mode: "i2i",
+        model: model.id,
+        prompt: prompt.slice(0, 2000),
+        url: "",
+        refUrl,
+        seed: t.seed,
+        createdAt: now + i,
+      }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
+    }
 
     return NextResponse.json(
-      { ok: true, pending: true, taskId, seed, mode: "i2i", model: model.id, prompt, refUrl },
+      {
+        ok: true,
+        pending: true,
+        taskId: tasks[0].taskId,
+        seed: tasks[0].seed,
+        tasks,
+        mode: "i2i",
+        model: model.id,
+        prompt,
+        refUrl,
+      },
       { status: 202 }
     );
   } catch (e: any) {

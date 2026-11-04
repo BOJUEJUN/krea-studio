@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
@@ -47,9 +47,10 @@ const RATIOS = [
 
 const MAX_RES = 2560;
 const MIN_RES = 256;
-const EST_COST = "0.04";
+const EST_COST = "0.07";
 const PENDING_KEY = "krea-studio.pending-job";
 const MODEL_KEY = "krea-studio.model";
+const COUNT_KEY = "krea-studio.count";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
 const PANEL_LEFT_KEY = "krea-studio.panel-left";
 const PANEL_RIGHT_KEY = "krea-studio.panel-right";
@@ -200,6 +201,24 @@ function progressFor(t: Timing, now: number): number {
   return Math.max(0, Math.min(99, p * 100));
 }
 
+/** Pending tasks survive a reload; older pages stored a single object. */
+function readPending(): PendingJob[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PENDING_KEY) || "null");
+    const list: PendingJob[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    return list.filter((p) => p?.taskId && p?.mode);
+  } catch {
+    return [];
+  }
+}
+function writePending(list: PendingJob[]) {
+  if (list.length) localStorage.setItem(PENDING_KEY, JSON.stringify(list));
+  else localStorage.removeItem(PENDING_KEY);
+}
+function dropPending(taskId: string) {
+  writePending(readPending().filter((p) => p.taskId !== taskId));
+}
+
 function formatTime(ts: number): string {
   const d = new Date(ts);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -260,6 +279,9 @@ export default function StudioPage() {
   const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
+  const [count, setCount] = useState(1);
+  // Task ids of the latest batch, for the result strip under the preview.
+  const [batch, setBatch] = useState<string[]>([]);
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -287,7 +309,6 @@ export default function StudioPage() {
     }
     timingRef.current = { ...t, step, stepStart: now };
   }, []);
-  const [lastCost, setLastCost] = useState<string | null>(null);
   const [money, setMoney] = useState<string | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -369,6 +390,8 @@ export default function StudioPage() {
     const saved = findModel(localStorage.getItem(MODEL_KEY));
     if (saved) setModel(saved.id);
     if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
+    const savedCount = Number(localStorage.getItem(COUNT_KEY));
+    if (savedCount >= 1 && savedCount <= 4) setCount(savedCount);
     fetchJson("/api/status")
       .then((d) => {
         if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
@@ -413,7 +436,6 @@ export default function StudioPage() {
     setResultRef(g.mode === "i2i" && g.refUrl ? g.refUrl : null);
     setResultSize(null);
     setResultKey((k) => k + 1);
-    if (g.cost) setLastCost(String(g.cost));
   }, []);
 
   // paste image upload — defined after onPickFile
@@ -478,6 +500,35 @@ export default function StudioPage() {
       }
       setPrompt(g.prompt);
       flash("已填入这条记录的模型与提示词");
+    },
+    [flash]
+  );
+
+  /** Save an image with a readable name (works for our copies and remote links). */
+  const downloadItem = useCallback(
+    async (g: GalleryItem) => {
+      const name = `AI-Studio_${(findModel(g.model)?.name ?? g.label ?? "image").replace(/\s+/g, "-")}_${formatTime(
+        g.createdAt
+      ).replace(/[: ]/g, "-")}.png`;
+      try {
+        let href = g.url;
+        let revoke = false;
+        if (!g.url.startsWith("/")) {
+          const res = await fetch(g.url);
+          if (!res.ok) throw new Error();
+          href = URL.createObjectURL(await res.blob());
+          revoke = true;
+        }
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        if (revoke) window.setTimeout(() => URL.revokeObjectURL(href), 4000);
+      } catch {
+        flash("下载失败，请稍后重试");
+      }
     },
     [flash]
   );
@@ -572,7 +623,7 @@ export default function StudioPage() {
       if (st === "SUCCESS" && d.outputs?.length) return d;
       if (st === "FAILED" || st === "CANCEL") {
         // A finished-but-failed task must not be resumed by the next click.
-        localStorage.removeItem(PENDING_KEY);
+        dropPending(taskId);
         throw new Error(d.error || "任务失败");
       }
       await sleep(3000);
@@ -580,74 +631,95 @@ export default function StudioPage() {
     return null;
   }, []);
 
-  const finishPending = useCallback(async (pending: PendingJob, job: number) => {
-    const done = await pollTask(pending.taskId, job);
-    if (done === null || jobRef.current !== job) return;
-    const url = done.outputs?.[0];
-    if (!url) throw new Error(done.error || "任务完成但未返回图片");
-    if (done.cost) setLastCost(String(done.cost));
-    const t = timingRef.current;
-    if (t.step === "render" && t.renderKey && t.stepStart) {
-      recordSeconds(t.renderKey, (Date.now() - t.stepStart) / 1000);
-    }
-    setProgress(100);
-    const item: GalleryItem = {
-      id: pending.taskId,
-      taskId: pending.taskId,
-      seed: pending.seed,
-      mode: pending.mode,
-      model: pending.model,
-      prompt: pending.prompt,
-      url,
-      refUrl: pending.refUrl,
-      cost: done.cost || null,
-      createdAt: pending.createdAt,
-    };
-    showItem(item);
-    setGallery((g) => [
-      item,
-      ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url),
-    ]);
-    const saved = await fetchJson("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(item),
-    }).catch(() => null);
-    // The server keeps a permanent copy; point history at it.
-    const kept = saved?.item?.url;
-    if (typeof kept === "string" && kept !== url) {
-      setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
-    }
-    localStorage.removeItem(PENDING_KEY);
-    fetchJson("/api/status")
-      .then((d) => {
-        if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
-      })
-      .catch(() => {});
-  }, [pollTask, showItem]);
+  /** Wait for one task, then show (first of the batch only) and record it. */
+  const finishPending = useCallback(
+    async (pending: PendingJob, job: number, shown: { v: boolean }): Promise<GalleryItem | null> => {
+      const done = await pollTask(pending.taskId, job);
+      if (done === null || jobRef.current !== job) return null;
+      const url = done.outputs?.[0];
+      if (!url) throw new Error(done.error || "任务完成但未返回图片");
+      const item: GalleryItem = {
+        id: pending.taskId,
+        taskId: pending.taskId,
+        seed: pending.seed,
+        mode: pending.mode,
+        model: pending.model,
+        prompt: pending.prompt,
+        url,
+        refUrl: pending.refUrl,
+        cost: done.cost || null,
+        createdAt: pending.createdAt,
+      };
+      setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
+        (a, b) => b.createdAt - a.createdAt
+      ));
+      if (!shown.v) {
+        shown.v = true;
+        showItem(item);
+      }
+      dropPending(pending.taskId);
+      const saved = await fetchJson("/api/history", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(item),
+      }).catch(() => null);
+      // The server keeps a permanent copy; point history at it.
+      const kept = saved?.item?.url;
+      if (typeof kept === "string" && kept !== url) {
+        setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
+      }
+      return item;
+    },
+    [pollTask, showItem]
+  );
 
-  const resumePending = useCallback((pending: PendingJob) => {
-    if (busyRef.current) return;
+  /** Run a whole batch in parallel; errors only surface if every image failed. */
+  const finishBatch = useCallback(
+    async (pendings: PendingJob[], job: number) => {
+      setBatch(pendings.map((p) => p.taskId));
+      const shown = { v: false };
+      const results = await Promise.allSettled(pendings.map((p) => finishPending(p, job, shown)));
+      if (jobRef.current !== job) return;
+      const t = timingRef.current;
+      if (t.step === "render" && t.renderKey && t.stepStart) {
+        recordSeconds(t.renderKey, (Date.now() - t.stepStart) / 1000);
+      }
+      setProgress(100);
+      fetchJson("/api/status")
+        .then((d) => {
+          if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
+        })
+        .catch(() => {});
+      const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (failed.length === results.length) throw failed[0].reason;
+      if (failed.length) {
+        setError(`${failed.length} 张没有生成成功：${failed[0].reason?.message || "任务失败"}`);
+      }
+    },
+    [finishPending]
+  );
+
+  const resumePending = useCallback((pendings: PendingJob[]) => {
+    if (busyRef.current || !pendings.length) return;
     busyRef.current = true;
     const job = ++jobRef.current;
-    const renderKey = `${pending.model ?? "brown-dust"}:${pending.mode}`;
+    const first = pendings[0];
+    const renderKey = `${first.model ?? "brown-dust"}:${first.mode}`;
     timingRef.current = {
       step: "render",
-      stepStart: pending.createdAt || Date.now(),
-      est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[pending.mode]) },
+      stepStart: first.createdAt || Date.now(),
+      est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[first.mode]) },
       renderKey: "", // resumed runs started earlier; don't learn from them
     };
-    setJobVisual({ aspect: 1, reference: pending.mode === "i2i" ? pending.refUrl ?? null : null });
+    setJobVisual({ aspect: 1, reference: first.mode === "i2i" ? first.refUrl ?? null : null });
     setLoading(true);
     setError(null);
-    finishPending(pending, job)
+    finishBatch(pendings, job)
       .catch((e: any) => {
         if (jobRef.current !== job) return;
         const message = e?.message || "查询任务失败";
-        setError(`${message}（任务号：${pending.taskId}，刷新页面可继续查询）`);
-        if (/任务失败|已完成但未返回|不存在|错误码/.test(message)) {
-          localStorage.removeItem(PENDING_KEY);
-        }
+        setError(`${message}（刷新页面可继续查询）`);
+        if (/任务失败|已完成但未返回|不存在|错误码|审核/.test(message)) writePending([]);
       })
       .finally(() => {
         if (jobRef.current === job) {
@@ -655,32 +727,19 @@ export default function StudioPage() {
           setLoading(false);
         }
       });
-  }, [finishPending]);
+  }, [finishBatch]);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PENDING_KEY);
-      if (!raw) return;
-      const pending = JSON.parse(raw) as PendingJob;
-      if (pending?.taskId && pending?.prompt && pending?.mode) resumePending(pending);
-    } catch {
-      localStorage.removeItem(PENDING_KEY);
-    }
+    const pendings = readPending();
+    if (pendings.length) resumePending(pendings);
   }, [resumePending]);
 
   const generate = useCallback(async () => {
     if (busyRef.current) return;
-    try {
-      const raw = localStorage.getItem(PENDING_KEY);
-      if (raw) {
-        const pending = JSON.parse(raw) as PendingJob;
-        if (pending?.taskId) {
-          resumePending(pending);
-          return;
-        }
-      }
-    } catch {
-      localStorage.removeItem(PENDING_KEY);
+    const leftover = readPending();
+    if (leftover.length) {
+      resumePending(leftover);
+      return;
     }
     setError(null);
     if ((mode === "t2i" || !reverse) && !prompt.trim()) {
@@ -720,9 +779,9 @@ export default function StudioPage() {
       window.setTimeout(scrollToResult, 60);
     }
     setResultUrl(null);
+    setBatch([]);
     setResultRef(null);
     setResultSize(null);
-    setLastCost(null);
     try {
       let data: any;
       const userPrompt = prompt.trim();
@@ -750,6 +809,7 @@ export default function StudioPage() {
           body: JSON.stringify({
             prompt: finalPrompt,
             model,
+            count,
             width: clampRes(Number(widthText) || width),
             height: clampRes(Number(heightText) || height),
           }),
@@ -758,6 +818,7 @@ export default function StudioPage() {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
         fd.append("model", model);
+        fd.append("count", String(count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
@@ -767,17 +828,22 @@ export default function StudioPage() {
         throw new Error(data?.error || "任务创建失败");
       }
       startStep("render");
-      const pending: PendingJob = {
-        taskId: String(data.taskId),
-        seed: data.seed,
+      const created: { taskId: string; seed?: number }[] =
+        Array.isArray(data.tasks) && data.tasks.length
+          ? data.tasks
+          : [{ taskId: String(data.taskId), seed: data.seed }];
+      const now = Date.now();
+      const pendings: PendingJob[] = created.map((t, i) => ({
+        taskId: String(t.taskId),
+        seed: t.seed,
         mode,
         model,
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
-        createdAt: Date.now(),
-      };
-      localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
-      await finishPending(pending, job);
+        createdAt: now + i,
+      }));
+      writePending(pendings);
+      await finishBatch(pendings, job);
     } catch (e: any) {
       if (jobRef.current === job) {
         setError(e?.message || "网络错误");
@@ -788,9 +854,23 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, finishBatch, resumePending]);
 
-  const btnPrice = lastCost || EST_COST;
+  // Estimated price: median real cost of recent images from the same model
+  // and mode (falls back to any recent image, then a default), times the count.
+  const btnPrice = (() => {
+    const costs = (pick: (g: GalleryItem) => boolean) =>
+      gallery
+        .filter((g) => g.url && Number(g.cost) > 0 && pick(g))
+        .slice(0, 15)
+        .map((g) => Number(g.cost))
+        .sort((a, b) => a - b);
+    let list = costs((g) => (g.model ?? "brown-dust") === model && g.mode === mode);
+    if (!list.length) list = costs(() => true);
+    const each = list.length ? list[Math.floor(list.length / 2)] : Number(EST_COST);
+    const total = each * count;
+    return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
+  })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
   const histStats = (() => {
     let done = 0,
@@ -824,7 +904,6 @@ export default function StudioPage() {
   const pickModel = (id: ModelId) => {
     setModel(id);
     setError(null);
-    setLastCost(null);
     localStorage.setItem(MODEL_KEY, id);
   };
 
@@ -866,7 +945,6 @@ export default function StudioPage() {
                   data-active={mode === key}
                   onClick={() => {
                     setMode(key);
-                    setLastCost(null);
                   }}
                   className="apple-seg-item px-3 py-2 text-[13px] font-medium text-[#6e6e73]"
                 >
@@ -1130,7 +1208,8 @@ export default function StudioPage() {
                   >
                     <span className="text-[13px] text-[#86868b]">比例</span>
                     <span className="flex items-center gap-1.5 text-[13px] font-medium text-[#1d1d1f]">
-                      {width}×{height}
+                      {/* A preset shows its ratio name; custom sizes show the resolution. */}
+                      {RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}`}
                       <svg
                         className={`h-3.5 w-3.5 text-[#86868b] transition-transform ${showMoreRatio ? "rotate-180" : ""}`}
                         viewBox="0 0 16 16"
@@ -1263,6 +1342,30 @@ export default function StudioPage() {
           </div>
 
           <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                张数
+              </span>
+              <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="radio"
+                    aria-checked={count === n}
+                    data-active={count === n}
+                    disabled={loading}
+                    onClick={() => {
+                      setCount(n);
+                      localStorage.setItem(COUNT_KEY, String(n));
+                    }}
+                    className="apple-seg-item w-9 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={generate}
               disabled={
@@ -1351,7 +1454,7 @@ export default function StudioPage() {
             </div>
           </div>
           <div
-            className="relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
+            className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
             style={{
               background:
                 "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,245,247,0.96))",
@@ -1387,6 +1490,35 @@ export default function StudioPage() {
                 <p className="text-[15px] font-medium text-[#1d1d1f]">
                   从一句描述开始
                 </p>
+              </div>
+            )}
+            {!loading && batch.length > 1 && (
+              <div className="batch-strip absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-2xl bg-white/80 p-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl">
+                {batch.map((id, i) => {
+                  const g = gallery.find((x) => x.id === id);
+                  const on = id === currentId;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      disabled={!g?.url}
+                      onClick={() => g && showItem(g)}
+                      title={`第 ${i + 1} 张`}
+                      className={`h-12 w-12 overflow-hidden rounded-xl bg-[#f2f2f4] transition active:scale-[0.95] ${
+                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "opacity-80 hover:opacity-100"
+                      }`}
+                    >
+                      {g?.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={g.url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
+                          失败
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1478,81 +1610,6 @@ export default function StudioPage() {
             </div>
           </div>
 
-          {currentItem && currentItem.url && (
-            <div key={currentItem.id} className="history-detail shrink-0 border-b border-black/[0.06] px-3 py-2.5">
-              <div className="flex items-center gap-1.5 text-[11px] text-[#86868b]">
-                <span className="truncate font-semibold text-[#1d1d1f]">
-                  {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
-                </span>
-                <span>·</span>
-                <span className="shrink-0">{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
-                <span>·</span>
-                <span className="shrink-0 tabular-nums">{formatTime(currentItem.createdAt)}</span>
-                {currentItem.cost && (
-                  <span className="ml-auto shrink-0 tabular-nums">¥{currentItem.cost}</span>
-                )}
-              </div>
-              {currentItem.prompt && (
-                <button
-                  type="button"
-                  onClick={() => setPromptOpen((v) => !v)}
-                  className="prompt-toggle mt-1.5 block w-full rounded-xl px-2 py-1.5 -mx-2 text-left transition hover:bg-black/[0.035]"
-                  aria-expanded={promptOpen}
-                  title={promptOpen ? "收起" : "展开全文"}
-                >
-                  <span
-                    className={`text-[12px] leading-relaxed text-[#3a3a3c] ${
-                      promptOpen ? "block max-h-[30vh] overflow-y-auto" : "line-clamp-2"
-                    }`}
-                  >
-                    {currentItem.prompt}
-                  </span>
-                  {(currentItem.prompt.length > 60 || promptOpen) && (
-                    <span className="mt-0.5 block text-[11px] font-medium text-[#0071e3]">
-                      {promptOpen ? "收起" : "展开全文"}
-                    </span>
-                  )}
-                  {promptOpen && currentItem.seed != null && (
-                    <span className="mt-1 block text-[11px] tabular-nums text-[#86868b]">
-                      种子 {currentItem.seed}
-                    </span>
-                  )}
-                </button>
-              )}
-              <div className="mt-1.5 flex items-center gap-1">
-                {(
-                  [
-                    ["复制", () => copyPrompt(currentItem)],
-                    ["复用", () => reuseItem(currentItem)],
-                    ["作参考", () => useAsReference(currentItem)],
-                  ] as const
-                ).map(([label, fn]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={fn}
-                    className="item-action rounded-full px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.96]"
-                  >
-                    {label}
-                  </button>
-                ))}
-                <a
-                  href={currentItem.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="item-action rounded-full px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.96]"
-                >
-                  原图
-                </a>
-                {notice && (
-                  <span className="animate-chip-in ml-auto truncate rounded-full bg-[#0071e3] px-2 py-0.5 text-[10px] text-white">
-                    {notice}
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {visibleHistory.length === 0 ? (
               <p className="px-2 py-8 text-center text-[12px] text-[#aeaeb2]">
@@ -1560,9 +1617,13 @@ export default function StudioPage() {
               </p>
             ) : (
               <div key={`${page}-${histMode}-${histFilter}`} className="history-grid grid grid-cols-2 gap-2">
-                {pageItems.map((g) => {
+                {pageItems.map((g, i) => {
                   const on = g.id === currentId;
+                  const sel = pageItems.findIndex((x) => x.id === currentId);
+                  // Details open under the row that holds the selected card (2 columns).
+                  const rowEnd = sel < 0 ? -1 : Math.min(sel % 2 === 0 ? sel + 1 : sel, pageItems.length - 1);
                   return (
+                    <Fragment key={g.id}>
                     <button
                       key={g.id}
                       type="button"
@@ -1625,6 +1686,82 @@ export default function StudioPage() {
                         </span>
                       </span>
                     </button>
+                    {i === rowEnd && currentItem && currentItem.url && (
+                      <div
+                        key={`detail-${currentItem.id}`}
+                        className="history-detail relative col-span-2 rounded-2xl bg-[#f5f5f7] px-3 py-2.5"
+                      >
+                        <span
+                          aria-hidden
+                          className="absolute -top-1.5 h-3 w-3 rotate-45 rounded-[2px] bg-[#f5f5f7]"
+                          style={{ left: sel % 2 === 0 ? "calc(25% - 6px)" : "calc(75% - 6px)" }}
+                        />
+                        <div className="flex items-center gap-1.5 text-[11px] text-[#86868b]">
+                          <span className="truncate font-semibold text-[#1d1d1f]">
+                            {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
+                          </span>
+                          <span className="shrink-0">{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
+                          {currentItem.cost && (
+                            <span className="ml-auto shrink-0 tabular-nums">¥{currentItem.cost}</span>
+                          )}
+                        </div>
+                        {currentItem.prompt && (
+                          <button
+                            type="button"
+                            onClick={() => setPromptOpen((v) => !v)}
+                            aria-expanded={promptOpen}
+                            className="prompt-toggle mt-1 block w-full text-left"
+                          >
+                            <span
+                              className={`text-[12px] leading-relaxed text-[#3a3a3c] ${
+                                promptOpen ? "block max-h-[30vh] overflow-y-auto" : "line-clamp-2"
+                              }`}
+                            >
+                              {currentItem.prompt}
+                            </span>
+                            {(currentItem.prompt.length > 60 || promptOpen) && (
+                              <span className="mt-0.5 block text-[11px] font-medium text-[#0071e3]">
+                                {promptOpen ? "收起" : "展开全文"}
+                              </span>
+                            )}
+                            {promptOpen && currentItem.seed != null && (
+                              <span className="mt-1 block text-[11px] tabular-nums text-[#86868b]">
+                                种子 {currentItem.seed}
+                              </span>
+                            )}
+                          </button>
+                        )}
+                        <div className="mt-2 flex flex-wrap items-center gap-1">
+                          {(
+                            [
+                              ["下载", () => downloadItem(currentItem)],
+                              ["复制", () => copyPrompt(currentItem)],
+                              ["复用", () => reuseItem(currentItem)],
+                              ["作参考", () => useAsReference(currentItem)],
+                            ] as const
+                          ).map(([label, fn]) => (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={fn}
+                              className={`item-action rounded-full px-2.5 py-1 text-[11px] font-medium transition active:scale-[0.96] ${
+                                label === "下载"
+                                  ? "bg-[#0071e3] text-white hover:bg-[#0077ed]"
+                                  : "bg-white text-[#1d1d1f] hover:text-[#0071e3]"
+                              }`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                          {notice && (
+                            <span className="animate-chip-in ml-auto truncate rounded-full bg-[#1d1d1f]/80 px-2 py-0.5 text-[10px] text-white">
+                              {notice}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    </Fragment>
                   );
                 })}
               </div>
