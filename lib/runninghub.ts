@@ -320,5 +320,8 @@ export function buildWorkflowNodes(
   add(spec.denoise, input.denoise);
   add(spec.image, input.imageFileName);
   add(spec.lora, LORA_STRENGTH);
+  if (spec.lora && spec.loraName) {
+    list.push({ nodeId: spec.lora.nodeId, fieldName: "lora_name", fieldValue: spec.loraName });
+  }
   return list;
 }

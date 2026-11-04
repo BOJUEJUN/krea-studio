@@ -62,18 +62,25 @@ function krea2(workflowId: string, mode: Mode): WorkflowSpec {
   };
 }
 
-const WORKFLOW_IDS: Record<Exclude<ModelId, "brown-dust">, Record<Mode, string | null>> = {
+type Entry = string | { id: string; loraName: string } | null;
+
+const WORKFLOW_IDS: Record<Exclude<ModelId, "brown-dust">, Record<Mode, Entry>> = {
   "little-legend": { t2i: "2117874901527912450", i2i: "2117873102267961345" },
   "lol-236-v11": { t2i: "2117877015239028737", i2i: "2117877879672492034" },
-  // 图生图工作流 2117830038564458498 目前加载的是 CherryCHE 的 LoRA，修正后再接入。
-  "lol-236": { t2i: "2117876136859492354", i2i: null },
+  // The published 图生图 workflow loads the CherryCHE LoRA, so swap in the LOL2.36MP file.
+  "lol-236": {
+    t2i: "2117876136859492354",
+    i2i: { id: "2117830038564458498", loraName: "LOL2.36MP.safetensors" },
+  },
   cherryche: { t2i: "2117875544472768514", i2i: "2117873712153325569" },
 };
 
 export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
   if (model === "brown-dust") return brownDust(mode);
-  const id = WORKFLOW_IDS[model]?.[mode];
-  return id ? krea2(id, mode) : null;
+  const entry = WORKFLOW_IDS[model]?.[mode];
+  if (!entry) return null;
+  if (typeof entry === "string") return krea2(entry, mode);
+  return { ...krea2(entry.id, mode), loraName: entry.loraName };
 }
 
 export function availability(model: ModelId): Record<Mode, boolean> {
