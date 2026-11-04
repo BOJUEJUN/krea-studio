@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GeneratingCanvas } from "./generating-canvas";
 
 export type LoadingVariant = "dots" | "glow" | "scan" | "ring" | "mosaic" | "aurora";
@@ -16,12 +16,32 @@ export const LOADING_VARIANTS: { key: LoadingVariant; name: string; desc: string
 
 type Props = { aspect: number; progress: number; reference?: string | null };
 
+/** Fits an aspect-correct, rounded frame inside whatever space it is given. */
 function Frame({ aspect, children }: { aspect: number; children: React.ReactNode }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const fit = () => {
+      const W = el.clientWidth - 24;
+      const H = el.clientHeight - 24;
+      if (W <= 0 || H <= 0) return;
+      const a = aspect > 0 ? aspect : 1;
+      const w = Math.min(W, H * a);
+      setBox({ w: Math.round(w), h: Math.round(w / a) });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [aspect]);
   return (
-    <div className="flex h-full w-full items-center justify-center p-3">
+    <div ref={wrapRef} className="flex h-full w-full items-center justify-center">
+      {/* Always mounted so children (e.g. canvases) exist from the first render. */}
       <div
-        className="relative max-h-full max-w-full overflow-hidden rounded-[22px] bg-[#eef1f8] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)]"
-        style={{ aspectRatio: String(aspect > 0 ? aspect : 1), height: "100%" }}
+        className="relative overflow-hidden rounded-[22px] bg-[#eef1f8] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)]"
+        style={box ? { width: box.w, height: box.h } : { width: 0, height: 0, visibility: "hidden" }}
       >
         {children}
       </div>
