@@ -18,7 +18,10 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const prompt = String(form.get("prompt") || "").trim();
     const file = form.get("image") as File | null;
-    const denoise = Number(form.get("denoise") || 0.5);
+    const denoiseRaw = Number(form.get("denoise") || 0.5);
+    const denoise = Number.isFinite(denoiseRaw)
+      ? Math.min(1, Math.max(0.01, Math.round(denoiseRaw * 100) / 100))
+      : 0.5;
     const seedRaw = form.get("seed");
     const seed =
       seedRaw === null || seedRaw === undefined || seedRaw === ""

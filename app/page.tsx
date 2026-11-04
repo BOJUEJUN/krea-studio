@@ -238,6 +238,13 @@ export default function StudioPage() {
   const [heightText, setHeightText] = useState("1536");
   const [showMoreRatio, setShowMoreRatio] = useState(false);
   const [denoise, setDenoise] = useState(0.5);
+  // Text being typed into the 重绘幅度 number; null while not editing.
+  const [denoiseText, setDenoiseText] = useState<string | null>(null);
+  const commitDenoise = useCallback((raw: string) => {
+    const v = Number(raw);
+    if (Number.isFinite(v)) setDenoise(Math.min(1, Math.max(0.01, Math.round(v * 100) / 100)));
+    setDenoiseText(null);
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -1210,19 +1217,46 @@ export default function StudioPage() {
               <div className="mb-4">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
                   <span>重绘幅度</span>
-                  <span className="tabular-nums text-[#0071e3]">
-                    {denoise.toFixed(2)}
-                  </span>
+                  {denoiseText === null ? (
+                    <button
+                      type="button"
+                      onClick={() => setDenoiseText(denoise.toFixed(2))}
+                      title="点击输入数值（0.01 – 1）"
+                      className="denoise-value rounded-full px-2 py-0.5 tabular-nums text-[12px] text-[#0071e3] transition hover:bg-[#0071e3]/10"
+                    >
+                      {denoise.toFixed(2)}
+                    </button>
+                  ) : (
+                    <input
+                      autoFocus
+                      inputMode="decimal"
+                      value={denoiseText}
+                      onChange={(e) => setDenoiseText(e.target.value.replace(/[^\d.]/g, ""))}
+                      onFocus={(e) => e.currentTarget.select()}
+                      onBlur={(e) => commitDenoise(e.currentTarget.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitDenoise(e.currentTarget.value);
+                        if (e.key === "Escape") setDenoiseText(null);
+                      }}
+                      aria-label="重绘幅度数值"
+                      className="w-16 rounded-full border border-[#0071e3]/50 bg-white px-2 py-0.5 text-center text-[12px] tabular-nums text-[#0071e3] outline-none ring-4 ring-[#0071e3]/10"
+                    />
+                  )}
                 </div>
                 <input
                   type="range"
-                  min={0.1}
+                  min={0.01}
                   max={1}
-                  step={0.05}
+                  step={0.01}
                   value={denoise}
                   onChange={(e) => setDenoise(Number(e.target.value))}
+                  aria-label="重绘幅度"
                   className="w-full"
                 />
+                <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[#aeaeb2]">
+                  <span>0.01 更像原图</span>
+                  <span>1.00 变化最大</span>
+                </div>
               </div>
             )}
           </div>
