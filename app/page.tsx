@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { GeneratingCanvas } from "./generating-canvas";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
 
@@ -195,6 +196,7 @@ export default function StudioPage() {
   const [histQuery, setHistQuery] = useState("");
   const [histFailed, setHistFailed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [previewAspect, setPreviewAspect] = useState(1);
   const [compareMode, setCompareMode] = useState<CompareMode>("slider");
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -809,6 +811,10 @@ export default function StudioPage() {
                     <img
                       src={preview}
                       alt="参考图"
+                      onLoad={(e) => {
+                        const el = e.currentTarget;
+                        if (el.naturalHeight) setPreviewAspect(el.naturalWidth / el.naturalHeight);
+                      }}
                       className="animate-image-reveal block h-auto max-h-[46vh] w-auto max-w-full rounded-xl object-contain"
                     />
                   ) : (
@@ -1090,23 +1096,10 @@ export default function StudioPage() {
             }}
           >
             {loading ? (
-              <div className="flex flex-col items-center gap-3">
-                <div
-                  className="animate-shimmer animate-pulse-ring h-14 w-14 rounded-[18px]"
-                  style={{
-                    background:
-                      "linear-gradient(135deg, rgba(0,113,227,0.18), rgba(90,200,250,0.28))",
-                  }}
-                />
-                <p className="text-[14px] text-[#6e6e73]">生成中</p>
-                <div className="h-1.5 w-44 overflow-hidden rounded-full bg-black/[0.06]">
-                  <div
-                    className="h-full rounded-full bg-[#0071e3] transition-[width] duration-300"
-                    style={{ width: `${Math.floor(progress)}%` }}
-                  />
-                </div>
-                <p className="text-[12px] tabular-nums text-[#6e6e73]">{Math.floor(progress)}%</p>
-              </div>
+              <GeneratingCanvas
+                aspect={mode === "i2i" && preview ? previewAspect : width / height}
+                progress={progress}
+              />
             ) : resultUrl && resultRef && compareOn ? (
               <div className="h-full w-full p-2">
                 <CompareView key={`${resultKey}-${compareMode}`} before={resultRef} after={resultUrl} mode={compareMode} />

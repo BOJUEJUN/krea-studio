@@ -290,3 +290,41 @@ input[type="range"] {
     transition: none !important;
   }
 }
+
+/* Generating placeholder: slow diagonal light sweep over the dot field. */
+.generating-sheen {
+  background: linear-gradient(
+    115deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.55) 48%,
+    transparent 66%
+  );
+  background-size: 250% 100%;
+  animation: generating-sweep 2.8s ease-in-out infinite;
+}
+@keyframes generating-sweep {
+  from { background-position: 130% 0; }
+  to { background-position: -30% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .generating-sheen { animation: none; }
+}
+
+/* Soft colour fields drifting under the dots. */
+.generating-glow {
+  background:
+    radial-gradient(40% 35% at 30% 30%, rgba(120, 150, 255, 0.35), transparent 70%),
+    radial-gradient(45% 40% at 70% 70%, rgba(190, 140, 255, 0.28), transparent 70%),
+    radial-gradient(35% 30% at 65% 25%, rgba(90, 200, 250, 0.25), transparent 70%);
+  background-size: 160% 160%;
+  animation: generating-drift 7s ease-in-out infinite alternate;
+  filter: blur(8px);
+}
+@keyframes generating-drift {
+  0% { background-position: 0% 0%; }
+  50% { background-position: 60% 40%; }
+  100% { background-position: 100% 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .generating-glow { animation: none; }
+}
