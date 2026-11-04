@@ -195,6 +195,7 @@ export default function StudioPage() {
   const [histModel, setHistModel] = useState<"all" | ModelId>("all");
   const [histQuery, setHistQuery] = useState("");
   const [histFailed, setHistFailed] = useState(false);
+  const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [previewAspect, setPreviewAspect] = useState(1);
   const [compareMode, setCompareMode] = useState<CompareMode>("slider");
@@ -223,8 +224,19 @@ export default function StudioPage() {
   }, []);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
   const fileBlobRef = useRef<File | null>(null);
   const timerRef = useRef<number | null>(null);
+
+  // Grow the description box with its text, up to a cap (then it scrolls).
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    const max = Math.max(160, Math.round(window.innerHeight * 0.4));
+    el.style.height = "auto";
+    el.style.height = `${Math.min(max, Math.max(104, el.scrollHeight + 2))}px`;
+    el.style.overflowY = el.scrollHeight + 2 > max ? "auto" : "hidden";
+  }, [prompt, mode]);
   const jobRef = useRef(0);
   const busyRef = useRef(false);
 
@@ -626,6 +638,10 @@ export default function StudioPage() {
       (!histFailed || (!g.url && g.status === "failed")) &&
       (!query || g.prompt.toLowerCase().includes(query))
   );
+  const HIST_PAGE_SIZE = 20;
+  const histPages = Math.max(1, Math.ceil(visibleHistory.length / HIST_PAGE_SIZE));
+  const page = Math.min(histPage, histPages - 1);
+  const pageItems = visibleHistory.slice(page * HIST_PAGE_SIZE, (page + 1) * HIST_PAGE_SIZE);
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
   const pickModel = (id: ModelId) => {
@@ -869,6 +885,7 @@ export default function StudioPage() {
                 )}
               </div>
               <textarea
+                ref={promptRef}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 rows={4}
@@ -879,7 +896,7 @@ export default function StudioPage() {
                       ? "可不填：会根据参考图自动反推提示词，这里可补充想要的变化"
                       : "希望参考图如何变化…"
                 }
-                className="w-full resize-y rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+                className="w-full resize-none rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
               />
             </div>
 
@@ -1191,7 +1208,10 @@ export default function StudioPage() {
             </div>
             <input
               value={histQuery}
-              onChange={(e) => setHistQuery(e.target.value)}
+              onChange={(e) => {
+                setHistQuery(e.target.value);
+                setHistPage(0);
+              }}
               placeholder="搜索提示词…"
               className="mb-2 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-[12px] text-[#1d1d1f] outline-none focus:border-[rgba(0,113,227,0.45)]"
             />
@@ -1208,7 +1228,10 @@ export default function StudioPage() {
                     key={key}
                     type="button"
                     data-active={histMode === key}
-                    onClick={() => setHistMode(key)}
+                    onClick={() => {
+                      setHistMode(key);
+                      setHistPage(0);
+                    }}
                     className="apple-seg-item px-2 py-1 text-[11px] font-medium text-[#6e6e73]"
                   >
                     {label}
@@ -1217,7 +1240,10 @@ export default function StudioPage() {
               </div>
               <select
                 value={histModel}
-                onChange={(e) => setHistModel(e.target.value as "all" | ModelId)}
+                onChange={(e) => {
+                  setHistModel(e.target.value as "all" | ModelId);
+                  setHistPage(0);
+                }}
                 className="min-w-0 flex-1 rounded-lg border border-black/[0.08] bg-white px-1.5 py-1 text-[11px] text-[#1d1d1f] outline-none"
                 aria-label="按模型筛选"
               >
@@ -1231,7 +1257,10 @@ export default function StudioPage() {
               <button
                 type="button"
                 aria-pressed={histFailed}
-                onClick={() => setHistFailed((v) => !v)}
+                onClick={() => {
+                  setHistFailed((v) => !v);
+                  setHistPage(0);
+                }}
                 className={`rounded-lg px-1.5 py-1 text-[11px] font-medium transition ${
                   histFailed ? "bg-[#d70015] text-white" : "text-[#6e6e73] hover:bg-black/[0.05]"
                 }`}
@@ -1248,7 +1277,7 @@ export default function StudioPage() {
               </p>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                {visibleHistory.map((g) => {
+                {pageItems.map((g) => {
                   const on = g.id === currentId;
                   return (
                     <button
@@ -1303,6 +1332,29 @@ export default function StudioPage() {
               </div>
             )}
           </div>
+          {histPages > 1 && (
+            <div className="flex shrink-0 items-center justify-between border-t border-black/[0.06] px-3 py-2">
+              <button
+                type="button"
+                disabled={page === 0}
+                onClick={() => setHistPage(page - 1)}
+                className="pager-btn rounded-full px-3 py-1 text-[12px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-35"
+              >
+                上一页
+              </button>
+              <span className="text-[11px] tabular-nums text-[#6e6e73]">
+                {page + 1} / {histPages}
+              </span>
+              <button
+                type="button"
+                disabled={page >= histPages - 1}
+                onClick={() => setHistPage(page + 1)}
+                className="pager-btn rounded-full px-3 py-1 text-[12px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-35"
+              >
+                下一页
+              </button>
+            </div>
+          )}
         </aside>
       </main>
 
