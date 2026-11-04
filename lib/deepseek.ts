@@ -19,7 +19,8 @@ function lastParagraph(text: string): string {
     .map((p) =>
       p
         .replace(/^\s*(\*\*)?(生图)?提示词(\*\*)?\s*[:：]\s*/i, "")
-        .replace(/^[`"“'「]+|[`"”'」]+$/g, "")
+        .replace(/^[`"“'「*#>\s-]+|[`"”'」*\s]+$/g, "")
+        .replace(/\*\*/g, "")
         .trim()
     )
     .filter(Boolean);

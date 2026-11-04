@@ -1052,7 +1052,7 @@ export default function StudioPage() {
             <h2 className="text-[13px] font-medium text-[#1d1d1f]">结果</h2>
             {resultUrl && !loading && resultSize && (
               <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] tabular-nums text-[#6e6e73]">
-                {resultSize.w} × {resultSize.h} · {((resultSize.w * resultSize.h) / 1e6).toFixed(2)} MP
+                {resultSize.w} × {resultSize.h}
               </span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
