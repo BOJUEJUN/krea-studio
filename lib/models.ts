@@ -27,8 +27,6 @@ export type WorkflowSpec = {
   image?: FieldRef;
   /** LoraLoaderModelOnly strength; always sent so the site controls it. */
   lora?: FieldRef;
-  /** Replaces the workflow's lora_name when the published workflow loads the wrong file. */
-  loraName?: string;
 };
 
 /** LoRA strength sent with every request (workflows default to 1-1.5). */

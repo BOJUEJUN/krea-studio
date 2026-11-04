@@ -7,6 +7,7 @@ import {
 import { LEGACY_MODEL, findModel } from "@/lib/models";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
+import { refUrlFor, saveReference } from "@/lib/refs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +49,15 @@ export async function POST(req: NextRequest) {
 
     const taskId = await createCustomTask({ workflowId: spec.workflowId, nodeInfoList });
 
+    // Keep the reference for the compare view; a failure here must not block generation.
+    let refUrl: string | undefined;
+    try {
+      await saveReference(taskId, file);
+      refUrl = refUrlFor(taskId);
+    } catch (e: any) {
+      console.error("[refs] save failed:", e?.message || e);
+    }
+
     // Record the task right away so the image reaches history even if the page closes.
     await upsertHistory({
       id: taskId,
@@ -56,12 +66,13 @@ export async function POST(req: NextRequest) {
       model: model.id,
       prompt: prompt.slice(0, 2000),
       url: "",
+      refUrl,
       seed,
       createdAt: Date.now(),
     }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
 
     return NextResponse.json(
-      { ok: true, pending: true, taskId, seed, mode: "i2i", model: model.id, prompt },
+      { ok: true, pending: true, taskId, seed, mode: "i2i", model: model.id, prompt, refUrl },
       { status: 202 }
     );
   } catch (e: any) {
