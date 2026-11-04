@@ -608,11 +608,16 @@ export default function StudioPage() {
       item,
       ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url),
     ]);
-    await fetchJson("/api/history", {
+    const saved = await fetchJson("/api/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(item),
-    });
+    }).catch(() => null);
+    // The server keeps a permanent copy; point history at it.
+    const kept = saved?.item?.url;
+    if (typeof kept === "string" && kept !== url) {
+      setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
+    }
     localStorage.removeItem(PENDING_KEY);
     fetchJson("/api/status")
       .then((d) => {
@@ -1253,10 +1258,6 @@ export default function StudioPage() {
                   aria-label="重绘幅度"
                   className="w-full"
                 />
-                <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[#aeaeb2]">
-                  <span>0.01 更像原图</span>
-                  <span>1.00 变化最大</span>
-                </div>
               </div>
             )}
           </div>

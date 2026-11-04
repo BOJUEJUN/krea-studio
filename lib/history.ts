@@ -14,6 +14,8 @@ export type HistoryItem = {
   url: string;
   status?: HistoryStatus;
   error?: string;
+  /** Original RunningHub URL once `url` points at the backed-up copy. */
+  sourceUrl?: string;
   /** 图生图 reference kept for the compare view, e.g. /api/ref/<taskId>. */
   refUrl?: string;
   cost?: string | null;
@@ -152,7 +154,9 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     label: next.label ?? prev.label,
     prompt: next.prompt || prev.prompt,
     refUrl: next.refUrl || prev.refUrl,
-    url: next.url || prev.url,
+    // A backed-up copy (/api/img/...) always wins over a RunningHub link.
+    url: [next.url, prev.url].find((u) => u?.startsWith("/api/img/")) || next.url || prev.url,
+    sourceUrl: next.sourceUrl ?? prev.sourceUrl,
     cost: next.cost ?? prev.cost,
     seed: next.seed ?? prev.seed,
     createdAt: prev.createdAt || next.createdAt,

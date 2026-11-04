@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
 import { readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
+import { isRemoteImage, withBackup } from "@/lib/images";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +29,9 @@ async function settlePending(items: HistoryItem[]): Promise<boolean> {
       try {
         const r = await queryCustomTask(item.taskId as string);
         if (r.status === "SUCCESS" && r.outputs[0]) {
-          await upsertHistory({ ...item, url: r.outputs[0], cost: r.cost ?? item.cost ?? null });
+          await upsertHistory(
+            await withBackup({ ...item, url: r.outputs[0], cost: r.cost ?? item.cost ?? null })
+          );
           changed = true;
         } else if (r.status === "FAILED" || r.status === "CANCEL" || expired) {
           await upsertHistory({
@@ -49,10 +52,28 @@ async function settlePending(items: HistoryItem[]): Promise<boolean> {
   return changed;
 }
 
+const MAX_BACKUPS_PER_REQUEST = 3;
+
+/** Copy images still served from RunningHub (older or failed backups). */
+async function backfillImages(items: HistoryItem[]): Promise<boolean> {
+  const todo = items.filter((x) => isRemoteImage(x.url)).slice(0, MAX_BACKUPS_PER_REQUEST);
+  if (!todo.length) return false;
+  const done = await Promise.all(todo.map((x) => withBackup(x)));
+  let changed = false;
+  for (const item of done) {
+    if (!isRemoteImage(item.url)) {
+      await upsertHistory(item);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export async function GET() {
   try {
     let items = await readHistory();
     if (await settlePending(items)) items = await readHistory();
+    if (await backfillImages(items)) items = await readHistory();
     return NextResponse.json(
       {
         ok: true,
@@ -99,7 +120,7 @@ export async function POST(req: NextRequest) {
       taskId: body.taskId ? String(body.taskId) : undefined,
       createdAt: Number(body.createdAt) || Date.now(),
     };
-    const saved = await upsertHistory(item);
+    const saved = await upsertHistory(await withBackup(item));
     return NextResponse.json({ ok: true, item: saved });
   } catch (e: any) {
     return NextResponse.json(
