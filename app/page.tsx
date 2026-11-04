@@ -139,14 +139,66 @@ async function describeCopy(file: File): Promise<Blob> {
   }
 }
 
-// One 0-100% bar for prompt reverse + submit + generation. Each step eases
-// toward its cap; the bar only reaches 100% when the image arrives.
-const PROGRESS_STEPS = {
-  describe: { cap: 15, rate: 0.06 },
-  submit: { cap: 22, rate: 0.08 },
-  render: { cap: 97, rate: 0.012 },
-} as const;
-type ProgressStep = keyof typeof PROGRESS_STEPS;
+// One 0-100% bar for prompt reverse + upload + generation, driven by time.
+// Defaults come from RunningHub records (submit → image: 图生图 ≈ 50 s,
+// 文生图 ≈ 42 s; DeepSeek reverse ≈ 8 s). Each finished run refines the
+// estimate per model/mode (stored locally), so the bar tracks real timing.
+type ProgressStep = "describe" | "submit" | "render";
+const DURATIONS_KEY = "krea-studio.durations";
+const DEFAULT_SECONDS = { describe: 8, submit: 1.5, t2i: 42, i2i: 50 };
+
+function loadDurations(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(DURATIONS_KEY) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+
+function estimateSeconds(key: string, fallback: number): number {
+  const v = loadDurations()[key];
+  return Number.isFinite(v) && v > 2 && v < 600 ? v : fallback;
+}
+
+/** Exponential moving average so one slow queue doesn't skew the estimate. */
+function recordSeconds(key: string, seconds: number) {
+  if (!(seconds > 2 && seconds < 600)) return;
+  const all = loadDurations();
+  const prev = all[key];
+  all[key] = Number.isFinite(prev) ? prev * 0.7 + seconds * 0.3 : seconds;
+  try {
+    localStorage.setItem(DURATIONS_KEY, JSON.stringify(all));
+  } catch {}
+}
+
+type Timing = {
+  step: ProgressStep;
+  stepStart: number;
+  est: Record<ProgressStep, number>;
+  renderKey: string;
+};
+
+/** Share of the bar already earned by finished steps plus the running one. */
+function progressFor(t: Timing, now: number): number {
+  const order: ProgressStep[] = ["describe", "submit", "render"];
+  const total = order.reduce((n, k) => n + t.est[k], 0) || 1;
+  let done = 0;
+  for (const k of order) {
+    if (k === t.step) break;
+    done += t.est[k];
+  }
+  const elapsed = (now - t.stepStart) / 1000;
+  const est = t.est[t.step];
+  let p = (done + Math.min(elapsed, est)) / total;
+  if (t.step === "render") {
+    // Linear to 97 % at the estimate; past it, creep toward 99 % until the image lands.
+    p = Math.min(p, 0.97);
+    if (elapsed > est) p = 0.97 + 0.02 * (1 - Math.exp(-(elapsed - est) / 30));
+  } else {
+    p = Math.min(p, (done + est) / total);
+  }
+  return Math.max(0, Math.min(99, p * 100));
+}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -195,9 +247,9 @@ export default function StudioPage() {
   const [modelOpen, setModelOpen] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [histMode, setHistMode] = useState<"all" | Mode>("all");
-  const [histModel, setHistModel] = useState<"all" | ModelId>("all");
+  // "all" | "ok" | "bad" | "model:<id>"
+  const [histFilter, setHistFilter] = useState<string>("all");
   const [histQuery, setHistQuery] = useState("");
-  const [histFailed, setHistFailed] = useState(false);
   const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -213,7 +265,21 @@ export default function StudioPage() {
   const [compareMode, setCompareMode] = useState<CompareMode>("slider");
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
-  const stepRef = useRef<ProgressStep>("render");
+  const timingRef = useRef<Timing>({
+    step: "render",
+    stepStart: 0,
+    est: { describe: 0, submit: 0, render: DEFAULT_SECONDS.i2i },
+    renderKey: "",
+  });
+  const startStep = useCallback((step: ProgressStep) => {
+    const t = timingRef.current;
+    const now = Date.now();
+    // Learn how long the step that just ended really took.
+    if (t.step === "describe" && step !== "describe" && t.stepStart) {
+      recordSeconds("describe", (now - t.stepStart) / 1000);
+    }
+    timingRef.current = { ...t, step, stepStart: now };
+  }, []);
   const [lastCost, setLastCost] = useState<string | null>(null);
   const [money, setMoney] = useState<string | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
@@ -304,11 +370,11 @@ export default function StudioPage() {
 
   useEffect(() => {
     if (loading) {
-      setProgress(0);
+      setProgress(progressFor(timingRef.current, Date.now()));
       timerRef.current = window.setInterval(() => {
-        const { cap, rate } = PROGRESS_STEPS[stepRef.current];
-        setProgress((p) => (p >= cap ? p : p + Math.max(0.05, (cap - p) * rate)));
-      }, 250);
+        const next = progressFor(timingRef.current, Date.now());
+        setProgress((p) => Math.max(p, next)); // never move backwards
+      }, 200);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -463,13 +529,13 @@ export default function StudioPage() {
       } catch (e) {
         if (jobRef.current !== job) return null;
         if (++failures >= 8) throw e;
-        await sleep(3000);
+        await sleep(2000);
         continue;
       }
       if (jobRef.current !== job) return null;
       if (!d?.ok) {
         if (++failures >= 8) throw new Error(d?.error || "查询任务失败");
-        await sleep(3000);
+        await sleep(2000);
         continue;
       }
       failures = 0;
@@ -491,6 +557,10 @@ export default function StudioPage() {
     const url = done.outputs?.[0];
     if (!url) throw new Error(done.error || "任务完成但未返回图片");
     if (done.cost) setLastCost(String(done.cost));
+    const t = timingRef.current;
+    if (t.step === "render" && t.renderKey && t.stepStart) {
+      recordSeconds(t.renderKey, (Date.now() - t.stepStart) / 1000);
+    }
     setProgress(100);
     const item: GalleryItem = {
       id: pending.taskId,
@@ -526,7 +596,13 @@ export default function StudioPage() {
     if (busyRef.current) return;
     busyRef.current = true;
     const job = ++jobRef.current;
-    stepRef.current = "render";
+    const renderKey = `${pending.model ?? "brown-dust"}:${pending.mode}`;
+    timingRef.current = {
+      step: "render",
+      stepStart: pending.createdAt || Date.now(),
+      est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[pending.mode]) },
+      renderKey: "", // resumed runs started earlier; don't learn from them
+    };
     setJobVisual({ aspect: 1, reference: pending.mode === "i2i" ? pending.refUrl ?? null : null });
     setLoading(true);
     setError(null);
@@ -588,7 +664,18 @@ export default function StudioPage() {
     }
     busyRef.current = true;
     const job = ++jobRef.current;
-    stepRef.current = mode === "i2i" && reverse ? "describe" : "submit";
+    const useReverse = mode === "i2i" && reverse;
+    const renderKey = `${model}:${mode}`;
+    timingRef.current = {
+      step: useReverse ? "describe" : "submit",
+      stepStart: Date.now(),
+      est: {
+        describe: useReverse ? estimateSeconds("describe", DEFAULT_SECONDS.describe) : 0,
+        submit: DEFAULT_SECONDS.submit,
+        render: estimateSeconds(renderKey, DEFAULT_SECONDS[mode]),
+      },
+      renderKey,
+    };
     setJobVisual({
       aspect: mode === "i2i" && preview ? previewAspect : width / height,
       reference: mode === "i2i" ? preview : null,
@@ -616,7 +703,7 @@ export default function StudioPage() {
           if (!userPrompt) throw new Error(`${e?.message || "提示词反推失败"}，请手动填写描述后重试`);
         }
         if (jobRef.current !== job) return;
-        stepRef.current = "submit";
+        startStep("submit");
       }
       if (mode === "t2i") {
         data = await fetchJson("/api/generate/t2i", {
@@ -641,7 +728,7 @@ export default function StudioPage() {
       if (!data?.ok || !data?.taskId) {
         throw new Error(data?.error || "任务创建失败");
       }
-      stepRef.current = "render";
+      startStep("render");
       const pending: PendingJob = {
         taskId: String(data.taskId),
         seed: data.seed,
@@ -663,7 +750,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
 
   const btnPrice = lastCost || EST_COST;
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
@@ -684,8 +771,10 @@ export default function StudioPage() {
   const visibleHistory = gallery.filter(
     (g) =>
       (histMode === "all" || g.mode === histMode) &&
-      (histModel === "all" || (g.model ?? (g.label ? "" : "brown-dust")) === histModel) &&
-      (!histFailed || (!g.url && (g.status === "failed" || g.status === "expired"))) &&
+      (histFilter === "all" ||
+        (histFilter === "ok" && !!g.url) ||
+        (histFilter === "bad" && !g.url) ||
+        histFilter === `model:${g.model ?? (g.label ? "" : "brown-dust")}`) &&
       (!query || g.prompt.toLowerCase().includes(query))
   );
   const HIST_PAGE_SIZE = 20;
@@ -1249,8 +1338,7 @@ export default function StudioPage() {
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
             <span className="truncate text-[11px] tabular-nums text-[#86868b]">
-              {histStats.done} 张{histStats.failed ? ` · 失败 ${histStats.failed}` : ""}
-              {histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 共 ¥{histStats.cost}
+              {histStats.done} 张{histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · ¥{histStats.cost}
             </span>
           </div>
           <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">
@@ -1287,34 +1375,31 @@ export default function StudioPage() {
                 ))}
               </div>
               <select
-                value={histModel}
+                value={histFilter}
                 onChange={(e) => {
-                  setHistModel(e.target.value as "all" | ModelId);
+                  setHistFilter(e.target.value);
                   setHistPage(0);
                 }}
-                className="min-w-0 flex-1 rounded-full border border-black/[0.08] bg-white px-1.5 py-1 text-[11px] text-[#1d1d1f] outline-none"
-                aria-label="按模型筛选"
-              >
-                <option value="all">全部模型</option>
-                {MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                aria-pressed={histFailed}
-                onClick={() => {
-                  setHistFailed((v) => !v);
-                  setHistPage(0);
-                }}
-                className={`rounded-full px-2 py-1 text-[11px] font-medium transition ${
-                  histFailed ? "bg-[#d70015] text-white" : "text-[#6e6e73] hover:bg-black/[0.05]"
+                className={`hist-filter min-w-0 flex-1 rounded-full border bg-white px-2.5 py-1 text-[11px] outline-none transition ${
+                  histFilter === "all"
+                    ? "border-black/[0.08] text-[#1d1d1f]"
+                    : "border-[#0071e3]/40 text-[#0071e3]"
                 }`}
+                aria-label="筛选历史"
               >
-                失败
-              </button>
+                <option value="all">全部记录</option>
+                <optgroup label="按模型">
+                  {MODELS.map((m) => (
+                    <option key={m.id} value={`model:${m.id}`}>
+                      {m.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="按状态">
+                  <option value="ok">已生成（{histStats.done}）</option>
+                  <option value="bad">失败 / 已过期（{histStats.failed}）</option>
+                </optgroup>
+              </select>
             </div>
           </div>
 
@@ -1399,7 +1484,7 @@ export default function StudioPage() {
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div key={`${page}-${histMode}-${histModel}-${histFailed}`} className="history-grid grid grid-cols-2 gap-2">
+              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid grid grid-cols-2 gap-2">
                 {pageItems.map((g) => {
                   const on = g.id === currentId;
                   return (
@@ -1420,8 +1505,10 @@ export default function StudioPage() {
                         }
                       }}
                       title={g.url ? g.prompt : `失败：${g.error || "任务失败"}\n${g.prompt}`}
-                      className={`history-card apple-thumb overflow-hidden rounded-xl bg-white text-left transition ${
-                        on ? "ring-2 ring-[#0071e3]" : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
+                      className={`history-card overflow-hidden rounded-xl bg-white text-left ${
+                        on
+                          ? "outline outline-2 -outline-offset-2 outline-[#0071e3]"
+                          : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
                       }`}
                     >
                       <span className="relative block aspect-square w-full bg-[#f2f2f4]">

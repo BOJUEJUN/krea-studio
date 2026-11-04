@@ -413,14 +413,12 @@ textarea {
 .history-grid > *:nth-child(2n) { animation-delay: 0.03s; }
 .history-grid > *:nth-child(n + 5) { animation-delay: 0.06s; }
 .history-grid > *:nth-child(n + 9) { animation-delay: 0.09s; }
+/* Selection ring must appear instantly; only the lift eases. */
 .history-card {
-  transition:
-    box-shadow 0.3s var(--ease-standard),
-    transform 0.35s var(--ease-spring);
+  transition: transform 0.35s var(--ease-spring);
 }
 .history-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 .history-card:active {
   transform: scale(0.97);
