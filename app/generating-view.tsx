@@ -44,6 +44,98 @@ function Frame({ aspect, children }: { aspect: number; children: React.ReactNode
 }
 
 /** ChatGPT-like: faint, sparse dots gathered in a soft patch that drifts. */
+// ---- Smooth noise for the "liquid" dot field ------------------------------
+// Classic 3D Perlin gradient noise (z = time) with domain warping, which bends
+// the field into irregular, merging droplets instead of straight wave bands.
+const PERM = (() => {
+  const p = Array.from({ length: 256 }, (_, i) => i);
+  let seed = 1337;
+  for (let i = 255; i > 0; i--) {
+    seed = (seed * 16807) % 2147483647;
+    const j = seed % (i + 1);
+    [p[i], p[j]] = [p[j], p[i]];
+  }
+  return Uint8Array.from([...p, ...p]);
+})();
+
+const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10);
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+function grad(h: number, x: number, y: number, z: number) {
+  const u = h < 8 ? x : y;
+  const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+  return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+}
+function noise3(x: number, y: number, z: number) {
+  const X = Math.floor(x) & 255,
+    Y = Math.floor(y) & 255,
+    Z = Math.floor(z) & 255;
+  x -= Math.floor(x);
+  y -= Math.floor(y);
+  z -= Math.floor(z);
+  const u = fade(x),
+    v = fade(y),
+    w = fade(z);
+  const A = PERM[X] + Y,
+    AA = PERM[A] + Z,
+    AB = PERM[A + 1] + Z;
+  const B = PERM[X + 1] + Y,
+    BA = PERM[B] + Z,
+    BB = PERM[B + 1] + Z;
+  return lerp(
+    lerp(
+      lerp(grad(PERM[AA] & 15, x, y, z), grad(PERM[BA] & 15, x - 1, y, z), u),
+      lerp(grad(PERM[AB] & 15, x, y - 1, z), grad(PERM[BB] & 15, x - 1, y - 1, z), u),
+      v
+    ),
+    lerp(
+      lerp(grad(PERM[AA + 1] & 15, x, y, z - 1), grad(PERM[BA + 1] & 15, x - 1, y, z - 1), u),
+      lerp(grad(PERM[AB + 1] & 15, x, y - 1, z - 1), grad(PERM[BB + 1] & 15, x - 1, y - 1, z - 1), u),
+      v
+    ),
+    w
+  );
+}
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * 0..1 dot opacity at (u, v), in units of the frame's short side.
+ *
+ * Shape: a soft body whose centre wanders slowly; domain-warped noise bends
+ * its outline so it stretches, splits into two drops and merges back over
+ * ~10 s. Inside, a finer noise layer makes denser and sparser areas drift.
+ * Parameters were tuned offline against rendered frame sequences.
+ */
+function blobDensity(u: number, v: number, w: number, h: number, t: number) {
+  const F = 1.2;
+  const z = t * 0.06; // slow: the shape morphs, it never twitches
+  const px = u * F + t * 0.02;
+  const py = v * F - t * 0.012;
+  const qx = noise3(px, py, z);
+  const qy = noise3(px + 5.2, py + 1.3, z + 2.7);
+  const n =
+    noise3(px + qx, py + qy, z * 1.3) +
+    0.35 * noise3(2.1 * px + 1.8 * qx, 2.1 * py + 1.8 * qy, z * 1.7 + 9.1);
+
+  const ws = 0.6;
+  const cx = w * (0.5 + 0.18 * Math.sin(t * 0.21 * ws)) + 0.08 * Math.sin(t * 0.53 * ws);
+  const cy = h * (0.42 + 0.14 * Math.sin(t * 0.17 * ws + 1.1)) + 0.06 * Math.cos(t * 0.41 * ws);
+  const R = 0.38 + 0.05 * Math.sin(t * 0.33 * ws);
+  const d = Math.hypot(u - cx, (v - cy) * 1.1) / R + 1.4 * n;
+  let blob = 1 - smooth(0.45, 1.15, d);
+
+  const tn = noise3(px * 3 + 3.3, py * 3 - 1.7, z * 1.6 + 4.4);
+  blob *= 0.55 + 0.45 * smooth(-0.35, 0.45, tn);
+
+  const m = Math.max(0.0001, Math.min(w, h));
+  const edge =
+    smooth(0, 0.14, Math.min(u, w - u) / m) * smooth(0, 0.14, Math.min(v, h - v) / m);
+  return blob * edge;
+}
+
 export function GeneratingView({ aspect, progress }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
@@ -68,33 +160,37 @@ export function GeneratingView({ aspect, progress }: Props) {
     const ro = new ResizeObserver(size);
     ro.observe(wrap);
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const gap = 13;
+    // Dot spacing follows the frame (7-12 px) so small and large frames show a
+    // similar number of dots across the droplet.
+    const BUCKETS = 10; // dots are batched by opacity: one fill per bucket
     let raf = 0;
+    let last = 0;
     const t0 = performance.now();
     const draw = (now: number) => {
+      raf = reduce ? 0 : requestAnimationFrame(draw);
+      if (now - last < 33 && !reduce) return; // ~30 fps is plenty for slow motion
+      last = now;
       const t = reduce ? 0 : (now - t0) / 1000;
       ctx.clearRect(0, 0, W, H);
-      // Centre of the dot patch wanders slowly around the upper half.
-      const cx = W * (0.5 + 0.22 * Math.sin(t * 0.35));
-      const cy = H * (0.38 + 0.16 * Math.sin(t * 0.27 + 1.3));
-      const rx = W * 0.42,
-        ry = H * 0.3;
-      for (let y = gap / 2; y < H; y += gap) {
-        for (let x = gap / 2; x < W; x += gap) {
-          const dx = (x - cx) / rx,
-            dy = (y - cy) / ry;
-          const d = dx * dx + dy * dy;
-          if (d > 1) continue;
-          const ripple = 0.5 + 0.5 * Math.sin(x * 0.045 + y * 0.03 - t * 1.6);
-          const a = (1 - d) * (0.15 + 0.45 * ripple);
-          if (a < 0.03) continue;
-          ctx.fillStyle = `rgba(60, 60, 67, ${a.toFixed(3)})`;
-          ctx.beginPath();
-          ctx.arc(x, y, 0.9, 0, Math.PI * 2);
-          ctx.fill();
+      // Work in units of the frame's short side so a big frame shows the same
+      // few soft blobs as a small one, just larger, instead of more streaks.
+      const S = Math.max(1, Math.min(W, H));
+      const GAP = Math.min(12, Math.max(7, S / 40));
+      const paths: Path2D[] = Array.from({ length: BUCKETS }, () => new Path2D());
+      for (let y = GAP / 2; y < H; y += GAP) {
+        for (let x = GAP / 2; x < W; x += GAP) {
+          const a = blobDensity(x / S, y / S, W / S, H / S, t);
+          if (a < 0.04) continue;
+          const k = Math.min(BUCKETS - 1, Math.floor(a * BUCKETS));
+          const r = 0.55 + a * 0.75;
+          paths[k].moveTo(x + r, y);
+          paths[k].arc(x, y, r, 0, Math.PI * 2);
         }
       }
-      if (!reduce) raf = requestAnimationFrame(draw);
+      for (let k = 0; k < BUCKETS; k++) {
+        ctx.fillStyle = `rgba(60, 60, 67, ${(0.06 + ((k + 0.5) / BUCKETS) * 0.5).toFixed(3)})`;
+        ctx.fill(paths[k]);
+      }
     };
     raf = requestAnimationFrame(draw);
     return () => {
