@@ -714,10 +714,13 @@ export default function StudioPage() {
                     onClick={() => setModelOpen((v) => !v)}
                     className="model-current flex w-full items-center gap-3 rounded-2xl bg-white p-2 text-left ring-1 ring-black/[0.08] transition hover:ring-black/[0.2] active:scale-[0.99]"
                   >
-                    <span className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-[#ececf0]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={cur.cover} alt="" className="h-full w-full object-contain" />
-                    </span>
+                    {/* Natural aspect ratio: fixed height, width follows the cover. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={cur.cover}
+                      alt=""
+                      className="block h-14 w-auto max-w-[96px] shrink-0 rounded-xl object-cover"
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">
                         {cur.name}
@@ -739,9 +742,10 @@ export default function StudioPage() {
                   </button>
                 );
               })()}
-              {modelOpen && (
-                <div className="animate-chip-in mt-2">
-              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="模型">
+              <div className={`collapse-grid ${modelOpen ? "is-open" : ""}`} inert={!modelOpen}>
+                <div className="min-h-0 overflow-hidden">
+                <div className="pt-2">
+              <div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
                     {MODELS.map((m) => {
                       const on = model === m.id;
                       const ready = isReady(m.id);
@@ -755,30 +759,20 @@ export default function StudioPage() {
                             pickModel(m.id);
                             setModelOpen(false);
                           }}
-                          className={`model-card group relative overflow-hidden rounded-2xl text-left transition ${
+                          className={`model-card group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl text-left transition ${
                             on
                               ? "ring-2 ring-[#0071e3] ring-offset-2 ring-offset-white"
                               : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
                           }`}
                         >
-                          {/* Fixed frame; the cover is scaled to fit whole (no crop, no stretch). */}
-                          <div className="relative h-[96px] w-full overflow-hidden bg-[#ececf0]">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={m.cover}
-                              alt=""
-                              aria-hidden
-                              className="absolute inset-0 h-full w-full scale-110 object-cover opacity-50 blur-md"
-                            />
+                          {/* Cover at its own aspect ratio: no letterbox, no crop, no stretch. */}
+                          <div className="relative w-full overflow-hidden bg-[#ececf0]">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={m.cover}
                               alt=""
                               loading="lazy"
-                              onError={(e) => {
-                                (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-                              }}
-                              className={`relative h-full w-full object-contain transition duration-300 group-hover:scale-[1.03] ${
+                              className={`block h-auto w-full transition duration-300 group-hover:scale-[1.03] ${
                                 ready ? "" : "grayscale-[0.6] opacity-70"
                               }`}
                             />
@@ -801,14 +795,35 @@ export default function StudioPage() {
                     })}
                   </div>
                 </div>
-              )}
+                </div>
+              </div>
             </div>
 
             {mode === "i2i" && (
               <div className="mb-4">
-                <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                  参考图
-                </label>
+                <div className="mb-2 flex items-center justify-between">
+                  <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                    参考图
+                  </label>
+                  {preview && (
+                    <div className="animate-chip-in flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => fileRef.current?.click()}
+                        className="ref-action rounded-full px-2 py-0.5 text-[11px] font-medium text-[#0071e3] transition hover:bg-[#0071e3]/10 active:scale-[0.96]"
+                      >
+                        更换
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onPickFile(null)}
+                        className="ref-action rounded-full px-2 py-0.5 text-[11px] font-medium text-[#d70015] transition hover:bg-[#d70015]/10 active:scale-[0.96]"
+                      >
+                        删除
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div
                   onClick={() => fileRef.current?.click()}
                   onDragOver={(e) => e.preventDefault()}
@@ -817,7 +832,7 @@ export default function StudioPage() {
                     const f = e.dataTransfer.files?.[0];
                     if (f) onPickFile(f);
                   }}
-                  className={`flex cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-dashed border-black/[0.12] bg-white/70 transition hover:border-[rgba(0,113,227,0.45)] ${
+                  className={`ref-drop relative flex cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-dashed border-black/[0.12] bg-white/70 transition hover:border-[rgba(0,113,227,0.45)] ${
                     preview ? "p-1.5" : "h-32"
                   }`}
                 >
@@ -833,6 +848,11 @@ export default function StudioPage() {
                       }}
                       className="animate-image-reveal block h-auto max-h-[46vh] w-auto max-w-full rounded-xl object-contain"
                     />
+                  ) : null}
+                  {preview ? (
+                    <span className="ref-hint pointer-events-none absolute inset-x-0 bottom-2 mx-auto w-fit rounded-full bg-black/55 px-2.5 py-1 text-[11px] text-white opacity-0 transition-opacity duration-300">
+                      点击或拖入新图片即可更换
+                    </span>
                   ) : (
                     <div className="text-center">
                       <div className="mx-auto mb-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.05] text-[16px] text-[#6e6e73]">
@@ -847,7 +867,12 @@ export default function StudioPage() {
                   type="file"
                   accept="image/*"
                   className="hidden"
-                  onChange={(e) => onPickFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) onPickFile(f);
+                    // Allow picking the same file again after deleting it.
+                    e.target.value = "";
+                  }}
                 />
               </div>
             )}
@@ -1116,6 +1141,7 @@ export default function StudioPage() {
               <GeneratingCanvas
                 aspect={mode === "i2i" && preview ? previewAspect : width / height}
                 progress={progress}
+                reference={mode === "i2i" ? preview : null}
               />
             ) : resultUrl && resultRef && compareOn ? (
               <div className="h-full w-full p-2">
@@ -1276,7 +1302,7 @@ export default function StudioPage() {
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
+              <div key={`${page}-${histMode}-${histModel}-${histFailed}`} className="history-grid grid grid-cols-2 gap-2">
                 {pageItems.map((g) => {
                   const on = g.id === currentId;
                   return (

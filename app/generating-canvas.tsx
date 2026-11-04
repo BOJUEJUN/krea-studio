@@ -3,27 +3,29 @@
 import { useEffect, useRef, useState } from "react";
 
 /**
- * Loading placeholder: a halftone dot field whose brightness drifts like
- * flowing light, framed at the aspect ratio of the image being generated.
+ * Loading placeholder framed at the output's aspect ratio: large, soft colour
+ * fields drifting slowly with a gentle light sweep. For image-to-image the
+ * reference sits underneath, heavily blurred, and "develops" (less blur, more
+ * opacity) as progress advances.
  */
 export function GeneratingCanvas({
   aspect,
   progress,
+  reference,
 }: {
   aspect: number;
   progress: number;
+  reference?: string | null;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
 
-  // Fit an aspect-correct frame inside the available area.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const fit = () => {
-      const W = el.clientWidth;
-      const H = el.clientHeight - 28; // room for the percentage line
+      const W = el.clientWidth - 24;
+      const H = el.clientHeight - 56; // room for the progress line
       if (W <= 0 || H <= 0) return;
       const a = aspect > 0 ? aspect : 1;
       const w = Math.min(W, H * a);
@@ -35,68 +37,43 @@ export function GeneratingCanvas({
     return () => ro.disconnect();
   }, [aspect]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !box) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    canvas.width = box.w * dpr;
-    canvas.height = box.h * dpr;
-    ctx.scale(dpr, dpr);
-
-    const gap = 8;
-    const cols = Math.ceil(box.w / gap) + 1;
-    const rows = Math.ceil(box.h / gap) + 1;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0;
-    const start = performance.now();
-
-    const draw = (now: number) => {
-      const t = reduce ? 0 : (now - start) / 1000;
-      ctx.clearRect(0, 0, box.w, box.h);
-      for (let j = 0; j < rows; j++) {
-        for (let i = 0; i < cols; i++) {
-          const x = i * gap + (j % 2 ? gap / 2 : 0);
-          const y = j * gap;
-          const u = x / box.w;
-          const v = y / box.h;
-          // Layered travelling waves give a soft, flowing light field.
-          const n =
-            Math.sin(u * 5.2 + t * 1.1) * 0.45 +
-            Math.sin(v * 4.4 - t * 0.8 + u * 2.1) * 0.35 +
-            Math.sin((u + v) * 7.5 + t * 1.7) * 0.2;
-          const k = Math.min(1, Math.max(0, (n + 1) / 2)); // 0..1
-          const kk = k * k * k;
-          const r = 0.35 + kk * 3.3;
-          const hue = 222 + u * 50 - v * 30 + Math.sin(t * 0.4) * 12;
-          ctx.fillStyle = `hsla(${hue}, 80%, ${66 - kk * 30}%, ${0.1 + kk * 0.85})`;
-          ctx.beginPath();
-          ctx.arc(x, y, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-      if (!reduce) raf = requestAnimationFrame(draw);
-    };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
-  }, [box]);
+  const p = Math.max(0, Math.min(100, progress)) / 100;
 
   return (
     <div ref={wrapRef} className="flex h-full w-full flex-col items-center justify-center p-3">
       {box && (
         <div
-          className="generating-frame relative overflow-hidden rounded-[18px] bg-[#f3f5fb]"
+          className="gen-frame relative overflow-hidden rounded-[22px]"
           style={{ width: box.w, height: box.h }}
         >
-          <div className="generating-glow pointer-events-none absolute inset-0" />
-          <canvas ref={canvasRef} style={{ width: box.w, height: box.h }} className="relative block" />
-          <div className="generating-sheen pointer-events-none absolute inset-0" />
+          {reference && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={reference}
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full scale-110 object-cover transition-[filter,opacity] duration-700 ease-out"
+              style={{
+                filter: `blur(${Math.round(36 - p * 22)}px) saturate(1.15)`,
+                opacity: 0.35 + p * 0.4,
+              }}
+            />
+          )}
+          <div className="gen-blob gen-blob-a" />
+          <div className="gen-blob gen-blob-b" />
+          <div className="gen-blob gen-blob-c" />
+          <div className="gen-sheen" />
         </div>
       )}
-      <p className="mt-2.5 h-[18px] text-[12px] tabular-nums text-[#6e6e73]">
-        正在生成 · {Math.floor(progress)}%
-      </p>
+      <div className="mt-4 flex w-48 flex-col items-center gap-1.5">
+        <div className="h-[3px] w-full overflow-hidden rounded-full bg-black/[0.06]">
+          <div
+            className="h-full rounded-full bg-[#0071e3] transition-[width] duration-500 ease-out"
+            style={{ width: `${Math.floor(progress)}%` }}
+          />
+        </div>
+        <p className="text-[12px] tabular-nums text-[#6e6e73]">正在生成 · {Math.floor(progress)}%</p>
+      </div>
     </div>
   );
 }
