@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { GeneratingCanvas } from "./generating-canvas";
+import { LoadingView, type LoadingVariant } from "./loading-variants";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
 
@@ -13,7 +13,8 @@ type GalleryItem = {
   model?: string;
   prompt: string;
   url: string;
-  status?: "pending" | "done" | "failed";
+  status?: "pending" | "done" | "failed" | "expired";
+  label?: string;
   error?: string;
   refUrl?: string;
   cost?: string | null;
@@ -50,6 +51,8 @@ const EST_COST = "0.04";
 const PENDING_KEY = "krea-studio.pending-job";
 const MODEL_KEY = "krea-studio.model";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
+/** Loading animation; options are previewed side by side at /lab. */
+const LOADING_VARIANT: LoadingVariant = "dots";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
@@ -198,6 +201,14 @@ export default function StudioPage() {
   const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [previewAspect, setPreviewAspect] = useState(1);
+  // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
+  const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
+  // What the loading view shows, captured when the job starts so later edits
+  // to the form (a new reference, another ratio) don't change it mid-run.
+  const [jobVisual, setJobVisual] = useState<{ aspect: number; reference: string | null }>({
+    aspect: 1,
+    reference: null,
+  });
   const [compareMode, setCompareMode] = useState<CompareMode>("slider");
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -402,7 +413,39 @@ export default function StudioPage() {
       }
     };
     window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth++;
+      setDragState((d) => (d === "zone" ? d : "page"));
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragState("none");
+    };
+    const onEnd = () => {
+      depth = 0;
+      setDragState("none");
+    };
+    // Dropping outside the zone must not navigate the tab to the image.
+    const onOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("drop", onEnd);
+    window.addEventListener("dragend", onEnd);
+    return () => {
+      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("drop", onEnd);
+      window.removeEventListener("dragend", onEnd);
+    };
   }, [mode, onPickFile]);
 
   const pollTask = useCallback(async (taskId: string, job: number) => {
@@ -482,6 +525,7 @@ export default function StudioPage() {
     busyRef.current = true;
     const job = ++jobRef.current;
     stepRef.current = "render";
+    setJobVisual({ aspect: 1, reference: pending.mode === "i2i" ? pending.refUrl ?? null : null });
     setLoading(true);
     setError(null);
     finishPending(pending, job)
@@ -543,6 +587,10 @@ export default function StudioPage() {
     busyRef.current = true;
     const job = ++jobRef.current;
     stepRef.current = mode === "i2i" && reverse ? "describe" : "submit";
+    setJobVisual({
+      aspect: mode === "i2i" && preview ? previewAspect : width / height,
+      reference: mode === "i2i" ? preview : null,
+    });
     setLoading(true);
     setResultUrl(null);
     setResultRef(null);
@@ -613,7 +661,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, prompt, width, height, widthText, heightText, denoise, finishPending, resumePending]);
 
   const btnPrice = lastCost || EST_COST;
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
@@ -624,7 +672,7 @@ export default function StudioPage() {
       cost = 0;
     for (const g of gallery) {
       if (g.url) done++;
-      else if (g.status === "failed") failed++;
+      else if (g.status === "failed" || g.status === "expired") failed++;
       else pending++;
       cost += Number(g.cost) || 0;
     }
@@ -634,8 +682,8 @@ export default function StudioPage() {
   const visibleHistory = gallery.filter(
     (g) =>
       (histMode === "all" || g.mode === histMode) &&
-      (histModel === "all" || (g.model ?? "brown-dust") === histModel) &&
-      (!histFailed || (!g.url && g.status === "failed")) &&
+      (histModel === "all" || (g.model ?? (g.label ? "" : "brown-dust")) === histModel) &&
+      (!histFailed || (!g.url && (g.status === "failed" || g.status === "expired"))) &&
       (!query || g.prompt.toLowerCase().includes(query))
   );
   const HIST_PAGE_SIZE = 20;
@@ -662,9 +710,9 @@ export default function StudioPage() {
         }}
       />
 
-      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:overflow-hidden">
         <section
-          className="apple-card stagger-1 m-0 flex min-h-0 w-full shrink-0 flex-col overflow-visible rounded-none border-x-0 border-t-0 lg:overflow-hidden lg:border-y-0 lg:border-l-0"
+          className="apple-card stagger-1 m-0 flex min-h-0 w-full shrink-0 flex-col overflow-visible rounded-[22px] lg:overflow-hidden"
           style={isDesktop ? { width: leftPx } : undefined}
         >
           <div className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-3 py-2.5 sm:px-4">
@@ -826,16 +874,36 @@ export default function StudioPage() {
                 </div>
                 <div
                   onClick={() => fileRef.current?.click()}
-                  onDragOver={(e) => e.preventDefault()}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "copy";
+                    if (dragState !== "zone") setDragState("zone");
+                  }}
+                  onDragLeave={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragState("page");
+                  }}
                   onDrop={(e) => {
                     e.preventDefault();
-                    const f = e.dataTransfer.files?.[0];
+                    setDragState("none");
+                    const f = Array.from(e.dataTransfer.files ?? []).find((x) => x.type.startsWith("image/"));
                     if (f) onPickFile(f);
+                    else if (e.dataTransfer.files?.length) setError("请拖入图片文件（JPG / PNG / WEBP）");
                   }}
+                  data-drag={dragState}
                   className={`ref-drop relative flex cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-dashed border-black/[0.12] bg-white/70 transition hover:border-[rgba(0,113,227,0.45)] ${
                     preview ? "p-1.5" : "h-32"
                   }`}
                 >
+                  {dragState !== "none" && (
+                    <span className="ref-drop-overlay pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 rounded-2xl">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0071e3] text-[18px] text-white shadow-[0_6px_18px_rgba(0,113,227,0.35)]">
+                        ↓
+                      </span>
+                      <span className="text-[12px] font-medium text-[#0071e3]">
+                        {dragState === "zone" ? "松开即可上传" : "拖到这里上传参考图"}
+                      </span>
+                    </span>
+                  )}
                   {preview ? (
                     // Natural aspect ratio, never cropped; tall images are capped and letterboxed.
                     // eslint-disable-next-line @next/next/no-img-element
@@ -1086,10 +1154,10 @@ export default function StudioPage() {
             document.body.style.userSelect = "none";
             (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           }}
-          className="hidden w-1 shrink-0 cursor-col-resize bg-black/[0.06] transition hover:bg-[#0071e3]/40 lg:block"
+          className="hidden w-1.5 shrink-0 cursor-col-resize self-center rounded-full bg-black/[0.08] transition hover:bg-[#0071e3]/40 lg:block lg:h-16"
         />
 
-        <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-none border-x-0 border-b-0 p-2 sm:p-3 lg:min-h-0 lg:border-y-0 lg:border-r-0">
+        <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] p-2 sm:p-3 lg:min-h-0">
           <div className="mb-2 flex min-h-[28px] shrink-0 flex-wrap items-center gap-2 px-1">
             <h2 className="text-[13px] font-medium text-[#1d1d1f]">结果</h2>
             {resultUrl && !loading && resultSize && (
@@ -1138,10 +1206,11 @@ export default function StudioPage() {
             }}
           >
             {loading ? (
-              <GeneratingCanvas
-                aspect={mode === "i2i" && preview ? previewAspect : width / height}
+              <LoadingView
+                variant={LOADING_VARIANT}
+                aspect={jobVisual.aspect}
                 progress={progress}
-                reference={mode === "i2i" ? preview : null}
+                reference={jobVisual.reference}
               />
             ) : resultUrl && resultRef && compareOn ? (
               <div className="h-full w-full p-2">
@@ -1178,7 +1247,7 @@ export default function StudioPage() {
             <div className="mt-2 shrink-0 rounded-2xl bg-black/[0.025] px-3 py-2.5">
               <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#6e6e73]">
                 <span className="font-semibold text-[#1d1d1f]">
-                  {findModel(currentItem.model)?.name ?? "棕色尘埃"}
+                  {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
                 </span>
                 <span>{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
                 <span className="tabular-nums">{formatTime(currentItem.createdAt)}</span>
@@ -1223,7 +1292,7 @@ export default function StudioPage() {
           )}
         </section>
 
-        <aside className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-none border-x-0 border-b-0 lg:min-h-0 lg:w-[300px] lg:border-y-0 lg:border-r-0 xl:w-[340px]">
+        <aside className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[300px] xl:w-[340px]">
           <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">
             <div className="mb-2 flex items-baseline justify-between gap-2">
               <h2 className="text-[13px] font-semibold text-[#1d1d1f]">历史</h2>
@@ -1270,7 +1339,7 @@ export default function StudioPage() {
                   setHistModel(e.target.value as "all" | ModelId);
                   setHistPage(0);
                 }}
-                className="min-w-0 flex-1 rounded-lg border border-black/[0.08] bg-white px-1.5 py-1 text-[11px] text-[#1d1d1f] outline-none"
+                className="min-w-0 flex-1 rounded-full border border-black/[0.08] bg-white px-1.5 py-1 text-[11px] text-[#1d1d1f] outline-none"
                 aria-label="按模型筛选"
               >
                 <option value="all">全部模型</option>
@@ -1287,7 +1356,7 @@ export default function StudioPage() {
                   setHistFailed((v) => !v);
                   setHistPage(0);
                 }}
-                className={`rounded-lg px-1.5 py-1 text-[11px] font-medium transition ${
+                className={`rounded-full px-2 py-1 text-[11px] font-medium transition ${
                   histFailed ? "bg-[#d70015] text-white" : "text-[#6e6e73] hover:bg-black/[0.05]"
                 }`}
               >
@@ -1315,7 +1384,11 @@ export default function StudioPage() {
                           setCompareOn(false);
                           showItem(g);
                         } else {
-                          setError(`这条记录生成失败：${g.error || "任务失败"}`);
+                          setError(
+                            g.status === "expired"
+                              ? `这张图已过期：${g.error || "RunningHub 已清理原图"}`
+                              : `这条记录生成失败：${g.error || "任务失败"}`
+                          );
                         }
                       }}
                       title={g.url ? g.prompt : `失败：${g.error || "任务失败"}\n${g.prompt}`}
@@ -1329,24 +1402,30 @@ export default function StudioPage() {
                           <img src={g.url} alt="" loading="lazy" className="h-full w-full object-cover" />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
-                            <span className="text-[12px] font-semibold text-[#d70015]">失败</span>
+                            <span
+                              className={`text-[12px] font-semibold ${
+                                g.status === "expired" ? "text-[#86868b]" : "text-[#d70015]"
+                              }`}
+                            >
+                              {g.status === "expired" ? "已过期" : "失败"}
+                            </span>
                             <span className="line-clamp-3 text-[10px] leading-snug text-[#86868b]">
                               {g.error || "任务失败"}
                             </span>
                           </span>
                         )}
-                        <span className="absolute left-1 top-1 rounded-md bg-black/50 px-1 py-px text-[9px] font-medium text-white">
+                        <span className="absolute left-1 top-1 rounded-full bg-black/50 px-1.5 py-px text-[9px] font-medium text-white">
                           {g.mode === "i2i" ? "图生图" : "文生图"}
                         </span>
                         {g.cost && g.url && (
-                          <span className="absolute right-1 top-1 rounded-md bg-black/50 px-1 py-px text-[9px] tabular-nums text-white">
+                          <span className="absolute right-1 top-1 rounded-full bg-black/50 px-1.5 py-px text-[9px] tabular-nums text-white">
                             ¥{g.cost}
                           </span>
                         )}
                       </span>
                       <span className="block px-1.5 py-1">
                         <span className="block truncate text-[10px] font-medium text-[#1d1d1f]">
-                          {findModel(g.model)?.name ?? "棕色尘埃"}
+                          {findModel(g.model)?.name ?? g.label ?? "棕色尘埃"}
                         </span>
                         <span className="block text-[10px] tabular-nums text-[#86868b]">
                           {formatTime(g.createdAt)}

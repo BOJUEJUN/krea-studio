@@ -56,8 +56,8 @@ export async function GET() {
     return NextResponse.json(
       {
         ok: true,
-        items: items.filter((x) => x.url || x.status === "failed"),
-        pending: items.filter((x) => !x.url && x.status !== "failed").length,
+        items: items.filter((x) => x.url || x.status === "failed" || x.status === "expired"),
+        pending: items.filter((x) => !x.url && x.status === "pending").length,
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -73,13 +73,21 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const url = String(body.url || "");
-    if (!url) {
+    // Records without an image are only accepted as failed / expired entries.
+    const status = body.status === "failed" || body.status === "expired" ? body.status : undefined;
+    if (!url && !status) {
       return NextResponse.json({ ok: false, error: "缺少 url" }, { status: 400 });
+    }
+    if (url && !/^https:\/\/[a-z0-9.-]+\.(xiaoyaoyou\.com|runninghub\.cn)\//i.test(url)) {
+      return NextResponse.json({ ok: false, error: "不支持的图片地址" }, { status: 400 });
     }
     const item: HistoryItem = {
       id: String(body.id || `${Date.now()}`),
       mode: body.mode === "i2i" ? "i2i" : "t2i",
       model: findModel(body.model)?.id,
+      label: typeof body.label === "string" ? body.label.slice(0, 40) : undefined,
+      status,
+      error: status && typeof body.error === "string" ? body.error.slice(0, 200) : undefined,
       prompt: String(body.prompt || "").slice(0, 2000),
       url,
       refUrl:

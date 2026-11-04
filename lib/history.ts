@@ -1,12 +1,14 @@
 import { promises as fs } from "fs";
 import path from "path";
 
-export type HistoryStatus = "pending" | "done" | "failed";
+export type HistoryStatus = "pending" | "done" | "failed" | "expired";
 
 export type HistoryItem = {
   id: string;
   mode: "t2i" | "i2i";
   model?: string;
+  /** Display name for models no longer offered (e.g. 即梦 4.6 from the first version). */
+  label?: string;
   prompt: string;
   /** Empty while the task runs or when it failed. */
   url: string;
@@ -136,7 +138,8 @@ function sameTask(a: HistoryItem, b: HistoryItem): boolean {
 
 function statusOf(item: HistoryItem): HistoryStatus {
   if (item.url) return "done";
-  return item.status === "failed" ? "failed" : "pending";
+  if (item.status === "failed" || item.status === "expired") return item.status;
+  return "pending";
 }
 
 /** Later information wins, but a finished image is never replaced by less. */
@@ -146,6 +149,7 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     ...prev,
     ...next,
     model: next.model ?? prev.model,
+    label: next.label ?? prev.label,
     prompt: next.prompt || prev.prompt,
     refUrl: next.refUrl || prev.refUrl,
     url: next.url || prev.url,
