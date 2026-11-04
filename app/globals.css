@@ -516,3 +516,8 @@ textarea {
 .ref-drop[data-drag="page"] .ref-drop-overlay {
   background: rgba(255, 255, 255, 0.5);
 }
+
+/* History detail card slides in when the selection changes. */
+.history-detail {
+  animation: apple-chip-in 0.4s var(--ease-out-expo) both;
+}

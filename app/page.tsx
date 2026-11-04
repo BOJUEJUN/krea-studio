@@ -200,6 +200,7 @@ export default function StudioPage() {
   const [histFailed, setHistFailed] = useState(false);
   const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [promptOpen, setPromptOpen] = useState(false);
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -319,6 +320,7 @@ export default function StudioPage() {
 
   const showItem = useCallback((g: GalleryItem) => {
     setCurrentId(g.id);
+    setPromptOpen(false);
     setResultUrl(g.url);
     setResultRef(g.mode === "i2i" && g.refUrl ? g.refUrl : null);
     setResultSize(null);
@@ -1243,53 +1245,6 @@ export default function StudioPage() {
             )}
           </div>
 
-          {currentItem && currentItem.url && !loading && (
-            <div className="mt-2 shrink-0 rounded-2xl bg-black/[0.025] px-3 py-2.5">
-              <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[#6e6e73]">
-                <span className="font-semibold text-[#1d1d1f]">
-                  {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
-                </span>
-                <span>{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
-                <span className="tabular-nums">{formatTime(currentItem.createdAt)}</span>
-                {currentItem.seed != null && <span className="tabular-nums">种子 {currentItem.seed}</span>}
-                {currentItem.cost && <span className="tabular-nums">¥{currentItem.cost}</span>}
-                {notice && (
-                  <span className="animate-chip-in ml-auto rounded-full bg-[#0071e3] px-2 py-0.5 text-white">
-                    {notice}
-                  </span>
-                )}
-              </div>
-              <p className="line-clamp-2 text-[12px] leading-relaxed text-[#3a3a3c]" title={currentItem.prompt}>
-                {currentItem.prompt}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {(
-                  [
-                    ["复制提示词", () => copyPrompt(currentItem)],
-                    ["复用参数", () => reuseItem(currentItem)],
-                    ["作参考图", () => useAsReference(currentItem)],
-                  ] as const
-                ).map(([label, fn]) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={fn}
-                    className="item-action rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97]"
-                  >
-                    {label}
-                  </button>
-                ))}
-                <a
-                  href={currentItem.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="item-action rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97]"
-                >
-                  打开原图
-                </a>
-              </div>
-            </div>
-          )}
         </section>
 
         <aside className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[300px] xl:w-[340px]">
@@ -1364,6 +1319,81 @@ export default function StudioPage() {
               </button>
             </div>
           </div>
+
+          {currentItem && currentItem.url && (
+            <div key={currentItem.id} className="history-detail shrink-0 border-b border-black/[0.06] px-3 py-2.5">
+              <div className="flex items-center gap-1.5 text-[11px] text-[#86868b]">
+                <span className="truncate font-semibold text-[#1d1d1f]">
+                  {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
+                </span>
+                <span>·</span>
+                <span className="shrink-0">{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
+                <span>·</span>
+                <span className="shrink-0 tabular-nums">{formatTime(currentItem.createdAt)}</span>
+                {currentItem.cost && (
+                  <span className="ml-auto shrink-0 tabular-nums">¥{currentItem.cost}</span>
+                )}
+              </div>
+              {currentItem.prompt && (
+                <button
+                  type="button"
+                  onClick={() => setPromptOpen((v) => !v)}
+                  className="prompt-toggle mt-1.5 block w-full rounded-xl px-2 py-1.5 -mx-2 text-left transition hover:bg-black/[0.035]"
+                  aria-expanded={promptOpen}
+                  title={promptOpen ? "收起" : "展开全文"}
+                >
+                  <span
+                    className={`text-[12px] leading-relaxed text-[#3a3a3c] ${
+                      promptOpen ? "block max-h-[30vh] overflow-y-auto" : "line-clamp-2"
+                    }`}
+                  >
+                    {currentItem.prompt}
+                  </span>
+                  {(currentItem.prompt.length > 60 || promptOpen) && (
+                    <span className="mt-0.5 block text-[11px] font-medium text-[#0071e3]">
+                      {promptOpen ? "收起" : "展开全文"}
+                    </span>
+                  )}
+                  {promptOpen && currentItem.seed != null && (
+                    <span className="mt-1 block text-[11px] tabular-nums text-[#86868b]">
+                      种子 {currentItem.seed}
+                    </span>
+                  )}
+                </button>
+              )}
+              <div className="mt-1.5 flex items-center gap-1">
+                {(
+                  [
+                    ["复制", () => copyPrompt(currentItem)],
+                    ["复用", () => reuseItem(currentItem)],
+                    ["作参考", () => useAsReference(currentItem)],
+                  ] as const
+                ).map(([label, fn]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={fn}
+                    className="item-action rounded-full px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.96]"
+                  >
+                    {label}
+                  </button>
+                ))}
+                <a
+                  href={currentItem.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="item-action rounded-full px-2.5 py-1 text-[11px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.96]"
+                >
+                  原图
+                </a>
+                {notice && (
+                  <span className="animate-chip-in ml-auto truncate rounded-full bg-[#0071e3] px-2 py-0.5 text-[10px] text-white">
+                    {notice}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {visibleHistory.length === 0 ? (
