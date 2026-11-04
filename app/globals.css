@@ -519,3 +519,28 @@ textarea {
 .history-detail {
   animation: apple-chip-in 0.4s var(--ease-out-expo) both;
 }
+
+/* Panel resizers: invisible in the gap; a thin line shows on hover / drag. */
+.panel-resizer {
+  position: relative;
+}
+.panel-resizer::after {
+  content: "";
+  position: absolute;
+  top: 12%;
+  bottom: 12%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%) scaleY(0.6);
+  border-radius: 999px;
+  background: #0071e3;
+  opacity: 0;
+  transition:
+    opacity 0.2s var(--ease-standard),
+    transform 0.35s var(--ease-out-expo);
+}
+.panel-resizer:hover::after,
+.panel-resizer:active::after {
+  opacity: 0.55;
+  transform: translateX(-50%) scaleY(1);
+}

@@ -51,6 +51,8 @@ const EST_COST = "0.04";
 const PENDING_KEY = "krea-studio.pending-job";
 const MODEL_KEY = "krea-studio.model";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
+const PANEL_LEFT_KEY = "krea-studio.panel-left";
+const PANEL_RIGHT_KEY = "krea-studio.panel-right";
 /** Loading animation; options are previewed side by side at /lab. */
 const LOADING_VARIANT: LoadingVariant = "dots";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
@@ -285,8 +287,9 @@ export default function StudioPage() {
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [leftPx, setLeftPx] = useState(300);
+  const [rightPx, setRightPx] = useState(320);
   const [isDesktop, setIsDesktop] = useState(false);
-  const draggingRef = useRef(false);
+  const draggingRef = useRef<"left" | "right" | null>(null);
 
   useEffect(() => {
     const sync = () => {
@@ -296,6 +299,11 @@ export default function StudioPage() {
         setLeftPx((p) => Math.min(480, Math.max(240, p || Math.round(window.innerWidth * 0.28))));
       }
     };
+    // Restore the panel widths the user dragged to last time.
+    const savedL = Number(localStorage.getItem(PANEL_LEFT_KEY));
+    const savedR = Number(localStorage.getItem(PANEL_RIGHT_KEY));
+    if (savedL >= 240 && savedL <= 480) setLeftPx(savedL);
+    if (savedR >= 240 && savedR <= 560) setRightPx(savedR);
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
@@ -326,12 +334,20 @@ export default function StudioPage() {
 
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      if (!draggingRef.current) return;
-      const next = Math.min(480, Math.max(240, e.clientX));
-      setLeftPx(next);
+      const side = draggingRef.current;
+      if (!side) return;
+      if (side === "left") {
+        const next = Math.min(480, Math.max(240, e.clientX - 8));
+        setLeftPx(next);
+        localStorage.setItem(PANEL_LEFT_KEY, String(next));
+      } else {
+        const next = Math.min(560, Math.max(240, window.innerWidth - e.clientX - 8));
+        setRightPx(next);
+        localStorage.setItem(PANEL_RIGHT_KEY, String(next));
+      }
     };
     const onUp = () => {
-      draggingRef.current = false;
+      draggingRef.current = null;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
@@ -801,7 +817,7 @@ export default function StudioPage() {
         }}
       />
 
-      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:overflow-hidden">
+      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
         <section
           className="apple-card stagger-1 m-0 flex min-h-0 w-full shrink-0 flex-col overflow-visible rounded-[22px] lg:overflow-hidden"
           style={isDesktop ? { width: leftPx } : undefined}
@@ -1237,13 +1253,14 @@ export default function StudioPage() {
         <div
           role="separator"
           aria-orientation="vertical"
+          aria-label="拖动调整左栏宽度"
           onPointerDown={(e) => {
-            draggingRef.current = true;
+            draggingRef.current = "left";
             document.body.style.cursor = "col-resize";
             document.body.style.userSelect = "none";
             (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
           }}
-          className="hidden w-1.5 shrink-0 cursor-col-resize self-center rounded-full bg-black/[0.08] transition hover:bg-[#0071e3]/40 lg:block lg:h-16"
+          className="panel-resizer hidden w-1.5 shrink-0 cursor-col-resize lg:block"
         />
 
         <section className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
@@ -1334,7 +1351,23 @@ export default function StudioPage() {
 
         </section>
 
-        <aside className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[300px] xl:w-[340px]">
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖动调整历史栏宽度"
+          onPointerDown={(e) => {
+            draggingRef.current = "right";
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+            (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+          }}
+          className="panel-resizer hidden w-1.5 shrink-0 cursor-col-resize lg:block"
+        />
+
+        <aside
+          className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0"
+          style={isDesktop ? { width: rightPx } : undefined}
+        >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
             <span className="truncate text-[11px] tabular-nums text-[#86868b]">
