@@ -5,6 +5,8 @@ import { GeneratingView } from "./generating-view";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import {
   DEFAULT_MODEL,
+  RES_PIXELS,
+  type Res,
   MODELS,
   QUALITY_LABELS,
   findModel,
@@ -269,7 +271,8 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
 }
 
 export default function StudioPage() {
-  const [mode, setMode] = useState<Mode>("i2i");
+  // 2026-11-05 (用户: 不分了，合成吧): one form — a reference image makes it 图生图, none makes it 文生图.
+  const [mode, setMode] = useState<Mode>("t2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
   const [reverse, setReverse] = useState(true);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
@@ -282,6 +285,7 @@ export default function StudioPage() {
   const [denoise, setDenoise] = useState(0.5);
   const [quality, setQuality] = useState<Quality>("medium");
   const [thinking, setThinking] = useState(false);
+  const [res, setRes] = useState<Res>("2K");
   // More settings (each shown only for models that support it).
   const [seedText, setSeedText] = useState("");
   const [negative, setNegative] = useState("");
@@ -291,6 +295,14 @@ export default function StudioPage() {
   const [regional, setRegional] = useState(false);
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
+  /** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
+  const sizeFor = (ratio: number, fallback?: { width: number; height: number }) => {
+    if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
+    const px = RES_PIXELS[res];
+    const w = Math.round(Math.sqrt(px * ratio) / 16) * 16;
+    return { width: w, height: Math.round(w / ratio / 16) * 16 };
+  };
+
   /** Extra request fields for the selected model (only what it supports). */
   const advanced = (): Record<string, string | number> => {
     const p = paramsOf(model);
@@ -357,6 +369,7 @@ export default function StudioPage() {
   const [money, setMoney] = useState<string | null>(null);
   const [gallery, setGallery] = useState<GalleryItem[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
+  useEffect(() => setMode(preview ? "i2i" : "t2i"), [preview]);
   const [leftPx, setLeftPx] = useState(300);
   const [rightPx, setRightPx] = useState(320);
   const [isDesktop, setIsDesktop] = useState(false);
@@ -522,6 +535,46 @@ export default function StudioPage() {
     setPreview(file ? URL.createObjectURL(file) : null);
   }, []);
 
+  /** The first picture becomes the main reference; more go to the extra references (up to the model's limit). */
+  const addRefs = useCallback(
+    (files: File[]) => {
+      if (!files.length) return;
+      let rest = files;
+      if (!fileBlobRef.current) {
+        onPickFile(files[0]);
+        rest = files.slice(1);
+      }
+      if (rest.length) setExtraRefs((list) => [...list, ...rest.map((file) => ({ file, url: URL.createObjectURL(file) }))].slice(0, 7));
+    },
+    [onPickFile]
+  );
+
+  const [mentionOpen, setMentionOpen] = useState(false);
+  /** Inserts "@图N " at the caret in the description. */
+  const insertMention = (n: number, replaceAt?: boolean) => {
+    const el = promptRef.current;
+    const tag = `@图${n} `;
+    const start = el?.selectionStart ?? prompt.length;
+    const end = el?.selectionEnd ?? prompt.length;
+    // When opened by typing "@", replace that "@".
+    const from = replaceAt && prompt[start - 1] === "@" ? start - 1 : start;
+    const next = prompt.slice(0, from) + tag + prompt.slice(end);
+    setPrompt(next);
+    setMentionOpen(false);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = from + tag.length;
+      el?.setSelectionRange(pos, pos);
+    });
+  };
+
+  /** Removing the first picture promotes the next one. */
+  const removeMainRef = () => {
+    const [next, ...others] = extraRefs;
+    onPickFile(next ? next.file : null);
+    setExtraRefs(others);
+  };
+
   /** Phones stack the panels inside <main>; scroll only that container. */
   const scrollToResult = useCallback(() => {
     const el = resultRef_.current;
@@ -612,10 +665,7 @@ export default function StudioPage() {
       const files = e.clipboardData?.files;
       if (!files || !files.length) return;
       const file = Array.from(files).find((f) => f.type.startsWith("image/"));
-      if (file) {
-        onPickFile(file);
-        if (mode !== "i2i") setMode("i2i");
-      }
+      if (file) addRefs([file]);
     };
     window.addEventListener("paste", onPaste);
     let depth = 0;
@@ -651,7 +701,7 @@ export default function StudioPage() {
       window.removeEventListener("drop", onEnd);
       window.removeEventListener("dragend", onEnd);
     };
-  }, [mode, onPickFile]);
+  }, [addRefs]);
 
   const pollTask = useCallback(async (taskId: string, job: number) => {
     const start = Date.now();
@@ -868,8 +918,11 @@ export default function StudioPage() {
             prompt: finalPrompt,
             model,
             count,
-            width: clampRes(Number(widthText) || width),
-            height: clampRes(Number(heightText) || height),
+            ...sizeFor(clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
+              width: clampRes(Number(widthText) || width),
+              height: clampRes(Number(heightText) || height),
+            }),
+            res,
             quality,
             thinking: thinking && !!paramsOf(model).thinking,
             ...advanced(),
@@ -883,6 +936,12 @@ export default function StudioPage() {
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         fd.append("quality", quality);
+        fd.append("res", res);
+        if (paramsOf(model).pricePerMegapixel) {
+          const sz = sizeFor(previewAspect || 1);
+          fd.append("width", String(sz.width));
+          fd.append("height", String(sz.height));
+        }
         if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
         for (const [k, v] of Object.entries(advanced())) fd.append(k, String(v));
         if (regional && paramsOf(model).regional) fd.append("regional", "1");
@@ -920,7 +979,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending]);
 
   // Estimated price: median real cost of recent images from the same model
   // and mode (falls back to any recent image, then a default), times the count.
@@ -932,8 +991,9 @@ export default function StudioPage() {
         .map((g) => Number(g.cost))
         .sort((a, b) => a - b);
     const p = paramsOf(model);
-    const mp = p.pricePerMegapixel && mode === "t2i" ? Math.max(1, (clampRes(Number(widthText) || width) * clampRes(Number(heightText) || height)) / 1_048_576) : 1;
-    const fixed = p.quality?.[quality] != null ? (p.quality[quality]! + (thinking && p.thinking ? p.thinking : 0)) * mp : findModel(model)?.price;
+    const tier = p.resolutions?.[res];
+    const base = p.pricePerMegapixel ? (p.quality?.[quality] ?? 0) * (tier ?? 1) : tier ?? p.quality?.[quality];
+    const fixed = base != null ? base + (thinking && p.thinking ? p.thinking : 0) : findModel(model)?.price;
     if (fixed) {
       const total = fixed * count;
       return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
@@ -1008,26 +1068,6 @@ export default function StudioPage() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-            <div className="apple-seg mb-3 grid grid-cols-2">
-              {(
-                [
-                  ["t2i", "文生图"],
-                  ["i2i", "图生图"],
-                ] as const
-              ).map(([key, label]) => (
-                <button
-                  key={key}
-                  data-active={mode === key}
-                  onClick={() => {
-                    setMode(key);
-                  }}
-                  className="apple-seg-item px-3 py-2 text-[13px] font-medium text-[#6e6e73]"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
             <div className="mb-4">
               <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
                 模型
@@ -1127,143 +1167,118 @@ export default function StudioPage() {
               </div>
             </div>
 
-            {mode === "i2i" && (
-              <div className="mb-4">
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                    参考图
-                  </label>
-                  {preview && (
-                    <div className="animate-chip-in flex items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => fileRef.current?.click()}
-                        className="ref-action rounded-full px-2 py-0.5 text-[11px] font-medium text-[#0071e3] transition hover:bg-[#0071e3]/10 active:scale-[0.96]"
-                      >
-                        更换
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onPickFile(null)}
-                        className="ref-action rounded-full px-2 py-0.5 text-[11px] font-medium text-[#d70015] transition hover:bg-[#d70015]/10 active:scale-[0.96]"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div
-                  onClick={() => fileRef.current?.click()}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "copy";
-                    if (dragState !== "zone") setDragState("zone");
-                  }}
-                  onDragLeave={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragState("page");
-                  }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setDragState("none");
-                    const f = Array.from(e.dataTransfer.files ?? []).find((x) => x.type.startsWith("image/"));
-                    if (f) onPickFile(f);
-                    else if (e.dataTransfer.files?.length) setError("请拖入图片文件（JPG / PNG / WEBP）");
-                  }}
-                  data-drag={dragState}
-                  className={`ref-drop relative flex cursor-pointer items-center justify-center overflow-hidden rounded-2xl border border-dashed border-black/[0.12] bg-white/70 transition hover:border-[rgba(0,113,227,0.45)] ${
-                    preview ? "p-1.5" : "h-32"
-                  }`}
-                >
-                  {dragState !== "none" && (
-                    <span className="ref-drop-overlay pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 rounded-2xl">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#0071e3] text-[18px] text-white shadow-[0_6px_18px_rgba(0,113,227,0.35)]">
-                        ↓
-                      </span>
-                      <span className="text-[12px] font-medium text-[#0071e3]">
-                        {dragState === "zone" ? "松开即可上传" : "拖到这里上传参考图"}
-                      </span>
-                    </span>
-                  )}
-                  {preview ? (
-                    // Natural aspect ratio, never cropped; tall images are capped and letterboxed.
-                    // eslint-disable-next-line @next/next/no-img-element
+            <div className="mb-4">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                  参考图{" "}
+                  <span className="normal-case tracking-normal text-[#aeaeb2]">
+                    可选 · 放了就是改图{(modelParams.maxRefs ?? 1) > 1 ? ` · 最多 ${modelParams.maxRefs} 张，描述里输入 @ 指定哪张` : ""}
+                  </span>
+                </label>
+              </div>
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "copy";
+                  if (dragState !== "zone") setDragState("zone");
+                }}
+                onDragLeave={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragState("page");
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragState("none");
+                  const files = Array.from(e.dataTransfer.files ?? []).filter((x) => x.type.startsWith("image/"));
+                  if (!files.length) {
+                    if (e.dataTransfer.files?.length) setError("请拖入图片文件（JPG / PNG / WEBP）");
+                    return;
+                  }
+                  addRefs(files);
+                }}
+                data-drag={dragState}
+                className={`ref-drop relative flex flex-wrap gap-1.5 rounded-2xl border border-dashed p-1.5 transition ${
+                  dragState !== "none" ? "border-[#0071e3] bg-[#0071e3]/[0.04]" : "border-black/[0.10] bg-white/70"
+                }`}
+              >
+                {preview && (
+                  <span className="group relative h-16 w-16 overflow-hidden rounded-xl border border-black/[0.08]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={preview}
-                      alt="参考图"
+                      alt="图1"
                       onLoad={(e) => {
                         const el = e.currentTarget;
                         if (el.naturalHeight) setPreviewAspect(el.naturalWidth / el.naturalHeight);
                       }}
-                      className="animate-image-reveal block h-auto max-h-[46vh] w-auto max-w-full rounded-xl object-contain"
+                      className="h-full w-full object-cover"
                     />
-                  ) : null}
-                  {preview ? (
-                    <span className="ref-hint pointer-events-none absolute inset-x-0 bottom-2 mx-auto w-fit rounded-full bg-black/55 px-2.5 py-1 text-[11px] text-white opacity-0 transition-opacity duration-300">
-                      点击或拖入新图片即可更换
+                    <button
+                      type="button"
+                      onClick={() => insertMention(1)}
+                      title="在描述里 @ 这张图"
+                      className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[10px] text-white hover:bg-[#0071e3]"
+                    >
+                      @图1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={removeMainRef}
+                      className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                      aria-label="删除图1"
+                    >
+                      ×
+                    </button>
+                  </span>
+                )}
+                {preview &&
+                  extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)).map((r, i) => (
+                    <span key={r.url} className="relative h-16 w-16 overflow-hidden rounded-xl border border-black/[0.08]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={r.url} alt={`图${i + 2}`} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => insertMention(i + 2)}
+                        title="在描述里 @ 这张图"
+                        className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[10px] text-white hover:bg-[#0071e3]"
+                      >
+                        @图{i + 2}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExtraRefs((list) => list.filter((x) => x !== r))}
+                        className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                        aria-label="删除这张参考图"
+                      >
+                        ×
+                      </button>
                     </span>
-                  ) : (
-                    <div className="text-center">
-                      <div className="mx-auto mb-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.05] text-[16px] text-[#6e6e73]">
-                        +
-                      </div>
-                      <div className="text-[12px] text-[#86868b]">点击 / 拖入 / 粘贴图片</div>
-                    </div>
-                  )}
-                </div>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) onPickFile(f);
-                    // Allow picking the same file again after deleting it.
-                    e.target.value = "";
-                  }}
-                />
-                {(modelParams.maxRefs ?? 1) > 1 && (
-                  <div className="mt-2">
-                    <div className="mb-1.5 text-[11px] text-[#86868b]">
-                      更多参考图（人物、衣服、风格都能当参考）· {extraRefs.length + (preview ? 1 : 0)}/{modelParams.maxRefs}
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {extraRefs.map((r, i) => (
-                        <span key={r.url} className="group relative h-14 w-14 overflow-hidden rounded-xl border border-black/[0.08]">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={r.url} alt={`参考图 ${i + 2}`} className="h-full w-full object-cover" />
-                          <button
-                            type="button"
-                            onClick={() => setExtraRefs((list) => list.filter((x) => x !== r))}
-                            className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
-                            aria-label="删除这张参考图"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
-                      {extraRefs.length + 1 < (modelParams.maxRefs ?? 1) && (
-                        <label className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-black/[0.15] text-[18px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]">
-                          +
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            className="hidden"
-                            onChange={(e) => {
-                              const room = (modelParams.maxRefs ?? 1) - 1 - extraRefs.length;
-                              const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")).slice(0, room);
-                              setExtraRefs((list) => [...list, ...files.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
-                              e.target.value = "";
-                            }}
-                          />
-                        </label>
-                      )}
-                    </div>
-                  </div>
+                  ))}
+                {(!preview || extraRefs.length + 1 < (modelParams.maxRefs ?? 1)) && (
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    className={`flex h-16 items-center justify-center gap-1.5 rounded-xl text-[12px] text-[#86868b] transition hover:bg-black/[0.03] hover:text-[#0071e3] ${
+                      preview ? "w-16" : "w-full"
+                    }`}
+                  >
+                    <span className="text-[18px] leading-none">+</span>
+                    {!preview && <span>{dragState !== "none" ? "松开即可添加" : "点击 / 拖入 / 粘贴图片"}</span>}
+                  </button>
                 )}
               </div>
-            )}
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addRefs(Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")));
+                  // Allow picking the same file again after deleting it.
+                  e.target.value = "";
+                }}
+              />
+            </div>
 
             <div className="mb-4">
               <div className="mb-2 flex items-center justify-between">
@@ -1300,7 +1315,15 @@ export default function StudioPage() {
               <textarea
                 ref={promptRef}
                 value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setPrompt(v);
+                  const at = e.target.selectionStart ?? v.length;
+                  setMentionOpen(!!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@");
+                }}
+                onKeyDown={(e) => {
+                  if (mentionOpen && e.key === "Escape") setMentionOpen(false);
+                }}
                 rows={4}
                 placeholder={
                   mode === "t2i"
@@ -1311,6 +1334,23 @@ export default function StudioPage() {
                 }
                 className="w-full resize-none rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
               />
+              {mentionOpen && (
+                <div className="animate-chip-in mt-1.5 flex flex-wrap gap-1.5 rounded-2xl border border-black/[0.08] bg-white p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
+                  {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertMention(i + 1, true)}
+                      className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] transition hover:bg-[#0071e3]/10"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
+                      图{i + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {mode === "t2i" && (
@@ -1414,9 +1454,31 @@ export default function StudioPage() {
               </div>
             )}
 
+            {modelParams.resolutions && (
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">清晰度</span>
+                <div className="apple-seg flex" role="radiogroup" aria-label="清晰度">
+                  {(Object.keys(modelParams.resolutions) as Res[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      role="radio"
+                      aria-checked={res === r}
+                      onClick={() => setRes(r)}
+                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
+                        res === r ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {modelParams.quality && (
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">{modelParams.qualityLabels ? "清晰度" : "画质"}</span>
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">画质</span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="画质">
                   {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
                     <button
@@ -1429,7 +1491,7 @@ export default function StudioPage() {
                         quality === q ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
                       }`}
                     >
-                      {modelParams.qualityLabels?.[q] ?? QUALITY_LABELS[q]}
+                      {QUALITY_LABELS[q]}
                     </button>
                   ))}
                 </div>

@@ -52,11 +52,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ prompt, width, height, quality: String(body.quality || ""), thinking: body.thinking === true || body.thinking === "1", seed: s, negative: String(body.negative || "") }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ prompt, width, height, quality: String(body.quality || ""), res: String(body.res || ""), thinking: body.thinking === true || body.thinking === "1", seed: s, negative: String(body.negative || "") }), seed: s });
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || "") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || ""), res: String(body.res || "") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height, lora: body.lora != null && body.lora !== "" ? Number(body.lora) : undefined });

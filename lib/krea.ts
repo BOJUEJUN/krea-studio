@@ -49,6 +49,7 @@ export async function createKreaTask(opts: {
   image?: { bytes: Buffer; mime: string };
   images?: { bytes: Buffer; mime: string }[];
   quality?: string;
+  res?: string;
   thinking?: boolean;
   seed?: number;
   negative?: string;
@@ -57,7 +58,7 @@ export async function createKreaTask(opts: {
   const body: Record<string, unknown> = {
     prompt: opts.prompt,
     thinking_mode: opts.thinking ? "high" : "fast",
-    resolution: opts.quality === "low" ? "1K" : opts.quality === "high" ? "4K" : "2K",
+    resolution: ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res : opts.quality === "low" ? "1K" : opts.quality === "high" ? "4K" : "2K",
   };
   const refs = opts.images?.length ? opts.images : opts.image ? [opts.image] : [];
   if (refs.length) {

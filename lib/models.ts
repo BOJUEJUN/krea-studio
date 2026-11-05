@@ -58,8 +58,11 @@ export type ModelParams = {
   ratios?: string[];
   /** 画质 choice and the estimated ¥ per image for each offered level. */
   quality?: Partial<Record<Quality, number>>;
-  /** Labels for the quality levels (default 快速 / 标准 / 精细). */
-  qualityLabels?: Partial<Record<Quality, string>>;
+  /**
+   * 清晰度 tiers. Price in ¥ per image (Krea / Banana), or — with pricePerMegapixel — a multiplier
+   * on the 画质 price (GPT, billed by output pixels).
+   */
+  resolutions?: Partial<Record<Res, number>>;
   /** Krea 3 深度思考: extra ¥ per image when on. */
   thinking?: number;
   /** How many reference images 图生图 takes (default 1). */
@@ -94,6 +97,9 @@ export function paramsOf(id: unknown): ModelParams {
 
 
 export type Quality = "low" | "medium" | "high";
+export type Res = "1K" | "2K" | "4K";
+/** Output pixels per 清晰度 tier for models that take a free size (GPT). */
+export const RES_PIXELS: Record<Res, number> = { "1K": 1_048_576, "2K": 4_194_304, "4K": 8_294_400 };
 export const QUALITY_LABELS: Record<Quality, string> = { low: "快速", medium: "标准", high: "精细" };
 /** Estimated ¥ per GPT image by quality (OpenAI bills by tokens; both 2.6 models share the rates). */
 export const GPT_PRICE: Record<Quality, number> = { low: 0.1, medium: 0.3, high: 1.0 };
@@ -140,8 +146,7 @@ export const MODELS: ModelInfo[] = [
       denoise: false,
       customSize: false,
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9", "1:4", "4:1", "1:8", "8:1"],
-      quality: { low: 0.22, medium: 0.22, high: 0.43 },
-      qualityLabels: { low: "1K", medium: "2K", high: "4K" },
+      resolutions: { "1K": 0.22, "2K": 0.22, "4K": 0.43 },
       maxRefs: 8,
     },
   },
@@ -156,8 +161,7 @@ export const MODELS: ModelInfo[] = [
       denoise: false,
       customSize: false,
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
-      quality: { low: 0.22, medium: 0.43, high: 0.86 },
-      qualityLabels: { low: "1K", medium: "2K", high: "4K" },
+      resolutions: { "1K": 0.22, "2K": 0.43, "4K": 0.86 },
       thinking: 0.15,
       maxRefs: 8,
       seed: true,
@@ -174,9 +178,10 @@ export const MODELS: ModelInfo[] = [
     billing: "OpenAI",
     params: {
       denoise: false,
-      customSize: true,
+      customSize: false,
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
       quality: GPT_PRICE,
+      resolutions: { "1K": 1, "2K": 4, "4K": 7.9 },
       maxRefs: 8,
       background: true,
       complexity: true,
@@ -192,9 +197,10 @@ export const MODELS: ModelInfo[] = [
     billing: "OpenAI",
     params: {
       denoise: false,
-      customSize: true,
+      customSize: false,
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
       quality: GPT_PRICE,
+      resolutions: { "1K": 1, "2K": 4, "4K": 7.9 },
       maxRefs: 8,
       background: true,
       complexity: true,
@@ -217,4 +223,14 @@ export const LEGACY_MODEL: ModelId = "brown-dust";
 
 export function findModel(id: unknown): ModelInfo | undefined {
   return MODELS.find((m) => m.id === id);
+}
+
+/**
+ * "@图2" in a description → "image 2", plus a note on how the pictures are numbered, so Krea 3 / GPT / Banana
+ * know which reference is meant (2026-11-05 用户: 提示词里支持 @ 图片).
+ */
+export function expandImageMentions(prompt: string, count: number): string {
+  if (count < 1 || !/@图\d/.test(prompt)) return prompt;
+  const text = prompt.replace(/@图(\d+)/g, (_, n) => `image ${n}`);
+  return `Reference images are numbered in the order given: ${Array.from({ length: count }, (_, i) => `image ${i + 1}`).join(", ")}.\n${text}`;
 }

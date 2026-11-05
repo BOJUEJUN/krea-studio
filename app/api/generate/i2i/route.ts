@@ -4,7 +4,7 @@ import {
   createCustomTask,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
-import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, expandImageMentions, findModel } from "@/lib/models";
 import { createGptTask, gptSize } from "@/lib/openai";
 import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const images = gptImage ? [gptImage, ...extras] : undefined;
+    const modelPrompt = expandImageMentions(prompt, images?.length ?? 1);
     const text = (k: string) => String(form.get(k) || "");
     const loraRaw = Number(form.get("lora"));
 
@@ -75,15 +76,15 @@ export async function POST(req: NextRequest) {
       // The first image keeps a requested seed; the others get their own.
       const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
       if (gptModel) {
-        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: "auto", images, quality: text("quality"), background: text("background"), complexity: text("complexity") }), seed: s });
+        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt: modelPrompt, size: Number(form.get("width")) && Number(form.get("height")) ? gptSize(Number(form.get("width")), Number(form.get("height"))) : "auto", images, quality: text("quality"), background: text("background"), complexity: text("complexity") }), seed: s });
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ prompt, images, quality: text("quality"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, images, quality: text("quality") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });

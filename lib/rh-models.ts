@@ -23,7 +23,7 @@ export function rhHostedReady(model: string): boolean {
 }
 
 export function isRhHostedTask(taskId: string): boolean {
-  return /^rh[sb]-[0-9A-Za-z]{4,60}$/.test(taskId);
+  return /^rh[sb]-[0-9A-Za-z]{4,60}(_4)?$/.test(taskId);
 }
 
 async function call(site: Site, path: string, body: unknown): Promise<any> {
@@ -80,6 +80,7 @@ export async function createRhHostedTask(opts: {
   image?: { bytes: Buffer; mime: string };
   images?: { bytes: Buffer; mime: string }[];
   quality?: string;
+  res?: string;
 }): Promise<string> {
   const m = RH_HOSTED_MODELS[opts.model];
   if (!m) throw new Error("未知模型");
@@ -91,7 +92,8 @@ export async function createRhHostedTask(opts: {
   if (refs.length) body.imageUrls = refs.slice(0, 8).map((r) => `data:${r.mime};base64,${r.bytes.toString("base64")}`);
   if (m.site === "b") {
     body.aspectRatio = nearestRatio(w, h);
-    body.resolution = opts.quality === "low" ? "1k" : opts.quality === "high" ? "4k" : "2k";
+    body.resolution = ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res!.toLowerCase()
+      : opts.quality === "low" ? "1k" : opts.quality === "high" ? "4k" : "2k";
   } else {
     // Keep the requested shape at about 4 MP or less (Seedream accepts 1024-4096 per side).
     const scale = Math.min(1, Math.sqrt((2048 * 2048) / (w * h)));
@@ -100,7 +102,7 @@ export async function createRhHostedTask(opts: {
   }
   const json = await call(m.site, `${m.path}/${refs.length ? "image-to-image" : "text-to-image"}`, body);
   if (!json?.taskId) throw new Error(json?.errorMessage || "RunningHub 没有返回任务编号");
-  return `rh${m.site}-${json.taskId}`;
+  return `rh${m.site}-${json.taskId}${body.resolution === "4k" ? "_4" : ""}`;
 }
 
 export async function queryRhHostedTask(taskId: string): Promise<{
@@ -110,7 +112,7 @@ export async function queryRhHostedTask(taskId: string): Promise<{
   errorMessage?: string;
 }> {
   const site = taskId[2] as Site;
-  const json = await call(site, "query", { taskId: taskId.slice(4) });
+  const json = await call(site, "query", { taskId: taskId.slice(4).replace(/_4$/, "") });
   const status = String(json?.status || "");
   if (status === "SUCCESS") {
     const item = (json.results || [])[0] || {};
@@ -120,7 +122,8 @@ export async function queryRhHostedTask(taskId: string): Promise<{
     if (!res.ok) throw new Error(`下载结果失败 (${res.status})`);
     const saved = await saveImageBytes(taskId, Buffer.from(await res.arrayBuffer()));
     // Estimate in ¥: the global site bills about $0.03 per 2K image.
-    return { status: "SUCCESS", outputs: [saved], cost: site === "b" ? "0.22" : undefined };
+    // Estimate in ¥: the global site bills about $0.03 per 1K/2K image, about double at 4K (task id ends -4k).
+    return { status: "SUCCESS", outputs: [saved], cost: site === "b" ? (taskId.endsWith("_4") ? "0.43" : "0.22") : undefined };
   }
   if (status === "FAILED") {
     const msg = String(json?.errorMessage || "");
