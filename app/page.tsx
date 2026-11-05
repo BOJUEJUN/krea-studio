@@ -35,6 +35,19 @@ type GalleryItem = {
   durationMs?: number;
 };
 
+/** Text with every "@图N" in blue (the description box and history). */
+function withMentions(text: string) {
+  return text.split(/(@图\d+)/g).map((part, i) =>
+    /^@图\d+$/.test(part) ? (
+      <span key={i} className="rounded bg-[#0071e3]/10 text-[#0071e3]">
+        {part}
+      </span>
+    ) : (
+      part
+    )
+  );
+}
+
 /** 24 秒 / 1 分 05 秒 */
 function formatDuration(ms?: number): string | null {
   if (!ms || ms <= 0) return null;
@@ -395,6 +408,7 @@ export default function StudioPage() {
 
   const fileRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const promptMirrorRef = useRef<HTMLDivElement>(null);
   const resultRef_ = useRef<HTMLElement>(null);
   const fileBlobRef = useRef<File | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -1213,8 +1227,21 @@ export default function StudioPage() {
                   </button>
                 )}
               </div>
+              <div className="relative">
+              {/* Mirror behind the transparent textarea: same text, with @图N painted blue. */}
+              <div
+                ref={promptMirrorRef}
+                aria-hidden
+                className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-2xl border border-transparent bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f]"
+              >
+                {withMentions(prompt)}
+                {"\n"}
+              </div>
               <textarea
                 ref={promptRef}
+                onScroll={(e) => {
+                  if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+                }}
                 value={prompt}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -1233,8 +1260,9 @@ export default function StudioPage() {
                       ? "可不填：会根据参考图自动反推提示词，这里可补充想要的变化"
                       : "希望参考图如何变化…"
                 }
-                className="w-full resize-none rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+                className="relative w-full resize-none rounded-2xl border border-black/[0.08] bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25 focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
               />
+              </div>
               {mentionOpen && (
                 <div className="animate-chip-in mt-1.5 flex flex-wrap gap-1.5 rounded-2xl border border-black/[0.08] bg-white p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
                   {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
@@ -2053,7 +2081,7 @@ export default function StudioPage() {
                                 promptOpen ? "block max-h-[30vh] overflow-y-auto" : "line-clamp-2"
                               }`}
                             >
-                              {currentItem.prompt}
+                              {withMentions(currentItem.prompt)}
                             </span>
                             {(currentItem.prompt.length > 60 || promptOpen) && (
                               <span className="mt-0.5 block text-[11px] font-medium text-[#0071e3]">
