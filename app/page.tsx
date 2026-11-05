@@ -955,6 +955,12 @@ export default function StudioPage() {
         >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
+            <span
+              title="所有生成记录的花费合计（GPT / Krea / Banana 为估算）"
+              className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]"
+            >
+              已花费约 ¥{histStats.cost}
+            </span>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
