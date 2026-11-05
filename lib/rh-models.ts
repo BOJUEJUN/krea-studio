@@ -78,6 +78,7 @@ export async function createRhHostedTask(opts: {
   width?: number;
   height?: number;
   image?: { bytes: Buffer; mime: string };
+  quality?: string;
 }): Promise<string> {
   const m = RH_HOSTED_MODELS[opts.model];
   if (!m) throw new Error("未知模型");
@@ -88,7 +89,7 @@ export async function createRhHostedTask(opts: {
   if (opts.image) body.imageUrls = [`data:${opts.image.mime};base64,${opts.image.bytes.toString("base64")}`];
   if (m.site === "b") {
     body.aspectRatio = nearestRatio(w, h);
-    body.resolution = "2k";
+    body.resolution = opts.quality === "low" ? "1k" : "2k";
   } else {
     // Keep the requested shape at about 4 MP or less (Seedream accepts 1024-4096 per side).
     const scale = Math.min(1, Math.sqrt((2048 * 2048) / (w * h)));

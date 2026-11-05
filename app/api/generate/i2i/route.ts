@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, image: gptImage }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName });

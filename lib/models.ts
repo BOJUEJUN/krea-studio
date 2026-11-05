@@ -110,7 +110,12 @@ export const MODELS: ModelInfo[] = [
     cover: "/models/google.svg",
     price: 0.22,
     billing: "RunningHub 海外",
-    params: { denoise: false, customSize: false, ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"] },
+    params: {
+      denoise: false,
+      customSize: false,
+      ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
+      quality: { low: 0.22, medium: 0.22 },
+    },
   },
   {
     id: "krea-3",

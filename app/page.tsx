@@ -955,11 +955,6 @@ export default function StudioPage() {
         >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
-            {money != null && (
-              <span className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]">
-                RunningHub 余额 ¥{money}
-              </span>
-            )}
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
@@ -1331,7 +1326,7 @@ export default function StudioPage() {
 
             {modelParams.quality && (
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">画质</span>
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">{modelParams.quality?.high ? "画质" : "清晰度"}</span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="画质">
                   {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
                     <button
@@ -1344,7 +1339,7 @@ export default function StudioPage() {
                         quality === q ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
                       }`}
                     >
-                      {QUALITY_LABELS[q]}
+                      {modelParams.ratios && !modelParams.quality?.high ? (q === "low" ? "1K" : "2K") : QUALITY_LABELS[q]}
                     </button>
                   ))}
                 </div>
@@ -1600,7 +1595,7 @@ export default function StudioPage() {
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
             <span className="truncate text-[11px] tabular-nums text-[#86868b]">
-              {histStats.done} 张{histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · ¥{histStats.cost}
+              {histStats.done} 张{histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 累计约 ¥{histStats.cost}
             </span>
           </div>
           <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">

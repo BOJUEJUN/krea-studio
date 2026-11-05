@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || "") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height });
