@@ -78,25 +78,27 @@ export async function createRhHostedTask(opts: {
   width?: number;
   height?: number;
   image?: { bytes: Buffer; mime: string };
+  images?: { bytes: Buffer; mime: string }[];
   quality?: string;
 }): Promise<string> {
   const m = RH_HOSTED_MODELS[opts.model];
   if (!m) throw new Error("未知模型");
-  const ref = opts.image ? imageSize(opts.image.bytes) : null;
+  const refs = opts.images?.length ? opts.images : opts.image ? [opts.image] : [];
+  const ref = refs.length ? imageSize(refs[0].bytes) : null;
   const w = opts.width || ref?.[0] || 1024;
   const h = opts.height || ref?.[1] || 1024;
   const body: Record<string, unknown> = { prompt: opts.prompt };
-  if (opts.image) body.imageUrls = [`data:${opts.image.mime};base64,${opts.image.bytes.toString("base64")}`];
+  if (refs.length) body.imageUrls = refs.slice(0, 8).map((r) => `data:${r.mime};base64,${r.bytes.toString("base64")}`);
   if (m.site === "b") {
     body.aspectRatio = nearestRatio(w, h);
-    body.resolution = opts.quality === "low" ? "1k" : "2k";
+    body.resolution = opts.quality === "low" ? "1k" : opts.quality === "high" ? "4k" : "2k";
   } else {
     // Keep the requested shape at about 4 MP or less (Seedream accepts 1024-4096 per side).
     const scale = Math.min(1, Math.sqrt((2048 * 2048) / (w * h)));
     body.width = clampSide(w * scale);
     body.height = clampSide(h * scale);
   }
-  const json = await call(m.site, `${m.path}/${opts.image ? "image-to-image" : "text-to-image"}`, body);
+  const json = await call(m.site, `${m.path}/${refs.length ? "image-to-image" : "text-to-image"}`, body);
   if (!json?.taskId) throw new Error(json?.errorMessage || "RunningHub 没有返回任务编号");
   return `rh${m.site}-${json.taskId}`;
 }

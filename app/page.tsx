@@ -30,7 +30,15 @@ type GalleryItem = {
   seed?: number;
   taskId?: string;
   createdAt: number;
+  durationMs?: number;
 };
+
+/** 24 秒 / 1 分 05 秒 */
+function formatDuration(ms?: number): string | null {
+  if (!ms || ms <= 0) return null;
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
+}
 
 type PendingJob = {
   taskId: string;
@@ -52,6 +60,12 @@ const RATIOS = [
   { label: "3:2", w: 1888, h: 1248, kind: "landscape" as const },
   { label: "16:9", w: 2048, h: 1152, kind: "landscape" as const },
   { label: "21:9", w: 2352, h: 1008, kind: "landscape" as const },
+  { label: "4:5", w: 1376, h: 1720, kind: "portrait" as const },
+  { label: "5:4", w: 1720, h: 1376, kind: "landscape" as const },
+  { label: "1:4", w: 640, h: 2560, kind: "portrait" as const },
+  { label: "4:1", w: 2560, h: 640, kind: "landscape" as const },
+  { label: "1:8", w: 320, h: 2560, kind: "portrait" as const },
+  { label: "8:1", w: 2560, h: 320, kind: "landscape" as const },
 ];
 
 const MAX_RES = 2560;
@@ -267,6 +281,27 @@ export default function StudioPage() {
   const [showMoreRatio, setShowMoreRatio] = useState(false);
   const [denoise, setDenoise] = useState(0.5);
   const [quality, setQuality] = useState<Quality>("medium");
+  const [thinking, setThinking] = useState(false);
+  // More settings (each shown only for models that support it).
+  const [seedText, setSeedText] = useState("");
+  const [negative, setNegative] = useState("");
+  const [lora, setLora] = useState(2);
+  const [background, setBackground] = useState<"auto" | "transparent" | "opaque">("auto");
+  const [complexity, setComplexity] = useState<"auto" | "low" | "medium" | "high">("auto");
+  const [regional, setRegional] = useState(false);
+  const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
+  const [moreOpen, setMoreOpen] = useState(false);
+  /** Extra request fields for the selected model (only what it supports). */
+  const advanced = (): Record<string, string | number> => {
+    const p = paramsOf(model);
+    const out: Record<string, string | number> = {};
+    if (p.seed && seedText.trim() && Number.isFinite(Number(seedText))) out.seed = Math.floor(Number(seedText));
+    if (p.negative && negative.trim()) out.negative = negative.trim();
+    if (p.lora) out.lora = lora;
+    if (p.background && background !== "auto") out.background = background;
+    if (p.complexity && complexity !== "auto") out.complexity = complexity;
+    return out;
+  };
   // Text being typed into the 重绘幅度 number; null while not editing.
   const [denoiseText, setDenoiseText] = useState<string | null>(null);
   const commitDenoise = useCallback((raw: string) => {
@@ -671,6 +706,7 @@ export default function StudioPage() {
         refUrl: pending.refUrl,
         cost: done.cost || null,
         createdAt: pending.createdAt,
+        durationMs: Date.now() - pending.createdAt,
       };
       setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
         (a, b) => b.createdAt - a.createdAt
@@ -835,6 +871,8 @@ export default function StudioPage() {
             width: clampRes(Number(widthText) || width),
             height: clampRes(Number(heightText) || height),
             quality,
+            thinking: thinking && !!paramsOf(model).thinking,
+            ...advanced(),
           }),
         });
       } else {
@@ -845,6 +883,10 @@ export default function StudioPage() {
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         fd.append("quality", quality);
+        if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
+        for (const [k, v] of Object.entries(advanced())) fd.append(k, String(v));
+        if (regional && paramsOf(model).regional) fd.append("regional", "1");
+        for (const r of extraRefs.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(r.file), "ref.jpg");
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }
       if (jobRef.current !== job) return;
@@ -878,7 +920,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, finishBatch, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending]);
 
   // Estimated price: median real cost of recent images from the same model
   // and mode (falls back to any recent image, then a default), times the count.
@@ -889,7 +931,9 @@ export default function StudioPage() {
         .slice(0, 15)
         .map((g) => Number(g.cost))
         .sort((a, b) => a - b);
-    const fixed = paramsOf(model).quality?.[quality] ?? findModel(model)?.price;
+    const p = paramsOf(model);
+    const mp = p.pricePerMegapixel && mode === "t2i" ? Math.max(1, (clampRes(Number(widthText) || width) * clampRes(Number(heightText) || height)) / 1_048_576) : 1;
+    const fixed = p.quality?.[quality] != null ? (p.quality[quality]! + (thinking && p.thinking ? p.thinking : 0)) * mp : findModel(model)?.price;
     if (fixed) {
       const total = fixed * count;
       return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
@@ -1178,6 +1222,46 @@ export default function StudioPage() {
                     e.target.value = "";
                   }}
                 />
+                {(modelParams.maxRefs ?? 1) > 1 && (
+                  <div className="mt-2">
+                    <div className="mb-1.5 text-[11px] text-[#86868b]">
+                      更多参考图（人物、衣服、风格都能当参考）· {extraRefs.length + (preview ? 1 : 0)}/{modelParams.maxRefs}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {extraRefs.map((r, i) => (
+                        <span key={r.url} className="group relative h-14 w-14 overflow-hidden rounded-xl border border-black/[0.08]">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={r.url} alt={`参考图 ${i + 2}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setExtraRefs((list) => list.filter((x) => x !== r))}
+                            className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
+                            aria-label="删除这张参考图"
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                      {extraRefs.length + 1 < (modelParams.maxRefs ?? 1) && (
+                        <label className="flex h-14 w-14 cursor-pointer items-center justify-center rounded-xl border border-dashed border-black/[0.15] text-[18px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]">
+                          +
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              const room = (modelParams.maxRefs ?? 1) - 1 - extraRefs.length;
+                              const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")).slice(0, room);
+                              setExtraRefs((list) => [...list, ...files.map((file) => ({ file, url: URL.createObjectURL(file) }))]);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1332,7 +1416,7 @@ export default function StudioPage() {
 
             {modelParams.quality && (
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">{modelParams.quality?.high ? "画质" : "清晰度"}</span>
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">{modelParams.qualityLabels ? "清晰度" : "画质"}</span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="画质">
                   {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
                     <button
@@ -1345,7 +1429,31 @@ export default function StudioPage() {
                         quality === q ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
                       }`}
                     >
-                      {modelParams.ratios && !modelParams.quality?.high ? (q === "low" ? "1K" : "2K") : QUALITY_LABELS[q]}
+                      {modelParams.qualityLabels?.[q] ?? QUALITY_LABELS[q]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {modelParams.thinking != null && (
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                  深度思考 <span className="normal-case tracking-normal text-[#aeaeb2]">更懂复杂描述 · 慢一点 · +¥{modelParams.thinking.toFixed(2)}</span>
+                </span>
+                <div className="apple-seg flex" role="radiogroup" aria-label="深度思考">
+                  {[false, true].map((on) => (
+                    <button
+                      key={String(on)}
+                      type="button"
+                      role="radio"
+                      aria-checked={thinking === on}
+                      onClick={() => setThinking(on)}
+                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
+                        thinking === on ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                      }`}
+                    >
+                      {on ? "开" : "关"}
                     </button>
                   ))}
                 </div>
@@ -1392,6 +1500,119 @@ export default function StudioPage() {
                   aria-label="重绘幅度"
                   className="w-full"
                 />
+              </div>
+            )}
+            {(modelParams.seed || modelParams.negative || modelParams.lora || modelParams.background || modelParams.complexity || (mode === "i2i" && modelParams.regional)) && (
+              <div className="mb-4 rounded-2xl border border-black/[0.06] bg-white/60">
+                <button
+                  type="button"
+                  onClick={() => setMoreOpen((v) => !v)}
+                  className="flex w-full items-center justify-between px-3.5 py-2.5 text-[12px] font-medium text-[#1d1d1f]"
+                >
+                  更多设置
+                  <span className={`text-[#86868b] transition-transform ${moreOpen ? "rotate-180" : ""}`}>⌄</span>
+                </button>
+                {moreOpen && (
+                  <div className="space-y-3 border-t border-black/[0.06] px-3.5 py-3">
+                    {mode === "i2i" && modelParams.regional && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] text-[#6e6e73]">只改局部 <span className="text-[#aeaeb2]">其他地方一点不动</span></span>
+                        <div className="apple-seg flex" role="radiogroup" aria-label="只改局部">
+                    {([[false, "关"], [true, "开"]] as const).map(([v, t]) => (
+                      <button
+                        key={String(v)}
+                        type="button"
+                        role="radio"
+                        aria-checked={regional === v}
+                        onClick={() => setRegional(v as any)}
+                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
+                          regional === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                      </div>
+                    )}
+                    {modelParams.background && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] text-[#6e6e73]">背景</span>
+                        <div className="apple-seg flex" role="radiogroup" aria-label="背景">
+                    {([["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]] as const).map(([v, t]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        role="radio"
+                        aria-checked={background === v}
+                        onClick={() => setBackground(v as any)}
+                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
+                          background === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                      </div>
+                    )}
+                    {modelParams.complexity && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[12px] text-[#6e6e73]">构思程度 <span className="text-[#aeaeb2]">高=复杂画面更准</span></span>
+                        <div className="apple-seg flex" role="radiogroup" aria-label="构思程度">
+                    {([["auto", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"]] as const).map(([v, t]) => (
+                      <button
+                        key={v}
+                        type="button"
+                        role="radio"
+                        aria-checked={complexity === v}
+                        onClick={() => setComplexity(v as any)}
+                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
+                          complexity === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                      </div>
+                    )}
+                    {modelParams.lora && (
+                      <div>
+                        <div className="mb-1 flex items-center justify-between text-[12px] text-[#6e6e73]">
+                          <span>风格强度（LoRA）</span>
+                          <span className="tabular-nums text-[#0071e3]">{lora.toFixed(1)}</span>
+                        </div>
+                        <input type="range" min={0} max={3} step={0.1} value={lora} onChange={(e) => setLora(Number(e.target.value))} aria-label="风格强度" className="w-full" />
+                      </div>
+                    )}
+                    {modelParams.seed && (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="shrink-0 text-[12px] text-[#6e6e73]">种子 <span className="text-[#aeaeb2]">同种子出相似图</span></span>
+                        <input
+                          inputMode="numeric"
+                          value={seedText}
+                          placeholder="随机"
+                          onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))}
+                          className="w-36 rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-right text-[12px] tabular-nums outline-none focus:border-[rgba(0,113,227,0.45)]"
+                          aria-label="种子"
+                        />
+                      </div>
+                    )}
+                    {modelParams.negative && (
+                      <div>
+                        <div className="mb-1 text-[12px] text-[#6e6e73]">不想要的内容</div>
+                        <input
+                          value={negative}
+                          placeholder="比如：文字、水印、多余的手指"
+                          onChange={(e) => setNegative(e.target.value.slice(0, 300))}
+                          className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-[12px] outline-none focus:border-[rgba(0,113,227,0.45)]"
+                          aria-label="不想要的内容"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1739,6 +1960,7 @@ export default function StudioPage() {
                         </span>
                         <span className="block text-[10px] tabular-nums text-[#86868b]">
                           {formatTime(g.createdAt)}
+                          {formatDuration(g.durationMs) && <> · {formatDuration(g.durationMs)}</>}
                         </span>
                       </span>
                     </button>
@@ -1757,8 +1979,12 @@ export default function StudioPage() {
                             {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
                           </span>
                           <span className="shrink-0">{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
-                          {currentItem.cost && (
-                            <span className="ml-auto shrink-0 tabular-nums">¥{currentItem.cost}</span>
+                          {(currentItem.cost || formatDuration(currentItem.durationMs)) && (
+                            <span className="ml-auto shrink-0 tabular-nums">
+                              {formatDuration(currentItem.durationMs) && `用时 ${formatDuration(currentItem.durationMs)}`}
+                              {currentItem.cost && formatDuration(currentItem.durationMs) ? " · " : ""}
+                              {currentItem.cost && `¥${currentItem.cost}`}
+                            </span>
                           )}
                         </div>
                         {currentItem.prompt && (

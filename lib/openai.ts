@@ -33,13 +33,22 @@ async function call(url: string, body?: unknown): Promise<any> {
   return json;
 }
 
-/** GPT Image 2.6 renders 1024x1024, 1536x1024 or 1024x1536; pick the closest shape. */
+/**
+ * GPT Image 2.6 takes custom WIDTHxHEIGHT: multiples of 16, aspect 1:3..3:1, edges <= 3840,
+ * 655,360..8,294,400 pixels. The requested size is fitted into those limits.
+ */
 export function gptSize(width?: number, height?: number): string {
   if (!width || !height) return "auto";
-  const r = width / height;
-  if (r > 1.2) return "1536x1024";
-  if (r < 1 / 1.2) return "1024x1536";
-  return "1024x1024";
+  let r = Math.min(3, Math.max(1 / 3, width / height));
+  let px = Math.min(8_294_400, Math.max(655_360, width * height));
+  let w = Math.sqrt(px * r), h = w / r;
+  const k = Math.min(1, 3840 / w, 3840 / h);
+  w *= k; h *= k;
+  const snap = (v: number) => Math.max(16, Math.round(v / 16) * 16);
+  let W = snap(w), H = snap(h);
+  while (W * H > 8_294_400) { W -= 16; H = snap(W / r); }
+  while (W * H < 655_360) { W += 16; H = snap(W / r); }
+  return `${W}x${H}`;
 }
 
 export async function createGptTask(opts: {
@@ -47,23 +56,26 @@ export async function createGptTask(opts: {
   prompt: string;
   size: string;
   image?: { bytes: Buffer; mime: string };
+  images?: { bytes: Buffer; mime: string }[];
   quality?: string;
+  background?: string;
+  complexity?: string;
 }): Promise<string> {
+  const refs = opts.images?.length ? opts.images : opts.image ? [opts.image] : [];
   const quality = ["low", "medium", "high"].includes(opts.quality || "") ? opts.quality : "medium";
   const content: any[] = [
     {
       type: "input_text",
-      text: opts.image
-        ? `Use the image_generation tool to edit the attached image as follows:\n${opts.prompt}`
+      text: refs.length
+        ? `Use the image_generation tool to edit the first attached image${refs.length > 1 ? " (the other images are references)" : ""} as follows:\n${opts.prompt}`
         : `Use the image_generation tool to create this image:\n${opts.prompt}`,
     },
   ];
-  if (opts.image) {
-    content.push({
-      type: "input_image",
-      image_url: `data:${opts.image.mime};base64,${opts.image.bytes.toString("base64")}`,
-    });
+  for (const r of refs.slice(0, 8)) {
+    content.push({ type: "input_image", image_url: `data:${r.mime};base64,${r.bytes.toString("base64")}` });
   }
+  const background = ["transparent", "opaque"].includes(opts.background || "") ? opts.background : undefined;
+  const complexity = ["low", "medium", "high"].includes(opts.complexity || "") ? opts.complexity : undefined;
   const json = await call(API, {
     model: TEXT_MODEL,
     background: true,
@@ -77,7 +89,9 @@ export async function createGptTask(opts: {
         quality,
         output_format: "png",
         moderation: "low",
-        ...(opts.image ? { action: "edit" } : {}),
+        ...(background ? { background } : {}),
+        ...(complexity ? { complexity } : {}),
+        ...(refs.length ? { action: "edit" } : {}),
       },
     ],
     tool_choice: { type: "image_generation" },
@@ -99,9 +113,12 @@ export async function queryGptTask(taskId: string): Promise<{
   const image = (json?.output || []).find((o: any) => o?.type === "image_generation_call");
   if (status === "completed" && image?.result) {
     const url = await saveImageBytes(taskId, Buffer.from(image.result, "base64"));
-    const quality = (json?.tools || []).find((t: any) => t?.type === "image_generation")?.quality;
-    // Estimate in ¥ (OpenAI bills USD by tokens and returns no per-image price here).
-    const cost = GPT_PRICE[(quality as Quality) in GPT_PRICE ? (quality as Quality) : "medium"];
+    const tool = (json?.tools || []).find((t: any) => t?.type === "image_generation") || {};
+    const quality = tool.quality;
+    // Estimate in ¥ (OpenAI bills USD by tokens and returns no per-image price here); scales with pixels.
+    const [w, h] = String(image.size || tool.size || "1024x1024").split("x").map(Number);
+    const mp = w && h ? Math.max(1, (w * h) / 1_048_576) : 1;
+    const cost = GPT_PRICE[(quality as Quality) in GPT_PRICE ? (quality as Quality) : "medium"] * mp;
     return { status: "SUCCESS", outputs: [url], cost: cost.toFixed(2) };
   }
   const err = image?.error || json?.error;

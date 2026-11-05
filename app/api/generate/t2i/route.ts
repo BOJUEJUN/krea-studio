@@ -48,18 +48,18 @@ export async function POST(req: NextRequest) {
       // The first image keeps a requested seed; the others get their own.
       const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
       if (gptModel) {
-        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: gptSize(width, height), quality: String(body.quality || "") }), seed: s });
+        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: gptSize(width, height), quality: String(body.quality || ""), background: String(body.background || ""), complexity: String(body.complexity || "") }), seed: s });
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ prompt, width, height, quality: String(body.quality || "") }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ prompt, width, height, quality: String(body.quality || ""), thinking: body.thinking === true || body.thinking === "1", seed: s, negative: String(body.negative || "") }), seed: s });
         continue;
       }
       if (hosted) {
         tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || "") }), seed: s });
         continue;
       }
-      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height });
+      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height, lora: body.lora != null && body.lora !== "" ? Number(body.lora) : undefined });
       tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
     }
 

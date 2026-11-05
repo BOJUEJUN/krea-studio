@@ -59,24 +59,34 @@ export async function POST(req: NextRequest) {
     const gptImage = gptModel || hosted
       ? { bytes: Buffer.from(await file.arrayBuffer()), mime: file.type || "image/png" }
       : undefined;
+    // Extra reference images (Krea 3 / Banana / GPT take up to 8 in all).
+    const extras: { bytes: Buffer; mime: string }[] = [];
+    if (gptImage) {
+      for (const f of form.getAll("ref").slice(0, 7)) {
+        if (f instanceof File && f.size) extras.push({ bytes: Buffer.from(await f.arrayBuffer()), mime: f.type || "image/jpeg" });
+      }
+    }
+    const images = gptImage ? [gptImage, ...extras] : undefined;
+    const text = (k: string) => String(form.get(k) || "");
+    const loraRaw = Number(form.get("lora"));
 
     const tasks: { taskId: string; seed: number }[] = [];
     for (let i = 0; i < count; i++) {
       // The first image keeps a requested seed; the others get their own.
       const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
       if (gptModel) {
-        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: "auto", image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
+        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: "auto", images, quality: text("quality"), background: text("background"), complexity: text("complexity") }), seed: s });
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ prompt, image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ prompt, images, quality: text("quality"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, images, quality: text("quality") }), seed: s });
         continue;
       }
-      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName });
+      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });
       tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
     }
 

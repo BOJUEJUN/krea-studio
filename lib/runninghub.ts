@@ -203,6 +203,7 @@ export function buildWorkflowNodes(
     height?: number;
     denoise?: number;
     imageFileName?: string;
+    lora?: number;
   }
 ): NodeOverride[] {
   const list: NodeOverride[] = [{ ...spec.prompt, fieldValue: input.prompt }];
@@ -216,6 +217,6 @@ export function buildWorkflowNodes(
   add(spec.height, input.height);
   add(spec.denoise, input.denoise);
   add(spec.image, input.imageFileName);
-  add(spec.lora, LORA_STRENGTH);
+  add(spec.lora, input.lora != null && Number.isFinite(input.lora) ? Math.min(3, Math.max(0, input.lora)) : LORA_STRENGTH);
   return list;
 }

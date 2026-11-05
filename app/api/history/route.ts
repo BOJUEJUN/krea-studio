@@ -30,7 +30,12 @@ async function settlePending(items: HistoryItem[]): Promise<boolean> {
         const r = await queryCustomTask(item.taskId as string);
         if (r.status === "SUCCESS" && r.outputs[0]) {
           await upsertHistory(
-            await withBackup({ ...item, url: r.outputs[0], cost: r.cost ?? item.cost ?? null })
+            await withBackup({
+              ...item,
+              url: r.outputs[0],
+              cost: r.cost ?? item.cost ?? null,
+              durationMs: item.durationMs ?? Date.now() - item.createdAt,
+            })
           );
           changed = true;
         } else if (r.status === "FAILED" || r.status === "CANCEL" || expired) {
@@ -99,7 +104,7 @@ export async function POST(req: NextRequest) {
     if (!url && !status) {
       return NextResponse.json({ ok: false, error: "缺少 url" }, { status: 400 });
     }
-    if (url && !/^https:\/\/[a-z0-9.-]+\.(xiaoyaoyou\.com|runninghub\.cn)\//i.test(url)) {
+    if (url && !/^https:\/\/[a-z0-9.-]+\.(xiaoyaoyou\.com|runninghub\.cn)\//i.test(url) && !/^\/api\/img\/[0-9A-Za-z_-]+$/.test(url)) {
       return NextResponse.json({ ok: false, error: "不支持的图片地址" }, { status: 400 });
     }
     const item: HistoryItem = {
@@ -120,6 +125,8 @@ export async function POST(req: NextRequest) {
       taskId: body.taskId ? String(body.taskId) : undefined,
       createdAt: Number(body.createdAt) || Date.now(),
     };
+    const d = Number(body.durationMs);
+    if (url) item.durationMs = d > 0 && d < 86_400_000 ? Math.round(d) : Math.max(0, Date.now() - item.createdAt);
     const saved = await upsertHistory(await withBackup(item));
     return NextResponse.json({ ok: true, item: saved });
   } catch (e: any) {

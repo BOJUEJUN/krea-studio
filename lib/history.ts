@@ -23,6 +23,8 @@ export type HistoryItem = {
   seed?: number;
   taskId?: string;
   createdAt: number;
+  /** Submit → finished image, in ms. */
+  durationMs?: number;
 };
 
 const MAX_ITEMS = 5000;
@@ -94,6 +96,7 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     sourceUrl: next.sourceUrl ?? prev.sourceUrl,
     cost: next.cost ?? prev.cost,
     seed: next.seed ?? prev.seed,
+    durationMs: prev.durationMs ?? next.durationMs,
     createdAt: prev.createdAt || next.createdAt,
   };
   if (merged.url) delete merged.error;

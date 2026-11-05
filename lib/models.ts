@@ -58,9 +58,35 @@ export type ModelParams = {
   ratios?: string[];
   /** 画质 choice and the estimated ¥ per image for each offered level. */
   quality?: Partial<Record<Quality, number>>;
+  /** Labels for the quality levels (default 快速 / 标准 / 精细). */
+  qualityLabels?: Partial<Record<Quality, string>>;
+  /** Krea 3 深度思考: extra ¥ per image when on. */
+  thinking?: number;
+  /** How many reference images 图生图 takes (default 1). */
+  maxRefs?: number;
+  /** 种子 (repeatable results). */
+  seed?: boolean;
+  /** 不想要的内容 (negative prompt). */
+  negative?: boolean;
+  /** LoRA 强度 (Krea2 workflows). */
+  lora?: boolean;
+  /** GPT 背景: 自动 / 透明 / 不透明. */
+  background?: boolean;
+  /** GPT 构思程度 (complexity). */
+  complexity?: boolean;
+  /** Krea 3 只改局部 (regional_edit, 图生图 only). */
+  regional?: boolean;
+  /** Price scales with output pixels (GPT custom sizes); base price is for ~1 MP. */
+  pricePerMegapixel?: boolean;
 };
 
-export const WORKFLOW_PARAMS: ModelParams = { denoise: true, customSize: true };
+export const WORKFLOW_PARAMS: ModelParams = {
+  denoise: true,
+  customSize: true,
+  seed: true,
+  lora: true,
+  ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
+};
 
 export function paramsOf(id: unknown): ModelParams {
   return findModel(id)?.params ?? WORKFLOW_PARAMS;
@@ -113,8 +139,10 @@ export const MODELS: ModelInfo[] = [
     params: {
       denoise: false,
       customSize: false,
-      ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
-      quality: { low: 0.22, medium: 0.22 },
+      ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9", "1:4", "4:1", "1:8", "8:1"],
+      quality: { low: 0.22, medium: 0.22, high: 0.43 },
+      qualityLabels: { low: "1K", medium: "2K", high: "4K" },
+      maxRefs: 8,
     },
   },
   {
@@ -127,8 +155,14 @@ export const MODELS: ModelInfo[] = [
     params: {
       denoise: false,
       customSize: false,
-      ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
-      quality: { low: 0.22, medium: 0.43 },
+      ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
+      quality: { low: 0.22, medium: 0.43, high: 0.86 },
+      qualityLabels: { low: "1K", medium: "2K", high: "4K" },
+      thinking: 0.15,
+      maxRefs: 8,
+      seed: true,
+      negative: true,
+      regional: true,
     },
   },
   {
@@ -138,7 +172,16 @@ export const MODELS: ModelInfo[] = [
     cover: "/models/openai.svg",
     price: 0.3,
     billing: "OpenAI",
-    params: { denoise: false, customSize: false, ratios: ["1:1", "2:3", "3:2"], quality: GPT_PRICE },
+    params: {
+      denoise: false,
+      customSize: true,
+      ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
+      quality: GPT_PRICE,
+      maxRefs: 8,
+      background: true,
+      complexity: true,
+      pricePerMegapixel: true,
+    },
   },
   {
     id: "gpt-26-sunburst",
@@ -147,7 +190,16 @@ export const MODELS: ModelInfo[] = [
     cover: "/models/openai.svg",
     price: 0.3,
     billing: "OpenAI",
-    params: { denoise: false, customSize: false, ratios: ["1:1", "2:3", "3:2"], quality: GPT_PRICE },
+    params: {
+      denoise: false,
+      customSize: true,
+      ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
+      quality: GPT_PRICE,
+      maxRefs: 8,
+      background: true,
+      complexity: true,
+      pricePerMegapixel: true,
+    },
   },
 ];
 
