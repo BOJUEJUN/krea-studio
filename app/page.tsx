@@ -1069,105 +1069,6 @@ export default function StudioPage() {
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
             <div className="mb-4">
-              <label className="mb-2 block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                模型
-              </label>
-              {(() => {
-                const cur = findModel(model) ?? MODELS[0];
-                const ready = isReady(cur.id);
-                return (
-                  <button
-                    type="button"
-                    aria-expanded={modelOpen}
-                    onClick={() => setModelOpen((v) => !v)}
-                    className="model-current flex w-full items-center gap-3 rounded-2xl bg-white p-2 text-left ring-1 ring-black/[0.08] transition hover:ring-black/[0.2] active:scale-[0.99]"
-                  >
-                    {/* Natural aspect ratio: fixed height, width follows the cover. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={cur.cover}
-                      alt=""
-                      className="block h-14 w-auto max-w-[96px] shrink-0 rounded-xl object-cover"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">
-                        {cur.name}
-                      </span>
-                      <span className="block truncate text-[11px] text-[#86868b]">
-                        {ready ? cur.tagline : "待接入"}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#0071e3]">
-                      {modelOpen ? "收起" : "更换"}
-                      <svg
-                        className={`h-3.5 w-3.5 transition-transform ${modelOpen ? "rotate-180" : ""}`}
-                        viewBox="0 0 16 16"
-                        fill="none"
-                      >
-                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    </span>
-                  </button>
-                );
-              })()}
-              <div className={`collapse-grid ${modelOpen ? "is-open" : ""}`} inert={!modelOpen}>
-                <div className="min-h-0 overflow-hidden">
-                <div className="pt-2">
-              <div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
-                    {MODELS.map((m) => {
-                      const on = model === m.id;
-                      const ready = isReady(m.id);
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={on}
-                          onClick={() => {
-                            pickModel(m.id);
-                            setModelOpen(false);
-                          }}
-                          className={`model-card group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl text-left transition ${
-                            on
-                              ? "ring-2 ring-[#0071e3] ring-offset-2 ring-offset-white"
-                              : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
-                          }`}
-                        >
-                          {/* Cover at its own aspect ratio: no letterbox, no crop, no stretch. */}
-                          <div className="relative w-full overflow-hidden bg-[#ececf0]">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={m.cover}
-                              alt=""
-                              loading="lazy"
-                              className={`block h-auto w-full transition duration-300 group-hover:scale-[1.03] ${
-                                ready ? "" : "grayscale-[0.6] opacity-70"
-                              }`}
-                            />
-                            {!ready && (
-                              <span className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                待接入
-                              </span>
-                            )}
-                          </div>
-                          <div className="bg-white px-2 py-1.5">
-                            <div className="truncate text-[12px] font-semibold leading-tight text-[#1d1d1f]">
-                              {m.name}
-                            </div>
-                            <div className="truncate text-[10px] leading-tight text-[#86868b]">
-                              {m.tagline}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-4">
               <div className="mb-2 flex items-center justify-between">
                 <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
                   参考图{" "}
@@ -1353,15 +1254,113 @@ export default function StudioPage() {
               )}
             </div>
 
+            <div className="mb-4 rounded-2xl bg-white ring-1 ring-black/[0.08]">
+              <div className="px-3.5 pt-3 text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">模型与参数</div>
+            <div className="px-2 pb-2 pt-2">
+              {(() => {
+                const cur = findModel(model) ?? MODELS[0];
+                const ready = isReady(cur.id);
+                return (
+                  <button
+                    type="button"
+                    aria-expanded={modelOpen}
+                    onClick={() => setModelOpen((v) => !v)}
+                    className="model-current flex w-full items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-black/[0.03] active:scale-[0.99]"
+                  >
+                    {/* Natural aspect ratio: fixed height, width follows the cover. */}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={cur.cover}
+                      alt=""
+                      className="block h-14 w-auto max-w-[96px] shrink-0 rounded-xl object-cover"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">
+                        {cur.name}
+                      </span>
+                      <span className="block truncate text-[11px] text-[#86868b]">
+                        {ready ? cur.tagline : "待接入"}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#0071e3]">
+                      {modelOpen ? "收起" : "更换"}
+                      <svg
+                        className={`h-3.5 w-3.5 transition-transform ${modelOpen ? "rotate-180" : ""}`}
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                  </button>
+                );
+              })()}
+              <div className={`collapse-grid ${modelOpen ? "is-open" : ""}`} inert={!modelOpen}>
+                <div className="min-h-0 overflow-hidden">
+                <div className="pt-2">
+              <div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
+                    {MODELS.map((m) => {
+                      const on = model === m.id;
+                      const ready = isReady(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={on}
+                          onClick={() => {
+                            pickModel(m.id);
+                            setModelOpen(false);
+                          }}
+                          className={`model-card group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl text-left transition ${
+                            on
+                              ? "ring-2 ring-[#0071e3] ring-offset-2 ring-offset-white"
+                              : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
+                          }`}
+                        >
+                          {/* Cover at its own aspect ratio: no letterbox, no crop, no stretch. */}
+                          <div className="relative w-full overflow-hidden bg-[#ececf0]">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={m.cover}
+                              alt=""
+                              loading="lazy"
+                              className={`block h-auto w-full transition duration-300 group-hover:scale-[1.03] ${
+                                ready ? "" : "grayscale-[0.6] opacity-70"
+                              }`}
+                            />
+                            {!ready && (
+                              <span className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                待接入
+                              </span>
+                            )}
+                          </div>
+                          <div className="bg-white px-2 py-1.5">
+                            <div className="truncate text-[12px] font-semibold leading-tight text-[#1d1d1f]">
+                              {m.name}
+                            </div>
+                            <div className="truncate text-[10px] leading-tight text-[#86868b]">
+                              {m.tagline}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                </div>
+              </div>
+            </div>
+
             {mode === "t2i" && (
-              <div className="mb-4">
+              <div className="border-t border-black/[0.06] px-3.5 py-1">
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setShowMoreRatio((v) => !v)}
-                    className="flex w-full items-center justify-between rounded-2xl border border-black/[0.08] bg-white px-3.5 py-3 text-left transition hover:border-black/[0.12]"
+                    className="flex w-full items-center justify-between py-1.5 text-left"
                   >
-                    <span className="text-[13px] text-[#86868b]">比例</span>
+                    <span className="text-[12px] text-[#6e6e73]">比例</span>
                     <span className="flex items-center gap-1.5 text-[13px] font-medium text-[#1d1d1f]">
                       {/* A preset shows its ratio name; custom sizes show the resolution. */}
                       {RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}`}
@@ -1455,8 +1454,8 @@ export default function StudioPage() {
             )}
 
             {modelParams.resolutions && (
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">清晰度</span>
+              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
+                <span className="text-[12px] text-[#6e6e73]">清晰度</span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="清晰度">
                   {(Object.keys(modelParams.resolutions) as Res[]).map((r) => (
                     <button
@@ -1477,8 +1476,8 @@ export default function StudioPage() {
             )}
 
             {modelParams.quality && (
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">画质</span>
+              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
+                <span className="text-[12px] text-[#6e6e73]">画质</span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="画质">
                   {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
                     <button
@@ -1499,9 +1498,9 @@ export default function StudioPage() {
             )}
 
             {modelParams.thinking != null && (
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                  深度思考 <span className="normal-case tracking-normal text-[#aeaeb2]">更懂复杂描述 · 慢一点 · +¥{modelParams.thinking.toFixed(2)}</span>
+              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
+                <span className="text-[12px] text-[#6e6e73]">
+                  深度思考 <span className="text-[#aeaeb2]">更懂复杂描述 · 慢一点 · +¥{modelParams.thinking.toFixed(2)}</span>
                 </span>
                 <div className="apple-seg flex" role="radiogroup" aria-label="深度思考">
                   {[false, true].map((on) => (
@@ -1523,8 +1522,8 @@ export default function StudioPage() {
             )}
 
             {mode === "i2i" && modelParams.denoise && (
-              <div className="mb-4">
-                <div className="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+              <div className="border-t border-black/[0.06] px-3.5 py-2.5">
+                <div className="mb-1 flex items-center justify-between text-[12px] text-[#6e6e73]">
                   <span>重绘幅度</span>
                   {denoiseText === null ? (
                     <button
@@ -1565,16 +1564,8 @@ export default function StudioPage() {
               </div>
             )}
             {(modelParams.seed || modelParams.negative || modelParams.lora || modelParams.background || modelParams.complexity || (mode === "i2i" && modelParams.regional)) && (
-              <div className="mb-4 rounded-2xl border border-black/[0.06] bg-white/60">
-                <button
-                  type="button"
-                  onClick={() => setMoreOpen((v) => !v)}
-                  className="flex w-full items-center justify-between px-3.5 py-2.5 text-[12px] font-medium text-[#1d1d1f]"
-                >
-                  更多设置
-                  <span className={`text-[#86868b] transition-transform ${moreOpen ? "rotate-180" : ""}`}>⌄</span>
-                </button>
-                {moreOpen && (
+              <div>
+                {(
                   <div className="space-y-3 border-t border-black/[0.06] px-3.5 py-3">
                     {mode === "i2i" && modelParams.regional && (
                       <div className="flex items-center justify-between">
@@ -1656,7 +1647,7 @@ export default function StudioPage() {
                           value={seedText}
                           placeholder="随机"
                           onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))}
-                          className="w-36 rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-right text-[12px] tabular-nums outline-none focus:border-[rgba(0,113,227,0.45)]"
+                          className="w-24 min-w-0 rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-right text-[12px] tabular-nums outline-none focus:border-[rgba(0,113,227,0.45)]"
                           aria-label="种子"
                         />
                       </div>
@@ -1677,6 +1668,7 @@ export default function StudioPage() {
                 )}
               </div>
             )}
+            </div>
           </div>
 
           <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
