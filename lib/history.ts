@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { persistentStore, storeGet, storeKeys, storePut } from "./store";
 
 export type HistoryStatus = "pending" | "done" | "failed" | "expired";
 
@@ -31,94 +32,28 @@ const ITEM_PREFIX = "item-";
 const LEGACY_FILE = path.join(process.cwd(), "data", "history.json");
 
 /**
- * Netlify functions have a read-only, per-instance filesystem, so history
- * lives in Netlify Blobs there; local `next dev` uses data/history.json.
+ * History lives in the site's store (lib/store.ts: Vercel Blob, Netlify Blobs);
+ * local `next dev` uses data/history.json.
  *
- * Every task is written to its own blob (`item-<id>`) first, so concurrent
+ * Every task is written to its own record (`item-<id>`) first, so concurrent
  * requests can never overwrite each other's records. The `items` index is a
- * read cache; on each read it is checked against the per-item blobs and any
+ * read cache; on each read it is checked against the per-item records and any
  * record missing from it is merged back in.
- *
- * Talks to the Blobs edge directly: the @netlify/blobs client hung inside the
- * Next.js handler (its retry loop waits 5 s x 5), which timed the function out.
  */
-type BlobsContext = {
-  uncachedEdgeURL?: string;
-  edgeURL?: string;
-  token?: string;
-  siteID?: string;
-  primaryRegion?: string;
-};
-
-function blobsContext(): BlobsContext | null {
-  const raw = process.env.NETLIFY_BLOBS_CONTEXT;
-  if (!raw) return null;
-  try {
-    return JSON.parse(Buffer.from(raw, "base64").toString("utf8"));
-  } catch {
-    return null;
-  }
-}
-
-export function storeUrl(key = ""): { url: string; headers: Record<string, string> } {
-  const ctx = blobsContext();
-  const base = ctx?.uncachedEdgeURL || ctx?.edgeURL;
-  if (!ctx || !base || !ctx.token || !ctx.siteID) throw new Error("历史存储不可用");
-  const region = ctx.primaryRegion ? `/region:${ctx.primaryRegion}` : "";
-  const suffix = key ? `/${encodeURIComponent(key)}` : "";
-  return {
-    url: `${base}${region}/${ctx.siteID}/site:history${suffix}`,
-    headers: { authorization: `Bearer ${ctx.token}` },
-  };
-}
-
 async function blobGet<T>(key: string): Promise<T | null> {
-  const req = storeUrl(key);
-  const res = await fetch(req.url, {
-    headers: req.headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(8000),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`历史读取失败 (${res.status})`);
-  return (await res.json()) as T;
+  const bytes = await storeGet(key, 8000);
+  return bytes ? (JSON.parse(bytes.toString("utf8")) as T) : null;
 }
 
 async function blobPut(key: string, value: unknown): Promise<void> {
-  const req = storeUrl(key);
-  const res = await fetch(req.url, {
-    method: "PUT",
-    headers: req.headers,
-    body: JSON.stringify(value),
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`历史写入失败 (${res.status})`);
+  await storePut(key, JSON.stringify(value), "application/json", 8000);
 }
 
-async function blobKeys(prefix: string): Promise<string[]> {
-  const keys: string[] = [];
-  let cursor = "";
-  for (let page = 0; page < 50; page++) {
-    const req = storeUrl();
-    const qs = new URLSearchParams({ prefix });
-    if (cursor) qs.set("cursor", cursor);
-    const res = await fetch(`${req.url}?${qs}`, {
-      headers: req.headers,
-      cache: "no-store",
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.status === 404) break;
-    if (!res.ok) throw new Error(`历史列表读取失败 (${res.status})`);
-    const json: any = await res.json();
-    for (const b of json?.blobs ?? []) if (typeof b?.key === "string") keys.push(b.key);
-    if (!json?.next_cursor) break;
-    cursor = json.next_cursor;
-  }
-  return keys;
-}
+const blobKeys = storeKeys;
 
+/** True on a deployed site with persistent storage. */
 export function onNetlify(): boolean {
-  return !!process.env.NETLIFY_BLOBS_CONTEXT;
+  return persistentStore();
 }
 
 async function readFileList(): Promise<HistoryItem[]> {

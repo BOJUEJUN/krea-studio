@@ -1,3 +1,6 @@
+import { isGptTask, queryGptTask } from "./openai";
+import { isRhHostedTask, queryRhHostedTask } from "./rh-models";
+import { isKreaTask, queryKreaTask } from "./krea";
 /**
  * RunningHub client: run published workflows (task/openapi/create + outputs).
  */
@@ -79,6 +82,9 @@ export async function queryCustomTask(taskId: string): Promise<{
   errorMessage?: string;
   raw: any;
 }> {
+  if (isGptTask(taskId)) return { ...(await queryGptTask(taskId)), raw: null };
+  if (isRhHostedTask(taskId)) return { ...(await queryRhHostedTask(taskId)), raw: null };
+  if (isKreaTask(taskId)) return { ...(await queryKreaTask(taskId)), raw: null };
   const res = await fetch(`${RH_HOST}/task/openapi/outputs`, {
     method: "POST",
     headers: authHeaders(true),

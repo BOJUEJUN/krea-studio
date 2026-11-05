@@ -4,7 +4,10 @@ import {
   createCustomTask,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
-import { LEGACY_MODEL, findModel } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel } from "@/lib/models";
+import { createGptTask, gptSize } from "@/lib/openai";
+import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
+import { createKreaTask } from "@/lib/krea";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
 import { refUrlFor, saveReference } from "@/lib/refs";
@@ -39,8 +42,11 @@ export async function POST(req: NextRequest) {
     if (!model) {
       return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
     }
-    const spec = workflowFor(model.id, "i2i");
-    if (!spec) {
+    const gptModel = GPT_IMAGE_MODELS[model.id];
+    const krea = model.id === "krea-3";
+    const hosted = !!RH_HOSTED_MODELS[model.id] || krea;
+    const spec = gptModel || hosted ? null : workflowFor(model.id, "i2i");
+    if (!spec && !gptModel && !hosted) {
       return NextResponse.json(
         { ok: false, error: `${model.name} 的图生图还在接入中` },
         { status: 400 }
@@ -49,14 +55,29 @@ export async function POST(req: NextRequest) {
 
     const count = Math.min(4, Math.max(1, Math.round(Number(form.get("count") || 1)) || 1));
     // Upload the reference once; every image of the batch reuses it.
-    const imageFileName = await uploadInputForWorkflow(file, file.name || "input.png");
+    const imageFileName = gptModel || hosted ? "" : await uploadInputForWorkflow(file, file.name || "input.png");
+    const gptImage = gptModel || hosted
+      ? { bytes: Buffer.from(await file.arrayBuffer()), mime: file.type || "image/png" }
+      : undefined;
 
     const tasks: { taskId: string; seed: number }[] = [];
     for (let i = 0; i < count; i++) {
       // The first image keeps a requested seed; the others get their own.
       const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
-      const nodeInfoList = buildWorkflowNodes(spec, { prompt, seed: s, denoise, imageFileName });
-      tasks.push({ taskId: await createCustomTask({ workflowId: spec.workflowId, nodeInfoList }), seed: s });
+      if (gptModel) {
+        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: "auto", image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
+        continue;
+      }
+      if (krea) {
+        tasks.push({ taskId: await createKreaTask({ prompt, image: gptImage, quality: String(form.get("quality") || "") }), seed: s });
+        continue;
+      }
+      if (hosted) {
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, image: gptImage }), seed: s });
+        continue;
+      }
+      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName });
+      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
     }
 
     // Keep the reference for the compare view; a failure here must not block generation.

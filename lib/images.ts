@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { onNetlify, storeUrl, type HistoryItem } from "./history";
+import { onNetlify, type HistoryItem } from "./history";
+import { storeGet, storePut } from "./store";
 
 /**
  * Permanent copies of generated images. RunningHub only keeps outputs for a
@@ -28,20 +29,20 @@ export function isRemoteImage(url: string | undefined): boolean {
   return !!url && REMOTE.test(url);
 }
 
-async function save(id: string, bytes: ArrayBuffer): Promise<void> {
+/** Store a finished image under /api/img/<id> (GPT results arrive as bytes). */
+export async function saveImageBytes(id: string, bytes: Buffer): Promise<string> {
+  await save(id, bytes);
+  return imageUrlFor(id);
+}
+
+async function save(id: string, input: ArrayBuffer | Buffer): Promise<void> {
+  const bytes = Buffer.isBuffer(input) ? input : Buffer.from(new Uint8Array(input));
   if (!onNetlify()) {
     await fs.mkdir(LOCAL_DIR, { recursive: true });
     await fs.writeFile(path.join(LOCAL_DIR, safeId(id)), Buffer.from(bytes));
     return;
   }
-  const req = storeUrl(`img-${safeId(id)}`);
-  const res = await fetch(req.url, {
-    method: "PUT",
-    headers: req.headers,
-    body: bytes,
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`图片备份写入失败 (${res.status})`);
+  await storePut(`img-${safeId(id)}`, Buffer.from(bytes), "image/png");
 }
 
 export async function readImage(id: string): Promise<Buffer | null> {
@@ -52,15 +53,7 @@ export async function readImage(id: string): Promise<Buffer | null> {
       return null;
     }
   }
-  const req = storeUrl(`img-${safeId(id)}`);
-  const res = await fetch(req.url, {
-    headers: req.headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`图片读取失败 (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  return storeGet(`img-${safeId(id)}`, 20_000);
 }
 
 /**

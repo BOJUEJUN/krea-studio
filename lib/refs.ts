@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { onNetlify, storeUrl } from "./history";
+import { onNetlify } from "./history";
+import { storeGet, storePut } from "./store";
 
 /**
  * 图生图 reference images, kept so a result can be compared with its source
@@ -26,14 +27,7 @@ export async function saveReference(id: string, image: Blob): Promise<void> {
     await fs.writeFile(path.join(LOCAL_DIR, safeId(id)), bytes);
     return;
   }
-  const req = storeUrl(`ref-${safeId(id)}`);
-  const res = await fetch(req.url, {
-    method: "PUT",
-    headers: req.headers,
-    body: bytes,
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!res.ok) throw new Error(`参考图保存失败 (${res.status})`);
+  await storePut(`ref-${safeId(id)}`, Buffer.from(bytes), "image/png");
 }
 
 export async function readReference(id: string): Promise<Buffer | null> {
@@ -44,15 +38,7 @@ export async function readReference(id: string): Promise<Buffer | null> {
       return null;
     }
   }
-  const req = storeUrl(`ref-${safeId(id)}`);
-  const res = await fetch(req.url, {
-    headers: req.headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`参考图读取失败 (${res.status})`);
-  return Buffer.from(await res.arrayBuffer());
+  return storeGet(`ref-${safeId(id)}`, 20_000);
 }
 
 export function imageMime(bytes: Buffer): string {

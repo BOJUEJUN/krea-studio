@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkflowNodes, createCustomTask } from "@/lib/runninghub";
-import { LEGACY_MODEL, findModel } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel } from "@/lib/models";
+import { createGptTask, gptSize } from "@/lib/openai";
+import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
+import { createKreaTask } from "@/lib/krea";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
 
@@ -20,8 +23,11 @@ export async function POST(req: NextRequest) {
     if (!model) {
       return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
     }
-    const spec = workflowFor(model.id, "t2i");
-    if (!spec) {
+    const gptModel = GPT_IMAGE_MODELS[model.id];
+    const krea = model.id === "krea-3";
+    const hosted = !!RH_HOSTED_MODELS[model.id] || krea;
+    const spec = gptModel || hosted ? null : workflowFor(model.id, "t2i");
+    if (!spec && !gptModel && !hosted) {
       return NextResponse.json(
         { ok: false, error: `${model.name} 的文生图还在接入中` },
         { status: 400 }
@@ -41,8 +47,20 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < count; i++) {
       // The first image keeps a requested seed; the others get their own.
       const s = i === 0 ? seed : Math.floor(Math.random() * 1e12);
-      const nodeInfoList = buildWorkflowNodes(spec, { prompt, seed: s, width, height });
-      tasks.push({ taskId: await createCustomTask({ workflowId: spec.workflowId, nodeInfoList }), seed: s });
+      if (gptModel) {
+        tasks.push({ taskId: await createGptTask({ imageModel: gptModel, prompt, size: gptSize(width, height), quality: String(body.quality || "") }), seed: s });
+        continue;
+      }
+      if (krea) {
+        tasks.push({ taskId: await createKreaTask({ prompt, width, height, quality: String(body.quality || "") }), seed: s });
+        continue;
+      }
+      if (hosted) {
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height }), seed: s });
+        continue;
+      }
+      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height });
+      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
     }
 
     // Record the tasks right away so images reach history even if the page closes.

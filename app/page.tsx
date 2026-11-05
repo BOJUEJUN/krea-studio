@@ -3,7 +3,16 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
-import { DEFAULT_MODEL, MODELS, findModel, type Mode, type ModelId } from "@/lib/models";
+import {
+  DEFAULT_MODEL,
+  MODELS,
+  QUALITY_LABELS,
+  findModel,
+  paramsOf,
+  type Mode,
+  type ModelId,
+  type Quality,
+} from "@/lib/models";
 
 type Readiness = Record<string, Record<Mode, boolean>>;
 
@@ -257,6 +266,7 @@ export default function StudioPage() {
   const [heightText, setHeightText] = useState("1536");
   const [showMoreRatio, setShowMoreRatio] = useState(false);
   const [denoise, setDenoise] = useState(0.5);
+  const [quality, setQuality] = useState<Quality>("medium");
   // Text being typed into the 重绘幅度 number; null while not editing.
   const [denoiseText, setDenoiseText] = useState<string | null>(null);
   const commitDenoise = useCallback((raw: string) => {
@@ -439,6 +449,17 @@ export default function StudioPage() {
   }, []);
 
   // paste image upload — defined after onPickFile
+  // A model with a fixed ratio list snaps the size to its first ratio when the current one is not offered.
+  useEffect(() => {
+    const allowed = paramsOf(model).ratios;
+    if (!allowed) return;
+    const cur = RATIOS.find((r) => r.w === width && r.h === height);
+    if (cur && allowed.includes(cur.label)) return;
+    const next = RATIOS.find((r) => r.label === allowed[0]);
+    if (next) applyRatioRef.current?.(next.w, next.h);
+  }, [model, width, height]);
+  const applyRatioRef = useRef<((w: number, h: number) => void) | null>(null);
+
   const applyRatio = useCallback((w: number, h: number) => {
     const cw = clampRes(w);
     const ch = clampRes(h);
@@ -447,6 +468,7 @@ export default function StudioPage() {
     setWidthText(String(cw));
     setHeightText(String(ch));
   }, []);
+  applyRatioRef.current = applyRatio;
 
   const commitWidth = useCallback(() => {
     const v = clampRes(Number(widthText));
@@ -812,6 +834,7 @@ export default function StudioPage() {
             count,
             width: clampRes(Number(widthText) || width),
             height: clampRes(Number(heightText) || height),
+            quality,
           }),
         });
       } else {
@@ -821,6 +844,7 @@ export default function StudioPage() {
         fd.append("count", String(count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
+        fd.append("quality", quality);
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }
       if (jobRef.current !== job) return;
@@ -854,7 +878,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, finishBatch, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, finishBatch, resumePending]);
 
   // Estimated price: median real cost of recent images from the same model
   // and mode (falls back to any recent image, then a default), times the count.
@@ -865,13 +889,19 @@ export default function StudioPage() {
         .slice(0, 15)
         .map((g) => Number(g.cost))
         .sort((a, b) => a - b);
-    let list = costs((g) => (g.model ?? "brown-dust") === model && g.mode === mode);
-    if (!list.length) list = costs(() => true);
+    const fixed = paramsOf(model).quality?.[quality] ?? findModel(model)?.price;
+    if (fixed) {
+      const total = fixed * count;
+      return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
+    }
+    let list = costs((g) => (g.model ?? "brown-dust") === model && g.mode === mode && !findModel(g.model)?.price);
+    if (!list.length) list = costs((g) => !findModel(g.model)?.price);
     const each = list.length ? list[Math.floor(list.length / 2)] : Number(EST_COST);
     const total = each * count;
     return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
+  const modelParams = paramsOf(model);
   const histStats = (() => {
     let done = 0,
       failed = 0,
@@ -927,7 +957,7 @@ export default function StudioPage() {
             <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
             {money != null && (
               <span className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]">
-                ¥{money}
+                RunningHub 余额 ¥{money}
               </span>
             )}
           </div>
@@ -1223,7 +1253,7 @@ export default function StudioPage() {
                   {showMoreRatio && (
                     <div className="animate-chip-in absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-black/[0.08] bg-white p-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
                       <div className="grid grid-cols-4 gap-2">
-                        {RATIOS.map((p) => {
+                        {RATIOS.filter((p) => !modelParams.ratios || modelParams.ratios.includes(p.label)).map((p) => {
                           const on = width === p.w && height === p.h;
                           return (
                             <button
@@ -1268,6 +1298,7 @@ export default function StudioPage() {
                           );
                         })}
                       </div>
+                      {modelParams.customSize && (
                       <div className="mt-3 flex items-center gap-2 border-t border-black/[0.06] pt-3">
                         <input
                           inputMode="numeric"
@@ -1291,13 +1322,36 @@ export default function StudioPage() {
                           aria-label="高度"
                         />
                       </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
             )}
 
-            {mode === "i2i" && (
+            {modelParams.quality && (
+              <div className="mb-4 flex items-center justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">画质</span>
+                <div className="apple-seg flex" role="radiogroup" aria-label="画质">
+                  {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      role="radio"
+                      aria-checked={quality === q}
+                      onClick={() => setQuality(q)}
+                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
+                        quality === q ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
+                      }`}
+                    >
+                      {QUALITY_LABELS[q]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {mode === "i2i" && modelParams.denoise && (
               <div className="mb-4">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
                   <span>重绘幅度</span>
@@ -1384,7 +1438,8 @@ export default function StudioPage() {
                 <>
                   <span>开始生成</span>
                   <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
-                    ¥{btnPrice}
+                    {findModel(model)?.price ? "约 " : ""}¥{btnPrice}
+                    {findModel(model)?.billing ? ` · ${findModel(model)?.billing}` : ""}
                   </span>
                 </>
               )}

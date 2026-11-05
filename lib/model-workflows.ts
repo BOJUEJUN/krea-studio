@@ -5,7 +5,8 @@
  * A null workflow shows the model as 待接入 for that mode.
  */
 
-import type { Mode, ModelId, WorkflowSpec } from "./models";
+import { RH_HOSTED_MODELS, rhHostedReady } from "./rh-models";
+import { GPT_IMAGE_MODELS, type Mode, type ModelId, type WorkflowSpec } from "./models";
 
 function envValue(name: string): string {
   return process.env[name] || "";
@@ -62,7 +63,7 @@ function krea2(workflowId: string, mode: Mode): WorkflowSpec {
   };
 }
 
-const WORKFLOW_IDS: Record<Exclude<ModelId, "brown-dust">, Record<Mode, string | null>> = {
+const WORKFLOW_IDS: Partial<Record<ModelId, Record<Mode, string | null>>> = {
   "little-legend": { t2i: "2117874901527912450", i2i: "2117873102267961345" },
   "lol-236-v11": { t2i: "2117877015239028737", i2i: "2117877879672492034" },
   "lol-236": { t2i: "2117876136859492354", i2i: "2117830038564458498" },
@@ -76,5 +77,17 @@ export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
 }
 
 export function availability(model: ModelId): Record<Mode, boolean> {
+  if (RH_HOSTED_MODELS[model]) {
+    const ready = rhHostedReady(model);
+    return { t2i: ready, i2i: ready };
+  }
+  if (model === "krea-3") {
+    const ready = !!process.env.KREA_API_KEY;
+    return { t2i: ready, i2i: ready };
+  }
+  if (GPT_IMAGE_MODELS[model]) {
+    const ready = !!process.env.OPENAI_API_KEY;
+    return { t2i: ready, i2i: ready };
+  }
   return { t2i: !!workflowFor(model, "t2i"), i2i: !!workflowFor(model, "i2i") };
 }
