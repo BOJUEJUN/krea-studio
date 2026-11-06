@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, checkLogin, enterByName, makeSession, registerUser, sessionUser } from "@/lib/auth";
+import { SESSION_COOKIE, checkLogin, enterByName, makeSession, registerUser, sessionUser, signIn } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
     const name = String(body.name || "").trim();
     const password = String(body.password || "");
     const user =
-      action === "enter"
+      action === "signin"
+        ? await signIn(name, password)
+        : action === "enter"
         ? await enterByName(name)
         : action === "register"
         ? await registerUser(name, password, String(body.invite || ""))

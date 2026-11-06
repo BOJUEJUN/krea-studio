@@ -1208,7 +1208,7 @@ export default function StudioPage() {
                 }}
                 className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#d70015] hover:bg-black/[0.04]"
               >
-                换个名字
+                退出登录
               </button>
             </div>
           )}

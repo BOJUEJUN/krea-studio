@@ -66,6 +66,33 @@ export async function enterByName(name: string): Promise<UserRecord> {
   return user;
 }
 
+/**
+ * 2026-11-05 (用户: 弄成假登录): looks like a normal sign-in. A new name is created with the password typed the
+ * first time (a name made earlier without a password takes it now); after that the same password is needed.
+ */
+export async function signIn(name: string, password: string): Promise<UserRecord> {
+  if (!validName(name)) throw new Error("账号 2–20 个字，只能用字母、数字、中文、_ . -");
+  if (password.length < 4) throw new Error("密码至少 4 位");
+  const file = await readUsers();
+  let user = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
+  if (user && user.hash) {
+    const a = Buffer.from(hashPassword(password, user.salt), "hex");
+    const b = Buffer.from(user.hash, "hex");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("密码不对");
+    return user;
+  }
+  const salt = randomBytes(16).toString("hex");
+  if (user) {
+    user.salt = salt;
+    user.hash = hashPassword(password, salt);
+  } else {
+    user = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
+    file.users.push(user);
+  }
+  await storePut("users.json", JSON.stringify(file), "application/json");
+  return user;
+}
+
 export async function checkLogin(name: string, password: string): Promise<UserRecord | null> {
   const file = await readUsers();
   const user = file.users.find((u) => u.name.toLowerCase() === name.trim().toLowerCase());
