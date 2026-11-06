@@ -269,7 +269,7 @@ export function settingsOf(model: string, mode: "t2i" | "i2i", get: (k: string) 
   if (p.thinking != null) out["深度思考"] = get("thinking") === "1" || get("thinking") === "true" ? "开" : "关";
   if (p.background && get("background") && get("background") !== "auto") out["背景"] = { transparent: "透明", opaque: "不透明" }[get("background")] ?? get("background");
   if (p.complexity && get("complexity") && get("complexity") !== "auto") out["构思"] = { low: "低", medium: "中", high: "高" }[get("complexity")] ?? get("complexity");
-  if (mode === "i2i" && p.regional) out["只改局部"] = get("regional") === "1" ? "是" : "否";
+  if (mode === "i2i" && p.regional) out["修改范围"] = get("regional") === "1" ? "只改说的地方" : "改整张图";
   if (mode === "i2i" && p.denoise && get("denoise")) out["重绘幅度"] = Number(get("denoise")).toFixed(2);
   if (p.lora && get("lora")) out["风格强度"] = get("lora");
   if (p.negative && get("negative")) out["不想要"] = get("negative").slice(0, 200);

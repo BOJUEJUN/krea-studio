@@ -1322,11 +1322,12 @@ export default function StudioPage() {
     ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
     ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "低", medium: "中", high: "高" }[complexity]}` }] : []),
-    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改局部" : "整体改" }] : []),
+    // 2026-11-06 (用户: "整体改"听不懂): say what gets changed.
+    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
     // 2026-11-05 (用户: 随机种子去掉吧，没什么人用): every picture gets a random seed.
-    ...(modelParams.negative ? [{ key: "negative", label: negative ? "不想要 ✓" : "不想要…" }] : []),
+    // 不想要 removed (用户 2026-11-06: 去掉).
     { key: "count", label: `${count} 张` },
   ];
   /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
@@ -1819,7 +1820,7 @@ export default function StudioPage() {
                       style={{ left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
-                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "只改局部", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
                       </div>}
                     
                     {openPanel === "model" && (
@@ -1876,7 +1877,7 @@ export default function StudioPage() {
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="越高，复杂画面越准；不影响价格" options={[["auto", "自动"], ["low", "低"], ["medium", "中"], ["high", "高"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
-                    {openPanel === "regional" && <Choice note="开：只改你说的地方，其他一点不动" options={[["0", "关"], ["1", "开"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
+                    {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
                     {openPanel === "denoise" && (
                       // 2026-11-05 (用户: 重绘幅度的 UI 别扭，重新设计): title + big number, a soft slider with its two
