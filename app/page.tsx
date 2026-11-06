@@ -1503,7 +1503,7 @@ export default function StudioPage() {
                       mode === "t2i"
                         ? "描述你想要的画面，或点 + 放参考图改图…"
                         : reverse
-                          ? "可不填，会自动看图写描述；输入 @ 指定哪张图"
+                          ? "可不填，AI 会看图写描述；输入 @ 指定哪张图"
                           : "想怎么改？输入 @ 指定哪张图"
                     }
                     className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25"
@@ -1645,7 +1645,7 @@ export default function StudioPage() {
                       }}
                       className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
                     >
-                      自动看图写描述
+                      AI 写描述
                       <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
                         <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
                       </span>
