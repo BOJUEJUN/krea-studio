@@ -19,15 +19,30 @@ export function refUrlFor(id: string): string {
   return `/api/ref/${safeId(id)}`;
 }
 
-export async function saveReference(id: string, image: Blob): Promise<void> {
-  const bytes = Buffer.from(await image.arrayBuffer());
-  if (bytes.length > MAX_BYTES) throw new Error("参考图过大，未保存对比原图");
+export async function saveReference(id: string, image: Blob | Buffer): Promise<void> {
+  let bytes = Buffer.isBuffer(image) ? image : Buffer.from(await image.arrayBuffer());
   if (!onNetlify()) {
+    if (bytes.length > MAX_BYTES) throw new Error("参考图过大，未保存对比原图");
     await fs.mkdir(LOCAL_DIR, { recursive: true });
     await fs.writeFile(path.join(LOCAL_DIR, safeId(id)), bytes);
     return;
   }
-  await storePut(`ref-${safeId(id)}`, Buffer.from(bytes), "image/png");
+  // 2026-11-06 (用户: 最新的图没有对比): a 3 MB reference timed out on its way to Tencent. The compare copy is
+  // a WebP of at most 2048 px (a few hundred KB), and the upload is retried.
+  try {
+    const sharp = (await import("sharp")).default;
+    bytes = await sharp(bytes).rotate().resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true }).webp({ quality: 90 }).toBuffer();
+  } catch {}
+  let last: unknown;
+  for (let i = 0; i < 3; i++) {
+    try {
+      await storePut(`ref-${safeId(id)}`, bytes, "image/webp", 40_000);
+      return;
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
 }
 
 export async function readReference(id: string): Promise<Buffer | null> {

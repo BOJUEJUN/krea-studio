@@ -1,5 +1,5 @@
 import { activeUser } from "@/lib/auth";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import {
   buildWorkflowNodes,
   createCustomTask,
@@ -95,14 +95,10 @@ export async function POST(req: NextRequest) {
       tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
     }
 
-    // Keep the reference for the compare view; a failure here must not block generation.
-    let refUrl: string | undefined;
-    try {
-      await saveReference(tasks[0].taskId, file);
-      refUrl = refUrlFor(tasks[0].taskId);
-    } catch (e: any) {
-      console.error("[refs] save failed:", e?.message || e);
-    }
+    // Keep the reference for the compare view, after answering so it never slows generation down.
+    const refUrl: string | undefined = refUrlFor(tasks[0].taskId);
+    const refBytes = Buffer.from(await file.arrayBuffer());
+    after(() => saveReference(tasks[0].taskId, refBytes).catch((e: any) => console.error("[refs] save failed:", e?.message || e)));
 
     // Record the tasks right away so images reach history even if the page closes.
     const settings = settingsOf(model.id, "i2i", (k) =>
