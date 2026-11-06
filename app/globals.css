@@ -460,3 +460,9 @@ textarea {
 .login-drift {
   animation: login-drift 40s ease-in-out infinite alternate;
 }
+
+/* Text boxes show focus through their card, not a blue outline box. */
+textarea:focus-visible,
+input:focus-visible {
+  outline: none;
+}
