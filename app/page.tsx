@@ -72,7 +72,7 @@ function Choice({ options, value, onPick, note }: { options: [string, string][];
 
 /** 96 px model icon (the full cover is ~100 KB). */
 function iconOf(cover: string): string {
-  return cover.replace("/models/", "/models/icon/");
+  return cover.replace("/models/", "/models/icon/") + "?v=2";
 }
 
 /** Small WebP for grids; originals stay for the big view and downloads. */
@@ -1604,7 +1604,7 @@ export default function StudioPage() {
                               className={`flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${on ? "bg-[#0071e3]/[0.08]" : "hover:bg-black/[0.04]"} disabled:opacity-40`}
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={iconOf(m.cover)} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                              <img src={iconOf(m.cover)} alt="" className="h-9 w-9 shrink-0 rounded-[10px] object-cover ring-1 ring-black/[0.06]" />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-[13px] font-medium text-[#1d1d1f]">{m.name}</span>
                                 <span className="block truncate text-[11px] text-[#86868b]">{ready ? m.tagline : "待接入"}</span>
@@ -1687,7 +1687,7 @@ export default function StudioPage() {
                     >
                       {c.key === "model" && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded object-cover" />
+                        <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded-[5px] object-cover ring-1 ring-black/[0.06]" />
                       )}
                       {c.label}
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
