@@ -1130,52 +1130,7 @@ export default function StudioPage() {
         <section
           ref={resultRef_}
           className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
-          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4">
-            <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
-            <span
-              title="所有生成记录的花费合计（GPT / Krea / Banana 为估算）"
-              className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]"
-            >
-              已花费约 ¥{histStats.cost}
-            </span>
-            {resultUrl && !loading && resultSize && (
-              <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] tabular-nums text-[#6e6e73]">
-                {resultSize.w} × {resultSize.h}
-              </span>
-            )}
-            <div className="ml-auto flex items-center gap-1.5">
-              {resultUrl && resultRef && !loading && compareOn && (
-                <div className="apple-seg flex">
-                  {COMPARE_MODES.map((m) => (
-                    <button
-                      key={m.key}
-                      type="button"
-                      data-active={compareMode === m.key}
-                      onClick={() => setCompareMode(m.key)}
-                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {resultUrl && resultRef && !loading && (
-                <button
-                  type="button"
-                  aria-pressed={compareOn}
-                  onClick={() => setCompareOn((v) => !v)}
-                  className={`compare-btn rounded-full px-3 py-1 text-[12px] font-medium transition active:scale-[0.97] ${
-                    compareOn
-                      ? "bg-[#0071e3] text-white hover:bg-[#0077ed]"
-                      : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
-                  }`}
-                >
-                  {compareOn ? "退出对比" : "对比"}
-                </button>
-              )}
-            </div>
-          </div>
-          <div
+                    <div
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
             style={{
               background:
@@ -1244,6 +1199,67 @@ export default function StudioPage() {
               </div>
             )}
           </div>
+          {/* Under the picture: what you can do with it (用户: 图片下面加对比、下载等). */}
+          {resultUrl && !loading && (
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 pb-3 sm:px-4">
+              {resultSize && (
+                <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[11px] tabular-nums text-[#6e6e73]">
+                  {resultSize.w} × {resultSize.h}
+                </span>
+              )}
+              {currentItem?.durationMs ? (
+                <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[11px] tabular-nums text-[#6e6e73]">
+                  {formatDuration(currentItem.durationMs)}
+                </span>
+              ) : null}
+              <div className="ml-auto flex flex-wrap items-center gap-1.5">
+                {resultRef && compareOn && (
+                  <div className="apple-seg flex">
+                    {COMPARE_MODES.map((m) => (
+                      <button
+                        key={m.key}
+                        type="button"
+                        data-active={compareMode === m.key}
+                        onClick={() => setCompareMode(m.key)}
+                        className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {resultRef && (
+                  <button
+                    type="button"
+                    aria-pressed={compareOn}
+                    onClick={() => setCompareOn((v) => !v)}
+                    className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition active:scale-[0.97] ${
+                      compareOn ? "bg-[#0071e3] text-white" : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
+                    }`}
+                  >
+                    {compareOn ? "退出对比" : "对比原图"}
+                  </button>
+                )}
+                {currentItem && (
+                  <>
+                    <button type="button" onClick={() => useAsReference(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
+                      拿来改图
+                    </button>
+                    <button type="button" onClick={() => reuseItem(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
+                      复用设置
+                    </button>
+                    <button type="button" onClick={() => copyPrompt(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
+                      复制描述
+                    </button>
+                    <button type="button" onClick={() => downloadItem(currentItem)} className="rounded-full bg-[#0071e3] px-3.5 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#0077ed] active:scale-[0.97]">
+                      下载
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
 
         </section>
         <section
