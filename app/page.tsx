@@ -446,6 +446,10 @@ export default function StudioPage() {
   const [count, setCount] = useState(1);
   // Task ids of the latest batch, for the result strip under the preview.
   const [batch, setBatch] = useState<string[]>([]);
+  // 2026-11-05 (用户: 多张时出一张就先显示一张): how many of the current batch are done.
+  const [batchDone, setBatchDone] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const showingPartial = loading && batchDone > 0;
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -877,6 +881,7 @@ export default function StudioPage() {
       setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
         (a, b) => b.createdAt - a.createdAt
       ));
+      setBatchDone((n) => n + 1);
       if (!shown.v) {
         shown.v = true;
         showItem(item);
@@ -903,6 +908,8 @@ export default function StudioPage() {
   const finishBatch = useCallback(
     async (pendings: PendingJob[], job: number) => {
       setBatch(pendings.map((p) => p.taskId));
+      setBatchTotal(pendings.length);
+      setBatchDone(0);
       const shown = { v: false };
       const results = await Promise.allSettled(pendings.map((p) => finishPending(p, job, shown)));
       if (jobRef.current !== job) return;
@@ -1278,9 +1285,9 @@ export default function StudioPage() {
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
 
           >
-            {loading ? (
+            {loading && !showingPartial ? (
               <GeneratingView aspect={jobVisual.aspect} progress={progress} />
-            ) : resultUrl && compareRefs.length > 0 && compareOn ? (
+            ) : resultUrl && compareRefs.length > 0 && compareOn && !loading ? (
               <div className="h-full w-full p-2">
                 <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={compareRefs[compareIdx] ?? resultRef} after={resultUrl} mode={compareMode} />
               </div>
@@ -1309,7 +1316,13 @@ export default function StudioPage() {
                 </p>
               </div>
             )}
-            {!loading && batch.length > 1 && (
+            {showingPartial && (
+              <div className="animate-pop-in absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-[12px] text-white backdrop-blur">
+                <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white" />
+                已出 {batchDone}/{batchTotal}，剩下的还在画
+              </div>
+            )}
+            {(!loading || showingPartial) && batch.length > 1 && (
               <div className="batch-strip absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-2xl bg-white/80 p-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl">
                 {batch.map((id, i) => {
                   const g = gallery.find((x) => x.id === id);
@@ -1329,9 +1342,15 @@ export default function StudioPage() {
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={thumbOf(g.url, 160)} alt="" className="h-full w-full object-cover" />
                       ) : (
-                        <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
-                          失败
-                        </span>
+                        loading ? (
+                          <span className="flex h-full w-full items-center justify-center">
+                            <span className="animate-spin-slow h-4 w-4 rounded-full border-2 border-black/10 border-t-[#0071e3]" />
+                          </span>
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
+                            失败
+                          </span>
+                        )
                       )}
                     </button>
                   );
@@ -1340,7 +1359,7 @@ export default function StudioPage() {
             )}
           </div>
           {/* Under the picture: only 对比 (when there was a reference) and 下载, centred (用户 2026-11-05). */}
-          {resultUrl && !loading && (
+          {resultUrl && (!loading || showingPartial) && (
             <div className="flex shrink-0 flex-wrap items-center justify-center gap-1.5 px-3 pb-3">
               {compareRefs.length > 0 && (
                 <button
@@ -1703,7 +1722,7 @@ export default function StudioPage() {
               {loading ? (
                 <>
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                  {Math.floor(progress)}%{queued ? ` · 排队 ${queued}` : " · 再点排队"}
+                  {batchTotal > 1 ? `${batchDone}/${batchTotal} 张` : `${Math.floor(progress)}%`}{queued ? ` · 排队 ${queued}` : " · 再点排队"}
                 </>
               ) : !modelReady ? (
                 <span>{findModel(model)?.name} 待接入</span>
