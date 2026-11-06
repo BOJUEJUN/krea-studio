@@ -143,17 +143,43 @@ export async function upsertHistory(item: HistoryItem): Promise<HistoryItem> {
   const prev = await blobGet<HistoryItem>(ITEM_PREFIX + item.id);
   const merged = merge(prev ?? undefined, item);
   await blobPut(ITEM_PREFIX + merged.id, merged);
-  const index = await readIndex();
-  const mergedIndex = merge(index.find((x) => sameTask(x, merged)), merged);
-  await blobPut(
-    INDEX_KEY,
-    sortAndCap([mergedIndex, ...index.filter((x) => !sameTask(x, merged))])
-  );
+  let mergedIndex = merged;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const index = await readIndex();
+    mergedIndex = merge(index.find((x) => sameTask(x, merged)), merged);
+    await blobPut(INDEX_KEY, sortAndCap([mergedIndex, ...index.filter((x) => !sameTask(x, merged))]));
+    // Someone else may have rewritten the index from an older copy at the same moment: check and redo.
+    const check = (await readIndex()).find((x) => sameTask(x, merged));
+    if (check && check.url === mergedIndex.url && check.fav === mergedIndex.fav && check.status === mergedIndex.status) break;
+  }
   return mergedIndex;
+}
+
+/**
+ * 2026-11-06 (用户: 删掉的图在别的设备还在): two writes at the same moment could each rewrite the index and drop
+ * the other's change. Deletions are kept in their own small list as well, which reads always respect.
+ */
+const DELETED_KEY = "deleted.json";
+
+export async function readDeleted(): Promise<Set<string>> {
+  if (!onNetlify()) return new Set();
+  const list = await blobGet<string[]>(DELETED_KEY).catch(() => null);
+  return new Set(Array.isArray(list) ? list : []);
+}
+
+export async function markDeleted(id: string): Promise<void> {
+  const set = await readDeleted();
+  set.add(id);
+  await blobPut(DELETED_KEY, [...set]);
 }
 
 /** Index plus any per-item record the index lost to a concurrent write. */
 export async function readHistory(): Promise<HistoryItem[]> {
+  const [items, deleted] = await Promise.all([readHistoryRaw(), readDeleted()]);
+  return deleted.size ? items.map((x) => (deleted.has(x.id) ? { ...x, deleted: true } : x)) : items;
+}
+
+async function readHistoryRaw(): Promise<HistoryItem[]> {
   if (!onNetlify()) return sortAndCap(await readFileList());
   const index = await readIndex();
   let keys: string[] = [];

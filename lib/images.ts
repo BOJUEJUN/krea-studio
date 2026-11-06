@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { onNetlify, type HistoryItem } from "./history";
 import { storeGet, storePut } from "./store";
+import { makeThumbs } from "./thumbs";
 
 /**
  * Permanent copies of generated images. RunningHub only keeps outputs for a
@@ -43,6 +44,8 @@ async function save(id: string, input: ArrayBuffer | Buffer): Promise<void> {
     return;
   }
   await storePut(`img-${safeId(id)}`, Buffer.from(bytes), "image/png");
+  // Every display size is made now, so viewing never waits for it.
+  await makeThumbs(safeId(id), Buffer.from(bytes)).catch((e) => console.error("[thumbs]", id, e?.message || e));
 }
 
 export async function readImage(id: string): Promise<Buffer | null> {

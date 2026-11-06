@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inviteCode, isOwner, listUsers, sessionUser, setDisabled, setInviteCode, unauthorized } from "@/lib/auth";
 import { readHistory } from "@/lib/history";
+import { directLinks } from "@/lib/thumbs";
 import { ownerName } from "@/lib/auth";
 
 export const runtime = "nodejs";
@@ -115,6 +116,7 @@ export async function GET(req: NextRequest) {
       userPrompt: it.userPrompt,
       fav: !!it.fav,
       deleted: !!it.deleted,
+      ...directLinks(it.url, it.refUrl),
       createdAt: it.createdAt,
     }));
   return NextResponse.json(

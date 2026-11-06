@@ -2,8 +2,9 @@ import { ownerName, sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
-import { readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
+import { markDeleted, readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
 import { isRemoteImage, withBackup } from "@/lib/images";
+import { directLinks } from "@/lib/thumbs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,7 +98,9 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         ok: true,
-        items: items.filter((x) => x.url || x.status === "failed" || x.status === "expired"),
+        items: items
+          .filter((x) => x.url || x.status === "failed" || x.status === "expired")
+          .map((x) => ({ ...x, ...directLinks(x.url, x.refUrl) })),
         pending: items.filter((x) => !x.url && x.status === "pending").length,
         // 2026-11-05 (用户: 刷新后生成进度没了): tasks still running, so a reloaded page picks them up again.
         running: items
@@ -150,7 +153,7 @@ export async function POST(req: NextRequest) {
     const d = Number(body.durationMs);
     if (url) item.durationMs = d > 0 && d < 86_400_000 ? Math.round(d) : Math.max(0, Date.now() - item.createdAt);
     const saved = await upsertHistory(await withBackup(item));
-    return NextResponse.json({ ok: true, item: saved });
+    return NextResponse.json({ ok: true, item: { ...saved, ...directLinks(saved.url, saved.refUrl) } });
   } catch (e: any) {
     return NextResponse.json(
       { ok: false, error: e?.message || "写入失败" },
@@ -188,7 +191,8 @@ export async function DELETE(req: NextRequest) {
     if (!item || (item.owner ?? owner) !== user) {
       return NextResponse.json({ ok: false, error: "找不到这张图" }, { status: 404 });
     }
-    await upsertHistory({ ...item, deleted: true });
+    await markDeleted(item.id);
+    await upsertHistory({ ...item, deleted: true }).catch(() => {});
     return NextResponse.json({ ok: true });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "删除失败" }, { status: 500 });

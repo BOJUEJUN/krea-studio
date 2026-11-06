@@ -83,9 +83,42 @@ function rawOf(url: string): string {
   return url.startsWith("/api/") ? `${url}${url.includes("?") ? "&" : "?"}raw=1` : url;
 }
 
+/**
+ * 2026-11-06 (用户: 加载慢了): signed Tencent links per picture, from the history answer, so the browser loads
+ * straight from storage. If a size is missing the <img> falls back to the site's own path (see the error hook).
+ */
+const DIRECT = new Map<string, Record<string, string>>();
+const FALLBACK = new Map<string, string>();
+function rememberDirect(items: { url?: string; refUrl?: string; direct?: Record<string, string>; refDirect?: string }[]) {
+  for (const g of items) {
+    if (g.url && g.direct) DIRECT.set(g.url, g.direct);
+    if (g.refUrl && g.refDirect) DIRECT.set(g.refUrl, { full: g.refDirect });
+  }
+}
+function viaDirect(url: string, size: string, fallback: string): string {
+  const d = DIRECT.get(url)?.[size];
+  if (!d) return fallback;
+  FALLBACK.set(d, fallback);
+  return d;
+}
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "error",
+    (e) => {
+      const img = e.target as HTMLImageElement;
+      if (img?.tagName === "IMG" && FALLBACK.has(img.src)) img.src = FALLBACK.get(img.src)!;
+    },
+    true
+  );
+}
+
 /** Small WebP for grids; originals stay for the big view and downloads. */
 function thumbOf(url: string, w: number): string {
-  return url.startsWith("/api/img/") ? `${url}?w=${w}` : url;
+  return url.startsWith("/api/img/") ? viaDirect(url, String(w), `${url}?w=${w}`) : url;
+}
+/** The original picture, straight from storage when possible. */
+function fullOf(url: string): string {
+  return url.startsWith("/api/") ? viaDirect(url, "full", url) : url;
 }
 
 /** 24 秒 / 1 分 05 秒 */
@@ -595,6 +628,7 @@ export default function StudioPage() {
     fetchJson("/api/history")
       .then((d) => {
         if (d?.ok && Array.isArray(d.items) && d.items.length) {
+          rememberDirect(d.items);
           setGallery(d.items);
           const first = (d.items as GalleryItem[]).find((x) => x.url);
           if (first && !busyRef.current) showItem(first);
@@ -1036,6 +1070,7 @@ export default function StudioPage() {
         body: JSON.stringify(item),
       })
         .then((saved) => {
+          if (saved?.item) rememberDirect([saved.item]);
           // The server keeps a permanent copy; point history at it.
           const kept = saved?.item?.url;
           if (typeof kept === "string" && kept !== url) {
@@ -1496,7 +1531,7 @@ export default function StudioPage() {
               </div>
             ) : resultUrl && compareRefs.length > 0 && compareOn && !loading ? (
               <div className="h-full w-full p-2">
-                <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={compareRefs[compareIdx] ?? resultRef} after={resultUrl} mode={compareMode} />
+                <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={fullOf((compareRefs[compareIdx] ?? resultRef) as string)} after={fullOf(resultUrl)} mode={compareMode} />
               </div>
             ) : resultUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -2004,7 +2039,7 @@ export default function StudioPage() {
                 const step = at >= 0 && done.length > 1 ? (d: number) => () => { const g = done[(at + d + done.length) % done.length]; showItem(g); setViewer(g.url); } : null;
                 return (
                   <ImageViewer
-                    src={viewer.startsWith("/api/img/") ? viewer : viewer}
+                    src={fullOf(viewer)}
                     onClose={() => setViewer(null)}
                     onPrev={step?.(-1)}
                     onNext={step?.(1)}

@@ -67,7 +67,9 @@ const modelIcon = (id: string) => {
   const m = findModel(id);
   return m ? m.cover.replace("/models/", "/models/icon/") + "?v=2" : null;
 };
-const thumb = (url: string, w: number) => (url.startsWith("/api/img/") ? `${url}?w=${w}` : url);
+// Records carry signed Tencent links (direct); the site's own path is the fallback.
+let DIRECT: Record<string, Record<string, string>> = {};
+const thumb = (url: string, w: number | "full") => DIRECT[url]?.[w] ?? (url.startsWith("/api/img/") && w !== "full" ? `${url}?w=${w}` : url);
 const yuan = (n: number) => `¥${n.toFixed(2)}`;
 const when = (t: number) =>
   t ? new Date(t).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -203,6 +205,7 @@ export default function AdminPage() {
     const d = await res.json().catch(() => ({}));
     if (!d?.ok) return setError(d?.error || "读取失败");
     setError(null);
+    DIRECT = Object.fromEntries((d.records as any[]).filter((r) => r.direct).map((r) => [r.url, r.direct]));
     setData(d);
   }, []);
 

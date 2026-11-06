@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // Signed-in viewers only, so the browser may keep it but no shared cache.
 const FOREVER = "private, max-age=31536000, immutable";
 // 1600 is the big on-screen view (2026-11-05: keeps Vercel traffic down); the original is only for downloads.
-const THUMB_WIDTHS = [160, 320, 640, 1600];
+const THUMB_WIDTHS: number[] = [160, 320, 640, 1600];
 
 /** /api/img/<id> is the original; ?w=320 is a small WebP made once and kept (history grid, thumbnails). */
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
