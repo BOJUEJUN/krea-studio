@@ -51,16 +51,17 @@ function withMentions(text: string) {
 /** A row of choices for one setting (shown when its chip is opened). */
 function Choice({ options, value, onPick, note }: { options: [string, string][]; value: string; onPick: (v: string) => void; note?: string }) {
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      {note && <span className="mr-1 text-[12px] text-[#86868b]">{note}</span>}
+    <div className="flex flex-col">
+      {note && <div className="px-2.5 pb-1 text-[11px] text-[#86868b]">{note}</div>}
       {options.map(([v, t]) => (
         <button
           key={v}
           type="button"
           onClick={() => onPick(v)}
-          className={`rounded-lg px-3 py-1.5 text-[12px] font-medium transition ${value === v ? "bg-[#0071e3] text-white" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
+          className={`flex items-center justify-between rounded-xl px-2.5 py-2 text-left text-[13px] transition ${value === v ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}
         >
           {t}
+          {value === v && <span>✓</span>}
         </button>
       ))}
     </div>
@@ -330,6 +331,17 @@ export default function StudioPage() {
   const [paramsOpen, setParamsOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const [panelLeft, setPanelLeft] = useState(0);
+  const chipRowRef = useRef<HTMLDivElement>(null);
+  // A setting's menu closes when you click anywhere else.
+  useEffect(() => {
+    if (!openPanel) return;
+    const close = (e: MouseEvent) => {
+      if (!chipRowRef.current?.contains(e.target as Node)) setOpenPanel(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [openPanel]);
   const [histHidden, setHistHidden] = useState(false);
   useEffect(() => {
     try { setHistHidden(localStorage.getItem("krea-studio.history-hidden") === "1"); } catch {}
@@ -1238,7 +1250,7 @@ export default function StudioPage() {
           className="stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
         >
 
-          <div className="max-h-[56vh] min-h-0 overflow-y-auto">
+          <div className="min-h-0">
             {/* 2026-11-05 (用户: 极简，参考图跟提示词在同一个框): one compose box — pictures on top, words below, + to add. */}
             <div>
               <div
@@ -1359,58 +1371,42 @@ export default function StudioPage() {
                   />
                 </div>
 
-                {openPanel && (
-                  <div className="max-h-[40vh] overflow-y-auto px-3 py-2">
+
+                {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
+                <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                  {openPanel && (
+                    <div
+                      className="animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] w-[300px] overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]"
+                      style={{ left: panelLeft }}
+                    >
+                      <div className="px-2.5 pb-1.5 pt-1 text-[13px] font-semibold text-[#1d1d1f]">
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "只改局部", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
+                      </div>
+                    
                     {openPanel === "model" && (
-<div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
-                    {MODELS.map((m) => {
-                      const on = model === m.id;
-                      const ready = isReady(m.id);
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={on}
-                          onClick={() => {
-                            pickModel(m.id);
-                            setOpenPanel(null);
-                          }}
-                          className={`model-card group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl text-left transition ${
-                            on
-                              ? "ring-2 ring-[#0071e3] ring-offset-2 ring-offset-white"
-                              : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
-                          }`}
-                        >
-                          {/* Cover at its own aspect ratio: no letterbox, no crop, no stretch. */}
-                          <div className="relative w-full overflow-hidden bg-[#ececf0]">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={m.cover}
-                              alt=""
-                              loading="lazy"
-                              className={`block h-auto w-full transition duration-300 group-hover:scale-[1.03] ${
-                                ready ? "" : "grayscale-[0.6] opacity-70"
-                              }`}
-                            />
-                            {!ready && (
-                              <span className="absolute right-1.5 top-1.5 rounded-full bg-black/55 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                待接入
+                      <div className="flex flex-col">
+                        {MODELS.map((m) => {
+                          const on = model === m.id;
+                          const ready = isReady(m.id);
+                          return (
+                            <button
+                              key={m.id}
+                              type="button"
+                              disabled={!ready}
+                              onClick={() => { pickModel(m.id); setOpenPanel(null); }}
+                              className={`flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${on ? "bg-[#0071e3]/[0.08]" : "hover:bg-black/[0.04]"} disabled:opacity-40`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={m.cover} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-medium text-[#1d1d1f]">{m.name}</span>
+                                <span className="block truncate text-[11px] text-[#86868b]">{ready ? m.tagline : "待接入"}</span>
                               </span>
-                            )}
-                          </div>
-                          <div className="bg-white px-2 py-1.5">
-                            <div className="truncate text-[12px] font-semibold leading-tight text-[#1d1d1f]">
-                              {m.name}
-                            </div>
-                            <div className="truncate text-[10px] leading-tight text-[#86868b]">
-                              {m.tagline}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                              {on && <span className="text-[13px] text-[#0071e3]">✓</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
                     {openPanel === "ratio" && (
                       <div>
@@ -1466,16 +1462,20 @@ export default function StudioPage() {
                     {openPanel === "negative" && (
                       <input autoFocus value={negative} placeholder="不想出现的东西，比如：文字、水印、多余的手指" onChange={(e) => setNegative(e.target.value.slice(0, 300))} className="w-full rounded-lg bg-[#f5f5f7] px-3 py-2 text-[12px] outline-none" aria-label="不想要的内容" />
                     )}
-                  </div>
-                )}
-                {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
-                <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                  
+                    </div>
+                  )}
                   {chips.map((c) => (
                     <button
                       key={c.key}
                       type="button"
                       aria-expanded={openPanel === c.key}
-                      onClick={() => setOpenPanel((v) => (v === c.key ? null : c.key))}
+                      onClick={(e) => {
+                        const row = chipRowRef.current;
+                        const x = e.currentTarget.offsetLeft;
+                        setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
+                        setOpenPanel((v) => (v === c.key ? null : c.key));
+                      }}
                       className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[12px] transition ${openPanel === c.key ? "bg-[#0071e3]/10 text-[#0071e3]" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
                     >
                       {c.key === "model" && (
@@ -1483,6 +1483,7 @@ export default function StudioPage() {
                         <img src={(findModel(model) ?? MODELS[0]).cover} alt="" className="h-5 w-5 rounded object-cover" />
                       )}
                       {c.label}
+                      <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
                   {mode === "i2i" && (
