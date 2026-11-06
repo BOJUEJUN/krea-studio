@@ -308,6 +308,7 @@ export default function StudioPage() {
   const [regional, setRegional] = useState(false);
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [paramsOpen, setParamsOpen] = useState(false);
   /** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
   const sizeFor = (ratio: number, fallback?: { width: number; height: number }) => {
     if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
@@ -1020,6 +1021,17 @@ export default function StudioPage() {
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
   const modelParams = paramsOf(model);
+  /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
+  const paramSummary = [
+    mode === "t2i" ? RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` : "跟参考图",
+    modelParams.resolutions ? res : null,
+    modelParams.quality ? QUALITY_LABELS[quality] : null,
+    modelParams.thinking != null && thinking ? "深度思考" : null,
+    mode === "i2i" && modelParams.denoise ? `重绘 ${denoise.toFixed(2)}` : null,
+    seedText ? `种子 ${seedText}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   const histStats = (() => {
     let done = 0,
       failed = 0,
@@ -1082,15 +1094,8 @@ export default function StudioPage() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
-            <div className="mb-4">
-              <div className="mb-2 flex items-center justify-between">
-                <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                  参考图{" "}
-                  <span className="normal-case tracking-normal text-[#aeaeb2]">
-                    可选 · 放了就是改图{(modelParams.maxRefs ?? 1) > 1 ? ` · 最多 ${modelParams.maxRefs} 张，描述里输入 @ 指定哪张` : ""}
-                  </span>
-                </label>
-              </div>
+            {/* 2026-11-05 (用户: 极简，参考图跟提示词在同一个框): one compose box — pictures on top, words below, + to add. */}
+            <div className="mb-3">
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -1111,179 +1116,116 @@ export default function StudioPage() {
                   addRefs(files);
                 }}
                 data-drag={dragState}
-                className={`ref-drop relative flex flex-wrap gap-1.5 rounded-2xl border border-dashed p-1.5 transition ${
-                  dragState !== "none" ? "border-[#0071e3] bg-[#0071e3]/[0.04]" : "border-black/[0.10] bg-white/70"
+                className={`rounded-2xl border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] focus-within:ring-4 focus-within:ring-[rgba(0,113,227,0.12)] ${
+                  dragState !== "none" ? "border-[#0071e3] ring-4 ring-[#0071e3]/10" : "border-black/[0.08]"
                 }`}
               >
                 {preview && (
-                  <span className="group relative h-16 w-16 overflow-hidden rounded-xl border border-black/[0.08]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={preview}
-                      alt="图1"
-                      onLoad={(e) => {
-                        const el = e.currentTarget;
-                        if (el.naturalHeight) setPreviewAspect(el.naturalWidth / el.naturalHeight);
-                      }}
-                      className="h-full w-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => insertMention(1)}
-                      title="在描述里 @ 这张图"
-                      className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[10px] text-white hover:bg-[#0071e3]"
-                    >
-                      @图1
-                    </button>
-                    <button
-                      type="button"
-                      onClick={removeMainRef}
-                      className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
-                      aria-label="删除图1"
-                    >
-                      ×
-                    </button>
-                  </span>
+                  <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
+                    {[{ url: preview, file: null as File | null }, ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
+                      <span key={r.url} className="relative h-12 w-12 overflow-hidden rounded-lg border border-black/[0.08]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={r.url}
+                          alt={`图${i + 1}`}
+                          onLoad={
+                            i === 0
+                              ? (e) => {
+                                  const el = e.currentTarget;
+                                  if (el.naturalHeight) setPreviewAspect(el.naturalWidth / el.naturalHeight);
+                                }
+                              : undefined
+                          }
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => insertMention(i + 1)}
+                          title="在描述里 @ 这张图"
+                          className="absolute inset-x-0 bottom-0 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
+                        >
+                          图{i + 1}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => (i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
+                          className="absolute right-0.5 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
+                          aria-label={`删除图${i + 1}`}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 )}
-                {preview &&
-                  extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)).map((r, i) => (
-                    <span key={r.url} className="relative h-16 w-16 overflow-hidden rounded-xl border border-black/[0.08]">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={r.url} alt={`图${i + 2}`} className="h-full w-full object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => insertMention(i + 2)}
-                        title="在描述里 @ 这张图"
-                        className="absolute inset-x-0 bottom-0 bg-black/55 py-px text-center text-[10px] text-white hover:bg-[#0071e3]"
-                      >
-                        @图{i + 2}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setExtraRefs((list) => list.filter((x) => x !== r))}
-                        className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/60 text-[10px] text-white"
-                        aria-label="删除这张参考图"
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                {(!preview || extraRefs.length + 1 < (modelParams.maxRefs ?? 1)) && (
+                <div className="relative">
+                  {prompt && (
+                    <div
+                      ref={promptMirrorRef}
+                      aria-hidden
+                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f]"
+                    >
+                      {withMentions(prompt)}
+                      {"\n"}
+                    </div>
+                  )}
+                  <textarea
+                    ref={promptRef}
+                    onScroll={(e) => {
+                      if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+                    }}
+                    value={prompt}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setPrompt(v);
+                      const at = e.target.selectionStart ?? v.length;
+                      setMentionOpen(!!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@");
+                    }}
+                    onKeyDown={(e) => {
+                      if (mentionOpen && e.key === "Escape") setMentionOpen(false);
+                    }}
+                    rows={4}
+                    placeholder={
+                      mode === "t2i"
+                        ? "描述你想要的画面，或点 + 放参考图改图…"
+                        : reverse
+                          ? "可不填，会自动看图写描述；输入 @ 指定哪张图"
+                          : "想怎么改？输入 @ 指定哪张图"
+                    }
+                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25"
+                    style={prompt ? undefined : { color: "#1d1d1f" }}
+                  />
+                </div>
+                <div className="flex items-center justify-between px-2 pb-2">
                   <button
                     type="button"
                     onClick={() => fileRef.current?.click()}
-                    className={`flex h-16 items-center justify-center gap-1.5 rounded-xl text-[12px] text-[#86868b] transition hover:bg-black/[0.03] hover:text-[#0071e3] ${
-                      preview ? "w-16" : "w-full"
-                    }`}
+                    disabled={!!preview && extraRefs.length + 1 >= (modelParams.maxRefs ?? 1)}
+                    title="添加参考图（也可拖入或粘贴）"
+                    className="flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#6e6e73] transition hover:bg-black/[0.05] disabled:opacity-40"
                   >
-                    <span className="text-[18px] leading-none">+</span>
-                    {!preview && <span>{dragState !== "none" ? "松开即可添加" : "点击 / 拖入 / 粘贴图片"}</span>}
+                    <span className="text-[16px] leading-none">+</span> 图片
                   </button>
-                )}
-              </div>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  addRefs(Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")));
-                  // Allow picking the same file again after deleting it.
-                  e.target.value = "";
-                }}
-              />
-            </div>
-
-            <div className="mb-4">
-              <div className="mb-2 flex items-center justify-between">
-                <label className="block text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                  描述
-                </label>
-                {mode === "i2i" && (
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={reverse}
-                    onClick={() => {
-                      const next = !reverse;
-                      setReverse(next);
-                      localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
-                    }}
-                    className="reverse-switch flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium text-[#6e6e73] transition hover:bg-black/[0.04] active:scale-[0.97]"
-                  >
-                    提示词反推
-                    <span
-                      className={`relative inline-block h-[18px] w-[30px] rounded-full transition-colors ${
-                        reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white shadow transition-[left] ${
-                          reverse ? "left-[14px]" : "left-[2px]"
-                        }`}
-                      />
-                    </span>
-                  </button>
-                )}
-              </div>
-              <div className="relative">
-              {/* Mirror behind the transparent textarea: same text, with @图N painted blue. */}
-              <div
-                ref={promptMirrorRef}
-                aria-hidden
-                className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-2xl border border-transparent bg-white px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f]"
-              >
-                {withMentions(prompt)}
-                {"\n"}
-              </div>
-              <textarea
-                ref={promptRef}
-                onScroll={(e) => {
-                  if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
-                }}
-                value={prompt}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setPrompt(v);
-                  const at = e.target.selectionStart ?? v.length;
-                  setMentionOpen(!!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@");
-                }}
-                onKeyDown={(e) => {
-                  if (mentionOpen && e.key === "Escape") setMentionOpen(false);
-                }}
-                rows={4}
-                placeholder={
-                  mode === "t2i"
-                    ? "描述你想要的画面…"
-                    : reverse
-                      ? "可不填：会根据参考图自动反推提示词，这里可补充想要的变化"
-                      : "希望参考图如何变化…"
-                }
-                className="relative w-full resize-none rounded-2xl border border-black/[0.08] bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none transition placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25 focus:border-[rgba(0,113,227,0.45)] focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
-              />
-              </div>
-              {mentionOpen && (
-                <div className="animate-chip-in mt-1.5 flex flex-wrap gap-1.5 rounded-2xl border border-black/[0.08] bg-white p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
-                  {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
+                  {mode === "i2i" && (
                     <button
-                      key={i}
                       type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => insertMention(i + 1, true)}
-                      className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] transition hover:bg-[#0071e3]/10"
+                      role="switch"
+                      aria-checked={reverse}
+                      onClick={() => {
+                        const next = !reverse;
+                        setReverse(next);
+                        localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
+                      }}
+                      className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
                     >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
-                      图{i + 1}
+                      自动看图写描述
+                      <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
+                        <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
+                      </span>
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-
-            <div className="mb-4 rounded-2xl bg-white ring-1 ring-black/[0.08]">
-              <div className="px-3.5 pt-3 text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">模型与参数</div>
+                <div className="border-t border-black/[0.06]">
             <div className="px-2 pb-2 pt-2">
               {(() => {
                 const cur = findModel(model) ?? MODELS[0];
@@ -1380,6 +1322,22 @@ export default function StudioPage() {
               </div>
             </div>
 
+            <button
+              type="button"
+              onClick={() => setParamsOpen((v) => !v)}
+              aria-expanded={paramsOpen}
+              className="flex w-full items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5 text-left"
+            >
+              <span className="text-[12px] text-[#6e6e73]">参数</span>
+              <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-[#1d1d1f]">
+                <span className="truncate">{paramSummary}</span>
+                <svg className={`h-3.5 w-3.5 shrink-0 text-[#86868b] transition-transform ${paramsOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none">
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </span>
+            </button>
+            {paramsOpen && (
+              <>
             {mode === "t2i" && (
               <div className="border-t border-black/[0.06] px-3.5 py-1">
                 <div className="relative">
@@ -1696,7 +1654,40 @@ export default function StudioPage() {
                 )}
               </div>
             )}
+              </>
+            )}
+                </div>
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addRefs(Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")));
+                  e.target.value = "";
+                }}
+              />
+              {mentionOpen && (
+                <div className="animate-chip-in mt-1.5 flex flex-wrap gap-1.5 rounded-2xl border border-black/[0.08] bg-white p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
+                  {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertMention(i + 1, true)}
+                      className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] transition hover:bg-[#0071e3]/10"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
+                      图{i + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+
           </div>
 
           <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
@@ -1742,8 +1733,7 @@ export default function StudioPage() {
                 <>
                   <span>开始生成</span>
                   <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
-                    {findModel(model)?.price ? "约 " : ""}¥{btnPrice}
-                    {findModel(model)?.billing ? ` · ${findModel(model)?.billing}` : ""}
+                    ¥{btnPrice}
                   </span>
                 </>
               )}
