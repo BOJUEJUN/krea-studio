@@ -45,6 +45,46 @@ input[type="range"] {
   accent-color: var(--apple-blue);
 }
 
+/* Soft slider: thin track filled up to --p, white knob (重绘幅度). */
+.soft-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+.soft-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--apple-blue) var(--p, 50%), rgba(0, 0, 0, 0.1) var(--p, 50%));
+}
+.soft-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--apple-blue) var(--p, 50%), rgba(0, 0, 0, 0.1) var(--p, 50%));
+}
+.soft-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 20px;
+  height: 20px;
+  margin-top: -8px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+  transition: transform 0.15s;
+}
+.soft-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.soft-range:active::-webkit-slider-thumb {
+  transform: scale(1.12);
+}
+
 /* —— Apple motion primitives —— */
 
 @keyframes apple-fade-up {
@@ -341,22 +381,7 @@ textarea {
 }
 
 /* History: cards rise in on load / page turn, lift on hover. */
-.history-grid > * {
-  animation: apple-chip-in 0.45s var(--ease-out-expo) both;
-}
-.history-grid > *:nth-child(2n) { animation-delay: 0.03s; }
-.history-grid > *:nth-child(n + 5) { animation-delay: 0.06s; }
-.history-grid > *:nth-child(n + 9) { animation-delay: 0.09s; }
-/* Selection ring must appear instantly; only the lift eases. */
-.history-card {
-  transition: transform 0.35s var(--ease-spring);
-}
-.history-card:hover {
-  transform: translateY(-2px);
-}
-.history-card:active {
-  transform: scale(0.97);
-}
+/* History card motion: see the unified motion block at the end. */
 
 /* Segmented controls slide their highlight smoothly. */
 .apple-seg-item {
@@ -465,4 +490,156 @@ textarea {
 textarea:focus-visible,
 input:focus-visible {
   outline: none;
+}
+
+/* ——————————————————————————————————————————————————————————————
+ * 2026-11-05 (用户: 整体统一动画，苹果那种丝滑): one motion language for the whole site.
+ * Same curves everywhere: things arrive with a soft spring (fade + rise + tiny scale), leave quickly,
+ * every press gives a small squeeze. Tailwind v4 moves elements with the `translate` / `scale`
+ * properties, so the press uses `scale` and never fights a translate.
+ * —————————————————————————————————————————————————————————————— */
+:root {
+  --motion-in: cubic-bezier(0.16, 1, 0.3, 1);      /* arrive: fast, then settles */
+  --motion-press: cubic-bezier(0.3, 0.7, 0.4, 1.4); /* small overshoot on release */
+  --motion-quick: 180ms;
+  --motion-base: 320ms;
+  --motion-slow: 520ms;
+}
+
+button,
+[role="button"],
+a {
+  transition:
+    scale var(--motion-quick) var(--motion-press),
+    background-color var(--motion-base) var(--motion-in),
+    color var(--motion-base) var(--motion-in),
+    box-shadow var(--motion-base) var(--motion-in),
+    border-color var(--motion-base) var(--motion-in),
+    opacity var(--motion-base) var(--motion-in);
+  -webkit-tap-highlight-color: transparent;
+}
+button:not(:disabled):active,
+[role="button"]:active {
+  scale: 0.96;
+  transition-duration: 90ms;
+}
+/* Big surfaces squeeze less. */
+.history-card:active,
+.history-card [role="button"]:active {
+  scale: 0.985;
+}
+
+/* Pop-overs, menus, cards that open: spring in. */
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.animate-pop-in {
+  animation: pop-in var(--motion-base) var(--motion-in) both;
+  transform-origin: bottom left;
+}
+
+/* History pictures rise in as they load / filter. */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.history-card {
+  animation: card-in var(--motion-slow) var(--motion-in) both;
+}
+.history-card img {
+  transition: transform var(--motion-slow) var(--motion-in);
+}
+.history-card:hover img {
+  transform: scale(1.03);
+}
+
+/* Full-screen layers (lightbox, dialogs) fade their backdrop in. */
+@keyframes backdrop-in {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0);
+  }
+}
+.fixed.inset-0[class*="bg-black/"] {
+  animation: backdrop-in var(--motion-base) var(--motion-in) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  [role="button"],
+  a {
+    transition: none;
+  }
+  button:active,
+  [role="button"]:active {
+    scale: none;
+  }
+  .animate-pop-in,
+  .history-card,
+  .fixed.inset-0[class*="bg-black/"] {
+    animation: none;
+  }
+}
+
+/* Instant little labels for icon buttons (用户: 悬停要告诉用户这是什么按钮). Shown under the button. */
+/* The button itself must be positioned (relative / absolute) for the label to sit under it. */
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  translate: -50% -2px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: rgba(29, 29, 31, 0.88);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s var(--motion-in), translate 0.25s var(--motion-in);
+  z-index: 30;
+}
+[data-tip-end]::after {
+  left: auto;
+  right: 0;
+  translate: 0 -2px;
+}
+[data-tip-start]::after {
+  left: 0;
+  translate: 0 -2px;
+}
+[data-tip-start]:hover::after,
+[data-tip-start]:focus-visible::after {
+  translate: 0 0 !important;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after {
+  opacity: 1;
+  translate: -50% 0;
+}
+[data-tip-end]:hover::after,
+[data-tip-end]:focus-visible::after {
+  translate: 0 0;
+}
+@media (hover: none) {
+  [data-tip]::after {
+    display: none;
+  }
 }

@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { get as blobGet, list as blobList, put as blobPut } from "@vercel/blob";
+import { cosConf, cosGet, cosHas, cosKeys, cosPut, cosSignedGet } from "./cos";
 
 /**
  * One small key/value store for history records, image copies and references.
@@ -12,11 +13,13 @@ import { get as blobGet, list as blobList, put as blobPut } from "@vercel/blob";
  * Talks to the Netlify Blobs edge directly: the @netlify/blobs client hung inside
  * the Next.js handler (its retry loop waits 5 s x 5), which timed the function out.
  */
-export type StoreKind = "vercel" | "netlify" | "local";
+export type StoreKind = "cos" | "vercel" | "netlify" | "local";
 
 const LOCAL_DIR = path.join(process.cwd(), "data", "store");
 
 export function storeKind(): StoreKind {
+  // 2026-11-05 (用户: 图放腾讯云): Tencent COS first; Vercel Blob stays only as the old copy.
+  if (cosConf()) return "cos";
   if (process.env.BLOB_READ_WRITE_TOKEN) return "vercel";
   if (process.env.NETLIFY_BLOBS_CONTEXT) return "netlify";
   return "local";
@@ -67,6 +70,7 @@ export async function storeGet(key: string, timeoutMs = 10_000): Promise<Buffer 
       return null;
     }
   }
+  if (kind === "cos") return cosGet(key, timeoutMs);
   if (kind === "vercel") {
     const res = await blobGet(key, { access: "private", useCache: false, abortSignal: AbortSignal.timeout(timeoutMs) });
     if (!res || res.statusCode !== 200 || !res.stream) return null;
@@ -92,6 +96,7 @@ export async function storePut(
     await fs.writeFile(path.join(LOCAL_DIR, key), body);
     return;
   }
+  if (kind === "cos") return cosPut(key, body, contentType, timeoutMs);
   if (kind === "vercel") {
     await blobPut(key, body, {
       access: "private",
@@ -123,6 +128,7 @@ export async function storeKeys(prefix: string): Promise<string[]> {
       return [];
     }
   }
+  if (kind === "cos") return cosKeys(prefix);
   let cursor: string | undefined;
   for (let page = 0; page < 50; page++) {
     if (kind === "vercel") {
@@ -148,4 +154,14 @@ export async function storeKeys(prefix: string): Promise<string[]> {
     cursor = json.next_cursor;
   }
   return keys;
+}
+
+/** A link the browser loads straight from storage (COS only), so pictures don't pass through the site. */
+export function storeDirectUrl(key: string): string | null {
+  return storeKind() === "cos" ? cosSignedGet(safeKey(key)) : null;
+}
+
+export async function storeHas(key: string): Promise<boolean> {
+  if (storeKind() === "cos") return cosHas(safeKey(key));
+  return !!(await storeGet(key).catch(() => null));
 }

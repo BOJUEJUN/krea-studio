@@ -5,7 +5,7 @@ import {
   createCustomTask,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
-import { GPT_IMAGE_MODELS, LEGACY_MODEL, expandImageMentions, findModel } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, expandImageMentions, findModel, settingsOf } from "@/lib/models";
 import { createGptTask, gptSize } from "@/lib/openai";
 import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
@@ -105,6 +105,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Record the tasks right away so images reach history even if the page closes.
+    const settings = settingsOf(model.id, "i2i", (k) =>
+      k === "refs" ? String(1 + form.getAll("ref").length) : k === "denoise" ? String(denoise) : String(form.get(k) ?? "")
+    );
+    const userPrompt = String(form.get("userPrompt") || "").slice(0, 2000) || undefined;
     const now = Date.now();
     for (const [i, t] of tasks.entries()) {
       await upsertHistory({
@@ -117,6 +121,8 @@ export async function POST(req: NextRequest) {
         url: "",
         refUrl,
         seed: t.seed,
+        settings,
+        userPrompt,
         createdAt: now + i,
       }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
     }

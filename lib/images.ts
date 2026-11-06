@@ -63,7 +63,7 @@ export async function readImage(id: string): Promise<Buffer | null> {
 export async function withBackup(item: HistoryItem): Promise<HistoryItem> {
   if (!isRemoteImage(item.url)) return item;
   try {
-    const res = await fetch(item.url, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    const res = await fetch(item.url, { cache: "no-store", signal: AbortSignal.timeout(25_000) });
     if (!res.ok) throw new Error(`下载原图失败 (${res.status})`);
     const bytes = await res.arrayBuffer();
     if (!bytes.byteLength || bytes.byteLength > MAX_BYTES) throw new Error("原图大小异常");

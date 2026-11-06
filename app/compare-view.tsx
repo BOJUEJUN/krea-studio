@@ -30,7 +30,7 @@ const MAX = 8;
  * 2026-11-05 (用户: 对比要支持放大查看细节): one zoom shared by both pictures. Wheel or pinch zooms at the
  * pointer, drag pans while zoomed, double-click jumps to 3× there and back.
  */
-function useZoom() {
+export function useZoom() {
   const [view, setView] = useState<View>({ s: 1, x: 0, y: 0 });
   const viewRef = useRef(view);
   viewRef.current = view;

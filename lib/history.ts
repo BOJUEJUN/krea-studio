@@ -29,6 +29,15 @@ export type HistoryItem = {
   durationMs?: number;
   /** Starred by its owner (2026-11-05 用户: 历史加收藏). */
   fav?: boolean;
+  /** Settings it was made with, in plain words (尺寸, 重绘幅度, 清晰度 …). */
+  settings?: Record<string, string>;
+  /** What the user typed, when 提示词优化 rewrote it into `prompt`. */
+  userPrompt?: string;
+  /** Removed by its owner from their history (kept in storage; the admin page still lists it). */
+  deleted?: boolean;
+  /** Failed attempts to copy a RunningHub image, and when the last one ran (stops endless retries). */
+  backupTries?: number;
+  backupAt?: number;
 };
 
 const MAX_ITEMS = 5000;
@@ -103,6 +112,11 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     durationMs: prev.durationMs ?? next.durationMs,
     owner: prev.owner ?? next.owner,
     fav: next.fav ?? prev.fav,
+    settings: next.settings ?? prev.settings,
+    userPrompt: next.userPrompt ?? prev.userPrompt,
+    deleted: next.deleted ?? prev.deleted,
+    backupTries: next.backupTries ?? prev.backupTries,
+    backupAt: next.backupAt ?? prev.backupAt,
     createdAt: prev.createdAt || next.createdAt,
   };
   if (merged.url) delete merged.error;

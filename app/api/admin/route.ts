@@ -111,8 +111,10 @@ export async function GET(req: NextRequest) {
       error: it.error,
       cost: it.cost,
       durationMs: it.durationMs,
-      seed: it.seed,
+      settings: it.settings,
+      userPrompt: it.userPrompt,
       fav: !!it.fav,
+      deleted: !!it.deleted,
       createdAt: it.createdAt,
     }));
   return NextResponse.json(

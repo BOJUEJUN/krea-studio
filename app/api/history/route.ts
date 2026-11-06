@@ -1,5 +1,5 @@
 import { ownerName, sessionUser, unauthorized } from "@/lib/auth";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
 import { readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
@@ -7,7 +7,7 @@ import { isRemoteImage, withBackup } from "@/lib/images";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_CHECKS_PER_REQUEST = 8;
@@ -62,7 +62,12 @@ const MAX_BACKUPS_PER_REQUEST = 3;
 
 /** Copy images still served from RunningHub (older or failed backups). */
 async function backfillImages(items: HistoryItem[]): Promise<boolean> {
-  const todo = items.filter((x) => isRemoteImage(x.url)).slice(0, MAX_BACKUPS_PER_REQUEST);
+  // 2026-11-05: a dead RunningHub link was retried on every page load (20 s each, history took 30–40 s).
+  // Now at most 3 tries, an hour apart.
+  const now = Date.now();
+  const todo = items
+    .filter((x) => isRemoteImage(x.url) && (x.backupTries ?? 0) < 3 && (!x.backupAt || now - x.backupAt > 3_600_000))
+    .slice(0, MAX_BACKUPS_PER_REQUEST);
   if (!todo.length) return false;
   const done = await Promise.all(todo.map((x) => withBackup(x)));
   let changed = false;
@@ -70,6 +75,8 @@ async function backfillImages(items: HistoryItem[]): Promise<boolean> {
     if (!isRemoteImage(item.url)) {
       await upsertHistory(item);
       changed = true;
+    } else {
+      await upsertHistory({ ...item, backupTries: (item.backupTries ?? 0) + 1, backupAt: now }).catch(() => {});
     }
   }
   return changed;
@@ -81,10 +88,12 @@ export async function GET(req: Request) {
   try {
     // Each account sees only its own pictures; records from before accounts belong to the owner account.
     const owner = await ownerName();
-    const mine = async () => (await readHistory()).filter((x) => (x.owner ?? owner) === user);
+    const mine = async () => (await readHistory()).filter((x) => (x.owner ?? owner) === user && !x.deleted);
     let items = await mine();
     if (await settlePending(items)) items = await mine();
-    if (await backfillImages(items)) items = await mine();
+    // Copying RunningHub images can take a while from abroad: do it after answering (2026-11-05: history took 30 s).
+    const snapshot = items;
+    after(() => backfillImages(snapshot).catch(() => {}));
     return NextResponse.json(
       {
         ok: true,
@@ -165,5 +174,23 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ ok: true, fav: !!saved.fav });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "收藏失败" }, { status: 500 });
+  }
+}
+
+/** 2026-11-06 (用户: 历史加删除): remove one of your own pictures from your history. */
+export async function DELETE(req: NextRequest) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
+  try {
+    const id = new URL(req.url).searchParams.get("id") || "";
+    const owner = await ownerName();
+    const item = (await readHistory()).find((x) => x.id === id);
+    if (!item || (item.owner ?? owner) !== user) {
+      return NextResponse.json({ ok: false, error: "找不到这张图" }, { status: 404 });
+    }
+    await upsertHistory({ ...item, deleted: true });
+    return NextResponse.json({ ok: true });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "删除失败" }, { status: 500 });
   }
 }

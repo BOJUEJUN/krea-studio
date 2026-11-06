@@ -2,7 +2,7 @@ import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { readImage } from "@/lib/images";
 import { imageMime } from "@/lib/refs";
-import { storeGet, storePut } from "@/lib/store";
+import { storeDirectUrl, storeGet, storeHas, storePut } from "@/lib/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,9 +18,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!user) return unauthorized();
   try {
     const { id } = await params;
-    const w = Number(new URL(req.url).searchParams.get("w"));
+    const q = new URL(req.url).searchParams;
+    const w = Number(q.get("w"));
+    // 2026-11-05 (图放腾讯云): the browser is sent straight to COS, so pictures don't use the site's traffic.
+    // ?raw=1 keeps the bytes on this origin for the page's own fetch() (download, 当参考图, 重新编辑).
+    const direct = q.get("raw") !== "1";
+    const redirect = (key: string) => {
+      const to = storeDirectUrl(key);
+      return to ? NextResponse.redirect(to, { status: 302, headers: { "Cache-Control": "private, max-age=3600" } }) : null;
+    };
     if (THUMB_WIDTHS.includes(w) && /^[0-9A-Za-z_-]{1,64}$/.test(id)) {
       const key = `thumb-${w}-${id}`;
+      if (direct && storeDirectUrl(key) && (await storeHas(key).catch(() => false))) return redirect(key)!;
       let thumb = await storeGet(key).catch(() => null);
       if (!thumb) {
         const bytes = await readImage(id);
@@ -30,6 +39,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         await storePut(key, thumb, "image/webp").catch(() => {});
       }
       return new NextResponse(new Uint8Array(thumb), { headers: { "Content-Type": "image/webp", "Cache-Control": FOREVER } });
+    }
+    if (direct && /^[0-9A-Za-z_-]{1,64}$/.test(id)) {
+      const r = redirect(`img-${id}`);
+      if (r) return r;
     }
     const bytes = await readImage(id);
     if (!bytes) return NextResponse.json({ ok: false, error: "图片不存在" }, { status: 404 });

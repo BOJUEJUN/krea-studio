@@ -1,7 +1,7 @@
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkflowNodes, createCustomTask } from "@/lib/runninghub";
-import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel, settingsOf } from "@/lib/models";
 import { createGptTask, gptSize } from "@/lib/openai";
 import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Record the tasks right away so images reach history even if the page closes.
+    const settings = settingsOf(model.id, "t2i", (k) => (body[k] == null ? "" : String(body[k])));
     const now = Date.now();
     for (const [i, t] of tasks.entries()) {
       await upsertHistory({
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest) {
         prompt: prompt.slice(0, 2000),
         url: "",
         seed: t.seed,
+        settings,
         createdAt: now + i,
       }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
     }

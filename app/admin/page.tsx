@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { MODELS, findModel } from "@/lib/models";
 
 /**
@@ -46,8 +46,10 @@ type Rec = {
   error?: string;
   cost?: string | null;
   durationMs?: number;
-  seed?: number;
+  settings?: Record<string, string>;
+  userPrompt?: string;
   fav: boolean;
+  deleted?: boolean;
   createdAt: number;
 };
 type Data = { invite: string; summary: Summary; users: Row[]; daily: Day[]; models: ModelStat[]; records: Rec[] };
@@ -508,6 +510,7 @@ export default function AdminPage() {
                           </span>
                         )}
                         {r.fav && <span className="absolute right-1.5 top-1.5 rounded-full bg-black/35 px-1.5 text-[11px] text-[#ffcc00]">★</span>}
+                        {r.deleted && <span className="absolute left-1.5 top-1.5 rounded-full bg-black/55 px-1.5 py-px text-[10px] text-white">用户已删除</span>}
                       </span>
                       <span className="block px-2.5 py-2">
                         <span className="block truncate text-[12px]">{r.prompt || "（没写描述）"}</span>
@@ -629,12 +632,12 @@ export default function AdminPage() {
                 <dd className="tabular-nums">{secs(open.durationMs)}</dd>
                 <dt className="text-[#86868b]">花费</dt>
                 <dd className="tabular-nums">{open.cost ? `¥${open.cost}` : "—"}</dd>
-                {open.seed != null && (
-                  <>
-                    <dt className="text-[#86868b]">种子</dt>
-                    <dd className="tabular-nums">{open.seed}</dd>
-                  </>
-                )}
+                {Object.entries(open.settings ?? {}).map(([k, v]) => (
+                  <Fragment key={k}>
+                    <dt className="text-[#86868b]">{k}</dt>
+                    <dd className="break-words">{v}</dd>
+                  </Fragment>
+                ))}
               </dl>
               {open.refUrl && (
                 <div className="mt-4">
@@ -643,12 +646,19 @@ export default function AdminPage() {
                   <img src={open.refUrl} alt="" className="max-h-32 rounded-xl" />
                 </div>
               )}
-              <div className="mt-4 mb-1 text-[12px] text-[#86868b]">提示词</div>
+              {!open.settings && <div className="mt-2 text-[11px] text-[#aeaeb2]">这张图在记录参数之前生成，没有完整参数。</div>}
+              {open.userPrompt && (
+                <>
+                  <div className="mt-4 mb-1 text-[12px] text-[#86868b]">用户写的</div>
+                  <div className="whitespace-pre-wrap rounded-xl bg-[#f5f5f7] p-3 text-[12px] leading-relaxed">{open.userPrompt}</div>
+                </>
+              )}
+              <div className="mt-4 mb-1 text-[12px] text-[#86868b]">{open.userPrompt || open.settings?.["提示词优化"] ? "最终提示词（优化后）" : "提示词"}</div>
               <div className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f5f5f7] p-3 text-[12px] leading-relaxed">{open.prompt || "（没写描述）"}</div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={() => { navigator.clipboard?.writeText(open.prompt); flash("已复制提示词"); }} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">复制提示词</button>
                 {open.url && (
-                  <a href={open.url} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
+                  <a href={`${open.url}${open.url.includes("?") ? "&" : "?"}raw=1`} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
                 )}
                 {open.url && (
                   <a href={open.url} target="_blank" rel="noreferrer" className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">看原图</a>

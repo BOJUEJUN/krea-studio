@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
+import { ImageViewer } from "./image-viewer";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
@@ -77,6 +78,11 @@ function iconOf(cover: string): string {
   return cover.replace("/models/", "/models/icon/") + "?v=2";
 }
 
+/** Same picture as bytes on this site (for fetch(): download, 当参考图, 重新编辑); <img> loads go straight to COS. */
+function rawOf(url: string): string {
+  return url.startsWith("/api/") ? `${url}${url.includes("?") ? "&" : "?"}raw=1` : url;
+}
+
 /** Small WebP for grids; originals stay for the big view and downloads. */
 function thumbOf(url: string, w: number): string {
   return url.startsWith("/api/img/") ? `${url}?w=${w}` : url;
@@ -121,11 +127,15 @@ const MAX_RES = 2560;
 const MIN_RES = 256;
 const EST_COST = "0.07";
 const PENDING_KEY = "krea-studio.pending-job";
+/** Drag type for a history picture dropped into the compose box (2026-11-05 用户: 拖历史图进来没反应). */
+const HIST_DRAG = "application/x-studio-item";
+// 2026-11-05 (用户: 刷新后进度从 22% 掉回 11%): the running job's timing, so a reload continues the same bar.
+const TIMING_KEY = "krea-studio.pending-timing";
 const MODEL_KEY = "krea-studio.model";
 const COUNT_KEY = "krea-studio.count";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
 const PANEL_LEFT_KEY = "krea-studio.panel-left";
-const PANEL_RIGHT_KEY = "krea-studio.panel-right";
+const PANEL_RIGHT_KEY = "krea-studio.panel-right-2";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
@@ -440,6 +450,10 @@ export default function StudioPage() {
   const [histMode, setHistMode] = useState<"all" | Mode>("all");
   // "all" | "ok" | "bad" | "model:<id>"
   const [histFilter, setHistFilter] = useState<string>("all");
+  // 2026-11-05 (用户: 筛选里加排序).
+  const [histSort, setHistSort] = useState<"new" | "old" | "cost" | "slow">("new");
+  /** History card whose full description is unfolded. */
+  const [promptOpenId, setPromptOpenId] = useState<string | null>(null);
   /** Height / width of each history picture once loaded, for the two-column layout. */
   const [aspects, setAspects] = useState<Record<string, number>>({});
   const noteAspect = (id: string, el: HTMLImageElement) => {
@@ -457,7 +471,11 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 多张时出一张就先显示一张): how many of the current batch are done.
   const [batchDone, setBatchDone] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
-  const showingPartial = loading && batchDone > 0 && batchDone < batchTotal;
+  // 2026-11-05 (用户: 多张时并排加载，好一张先显示一张，要极简): pictures in this run, known from the click.
+  const [jobCount, setJobCount] = useState(1);
+  // 2026-11-05 (用户: 多张生成后并排显示，点开看大图可切换，关掉回到并排): after a batch, the grid first.
+  const [batchGrid, setBatchGrid] = useState(false);
+  const showingPartial = loading && jobCount <= 1 && batchDone > 0 && batchDone < batchTotal;
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -506,7 +524,10 @@ export default function StudioPage() {
     const savedL = Number(localStorage.getItem(PANEL_LEFT_KEY));
     const savedR = Number(localStorage.getItem(PANEL_RIGHT_KEY));
     if (savedL >= 240 && savedL <= 480) setLeftPx(savedL);
-    if (savedR >= 240 && savedR <= 560) setRightPx(savedR);
+    // 2026-11-05 (用户: 历史默认大一些，还能拉更大): about a third of the window by default, up to all but 420px.
+    const maxR = () => Math.max(320, window.innerWidth - 420);
+    if (savedR >= 240) setRightPx(Math.min(savedR, maxR()));
+    else setRightPx(Math.min(maxR(), Math.max(320, Math.round(window.innerWidth * 0.34))));
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
@@ -537,7 +558,7 @@ export default function StudioPage() {
         setLeftPx(next);
         localStorage.setItem(PANEL_LEFT_KEY, String(next));
       } else {
-        const next = Math.min(560, Math.max(240, window.innerWidth - e.clientX - 8));
+        const next = Math.min(Math.max(320, window.innerWidth - 420), Math.max(240, window.innerWidth - e.clientX - 8));
         setRightPx(next);
         localStorage.setItem(PANEL_RIGHT_KEY, String(next));
       }
@@ -610,6 +631,7 @@ export default function StudioPage() {
   }, [loading]);
 
   const showItem = useCallback((g: GalleryItem) => {
+    setBatchGrid(false);
     setCurrentId(g.id);
     setPromptOpen(false);
     setResultUrl(g.url);
@@ -703,11 +725,11 @@ export default function StudioPage() {
    */
   /** Which picture 换图 replaces (null = add new ones), and the one shown large. */
   const replaceSlot = useRef<number | null>(null);
-  const [refView, setRefView] = useState<string | null>(null);
   const refLimitRef = useRef(1);
   const addRefs = useCallback(
     (files: File[]) => {
       if (!files.length) return;
+      setReverse(localStorage.getItem(REVERSE_KEY) !== "off");
       const limit = refLimitRef.current;
       if (limit <= 1) {
         onPickFile(files[0]);
@@ -774,6 +796,36 @@ export default function StudioPage() {
     [flash]
   );
 
+  /** 2026-11-06 (用户: 历史加删除): tap the bin, tap again within 3 s to delete. */
+  const [deleteArm, setDeleteArm] = useState<string | null>(null);
+  const deleteItem = useCallback(
+    (g: GalleryItem) => {
+      if (deleteArm !== g.id) {
+        setDeleteArm(g.id);
+        window.setTimeout(() => setDeleteArm((x) => (x === g.id ? null : x)), 3000);
+        return;
+      }
+      setDeleteArm(null);
+      setGallery((list) => list.filter((x) => x.id !== g.id));
+      if (currentId === g.id) {
+        setResultUrl(null);
+        setCurrentId(null);
+      }
+      fetchJson(`/api/history?id=${encodeURIComponent(g.id)}`, { method: "DELETE" })
+        .then((d) => {
+          if (!d?.ok) throw new Error(d?.error);
+          flash("已删除");
+        })
+        .catch(() => {
+          setGallery((list) => [g, ...list].sort((a, b) => b.createdAt - a.createdAt));
+          flash("删除失败，请重试");
+        });
+    },
+    [deleteArm, currentId, flash]
+  );
+  // Full-screen viewer (用户: 点击图片打开查看细节，支持缩放).
+  const [viewer, setViewer] = useState<string | null>(null);
+
   const copyPrompt = useCallback(
     async (g: GalleryItem) => {
       try {
@@ -796,9 +848,12 @@ export default function StudioPage() {
         localStorage.setItem(MODEL_KEY, m.id);
       }
       setPrompt(g.prompt);
+      // 2026-11-05 (用户): the description is already the optimised one, so 提示词优化 is off for this edit
+      // (not saved; a new reference picture turns the saved choice back on).
+      setReverse(false);
       // 2026-11-05 (用户: 点了图片也要返回回来): the reference picture comes back too; 文生图 records clear it.
       if (g.mode === "i2i" && g.refUrl) {
-        fetch(g.refUrl)
+        fetch(rawOf(g.refUrl))
           .then((r) => (r.ok ? r.blob() : Promise.reject()))
           .then((b) => {
             onPickFile(new File([b], "reference." + (b.type.split("/")[1] || "png"), { type: b.type || "image/png" }));
@@ -825,7 +880,7 @@ export default function StudioPage() {
         let href = g.url;
         let revoke = false;
         if (!g.url.startsWith("/")) {
-          const res = await fetch(g.url);
+          const res = await fetch(rawOf(g.url));
           if (!res.ok) throw new Error();
           href = URL.createObjectURL(await res.blob());
           revoke = true;
@@ -847,7 +902,7 @@ export default function StudioPage() {
   const useAsReference = useCallback(
     async (g: GalleryItem) => {
       try {
-        const res = await fetch(g.url);
+        const res = await fetch(rawOf(g.url));
         if (!res.ok) throw new Error();
         const blob = await res.blob();
         const ext = blob.type.includes("png") ? "png" : "jpg";
@@ -870,7 +925,11 @@ export default function StudioPage() {
     };
     window.addEventListener("paste", onPaste);
     let depth = 0;
-    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    // Files from the computer, or a picture dragged from history (its id rides along).
+    const hasFiles = (e: DragEvent) => {
+      const t = Array.from(e.dataTransfer?.types ?? []);
+      return t.includes("Files") || t.includes(HIST_DRAG);
+    };
     const onEnter = (e: DragEvent) => {
       if (!hasFiles(e)) return;
       depth++;
@@ -1003,6 +1062,7 @@ export default function StudioPage() {
         recordSeconds(t.renderKey, (Date.now() - t.stepStart) / 1000);
       }
       setProgress(100);
+      if (pendings.length > 1) setBatchGrid(true);
       fetchJson("/api/status")
         .then((d) => {
           if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
@@ -1023,13 +1083,21 @@ export default function StudioPage() {
     const job = ++jobRef.current;
     const first = pendings[0];
     const renderKey = `${first.model ?? "brown-dust"}:${first.mode}`;
-    timingRef.current = {
-      step: "render",
-      stepStart: first.createdAt || Date.now(),
-      est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[first.mode]) },
-      renderKey: "", // resumed runs started earlier; don't learn from them
-    };
-    setJobVisual({ aspect: 1, reference: first.mode === "i2i" ? first.refUrl ?? null : null });
+    let saved: { ids?: string[]; t?: Timing; aspect?: number } | null = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(TIMING_KEY) || "null");
+    } catch {}
+    timingRef.current =
+      saved?.t && saved.ids?.includes(first.taskId)
+        ? { ...saved.t, renderKey: "" } // same bar as before the reload; resumed runs don't teach the estimate
+        : {
+            step: "render",
+            stepStart: first.createdAt || Date.now(),
+            est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[first.mode]) },
+            renderKey: "",
+          };
+    setJobVisual({ aspect: saved?.aspect && saved.ids?.includes(first.taskId) ? saved.aspect : 1, reference: first.mode === "i2i" ? first.refUrl ?? null : null });
+    setJobCount(pendings.length);
     setLoading(true);
     setError(null);
     finishBatch(pendings, job)
@@ -1098,6 +1166,7 @@ export default function StudioPage() {
     }
     setResultUrl(null);
     setBatch([]);
+    setJobCount(count);
     setResultRef(null);
     setResultSize(null);
     try {
@@ -1141,6 +1210,10 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
+        if (finalPrompt !== userPrompt) {
+          fd.append("optimized", "1");
+          if (userPrompt) fd.append("userPrompt", userPrompt);
+        }
         fd.append("model", model);
         fd.append("count", String(count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
@@ -1178,6 +1251,9 @@ export default function StudioPage() {
         createdAt: now + i,
       }));
       writePending(pendings);
+      try {
+        localStorage.setItem(TIMING_KEY, JSON.stringify({ ids: pendings.map((p) => p.taskId), t: timingRef.current, aspect: mode === "i2i" && preview ? previewAspect : width / height }));
+      } catch {}
       await finishBatch(pendings, job);
     } catch (e: any) {
       if (jobRef.current === job) {
@@ -1221,7 +1297,8 @@ export default function StudioPage() {
     const p = paramsOf(model);
     const tier = p.resolutions?.[res];
     const base = p.pricePerMegapixel ? (p.quality?.[quality] ?? 0) * (tier ?? 1) : tier ?? p.quality?.[quality];
-    const fixed = base != null ? base + (thinking && p.thinking ? p.thinking : 0) : findModel(model)?.price;
+    const refsUsed = mode === "i2i" ? Math.min(p.maxRefs ?? 1, (preview ? 1 : 0) + extraRefs.length) : 0;
+    const fixed = base != null ? base + (thinking && p.thinking ? p.thinking : 0) + (p.refPrice ?? 0) * refsUsed : findModel(model)?.price;
     if (fixed) {
       const total = fixed * count;
       return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
@@ -1244,7 +1321,7 @@ export default function StudioPage() {
     ...(modelParams.quality ? [{ key: "quality", label: QUALITY_LABELS[quality] }] : []),
     ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
-    ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "默认", low: "低", medium: "中", high: "高" }[complexity]}` }] : []),
+    ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "低", medium: "中", high: "高" }[complexity]}` }] : []),
     ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改局部" : "整体改" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
@@ -1287,10 +1364,19 @@ export default function StudioPage() {
         histFilter === `model:${g.model ?? (g.label ? "" : "brown-dust")}`) &&
       (!query || g.prompt.toLowerCase().includes(query))
   );
-  const HIST_PAGE_SIZE = 20;
-  const histPages = Math.max(1, Math.ceil(visibleHistory.length / HIST_PAGE_SIZE));
-  const page = Math.min(histPage, histPages - 1);
-  const pageItems = visibleHistory.slice(page * HIST_PAGE_SIZE, (page + 1) * HIST_PAGE_SIZE);
+  if (histSort !== "new") {
+    visibleHistory.sort((a, b) =>
+      histSort === "old"
+        ? a.createdAt - b.createdAt
+        : histSort === "cost"
+          ? (Number(b.cost) || 0) - (Number(a.cost) || 0)
+          : (b.durationMs || 0) - (a.durationMs || 0)
+    );
+  }
+  // 2026-11-05 (用户: 历史上下页怎么设计): no pages — more pictures load as you scroll down.
+  const HIST_PAGE_SIZE = 30;
+  const pageItems = visibleHistory.slice(0, (histPage + 1) * HIST_PAGE_SIZE);
+  const histHasMore = pageItems.length < visibleHistory.length;
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
   const pickModel = (id: ModelId) => {
@@ -1368,8 +1454,45 @@ export default function StudioPage() {
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
 
           >
-            {loading && !showingPartial ? (
+            {loading && jobCount > 1 ? (
+              // One cell per picture (2 side by side, 3 in a row, 4 as 2×2); each fills in as soon as it is ready.
+              <div className={`grid h-full w-full gap-2 p-1 ${jobCount === 3 ? "grid-cols-3" : "grid-cols-2"} ${jobCount === 4 ? "grid-rows-2" : ""}`}>
+                {Array.from({ length: jobCount }, (_, i) => {
+                  const g = gallery.find((x) => x.id === batch[i]);
+                  return (
+                    <div key={i} className="relative min-h-0 min-w-0">
+                      {g?.url ? (
+                        <button type="button" onClick={() => showItem(g)} className="flex h-full w-full items-center justify-center">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="animate-image-reveal max-h-full max-w-full rounded-[14px] object-contain" />
+                        </button>
+                      ) : (
+                        <GeneratingView aspect={jobVisual.aspect} progress={progress} compact />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : loading && !showingPartial ? (
               <GeneratingView aspect={jobVisual.aspect} progress={progress} />
+            ) : batchGrid && batch.length > 1 ? (
+              <div className={`grid h-full w-full gap-2 p-1 ${batch.length === 3 ? "grid-cols-3" : "grid-cols-2"} ${batch.length === 4 ? "grid-rows-2" : ""}`}>
+                {batch.map((id, i) => {
+                  const g = gallery.find((x) => x.id === id);
+                  return (
+                    <div key={id} className="relative flex min-h-0 min-w-0 items-center justify-center">
+                      {g?.url ? (
+                        <button type="button" onClick={() => showItem(g)} className="flex h-full w-full items-center justify-center" aria-label={`看第 ${i + 1} 张大图`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="max-h-full max-w-full rounded-[14px] object-contain transition duration-300 hover:brightness-95" />
+                        </button>
+                      ) : (
+                        <span className="text-[12px] text-[#d70015]">第 {i + 1} 张没画成</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             ) : resultUrl && compareRefs.length > 0 && compareOn && !loading ? (
               <div className="h-full w-full p-2">
                 <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={compareRefs[compareIdx] ?? resultRef} after={resultUrl} mode={compareMode} />
@@ -1380,11 +1503,13 @@ export default function StudioPage() {
                 key={resultKey}
                 src={thumbOf(resultUrl, 1600)}
                 alt="生成结果"
+                onClick={() => setViewer(resultUrl)}
+                onDragStart={(e) => currentId && e.dataTransfer.setData(HIST_DRAG, currentId)}
                 onLoad={(e) => {
                   const el = e.currentTarget;
                   setResultSize({ w: el.naturalWidth, h: el.naturalHeight });
                 }}
-                className="animate-image-reveal max-h-full w-auto max-w-full object-contain"
+                className="animate-image-reveal max-h-full w-auto max-w-full cursor-zoom-in object-contain"
               />
             ) : (
               <div className="max-w-sm px-6 text-center">
@@ -1405,44 +1530,33 @@ export default function StudioPage() {
                 {batchDone}/{batchTotal}
               </div>
             )}
-            {(!loading || showingPartial) && batch.length > 1 && (
-              <div className="batch-strip absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-2xl bg-white/80 p-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl">
-                {batch.map((id, i) => {
-                  const g = gallery.find((x) => x.id === id);
-                  const on = id === currentId;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      disabled={!g?.url}
-                      onClick={() => g && showItem(g)}
-                      title={`第 ${i + 1} 张`}
-                      className={`h-12 w-12 overflow-hidden rounded-xl bg-[#f2f2f4] transition active:scale-[0.95] ${
-                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "opacity-80 hover:opacity-100"
-                      }`}
-                    >
-                      {g?.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={thumbOf(g.url, 160)} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        loading ? (
-                          <span className="flex h-full w-full items-center justify-center">
-                            <span className="animate-spin-slow h-4 w-4 rounded-full border-2 border-black/10 border-t-[#0071e3]" />
-                          </span>
-                        ) : (
-                          <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
-                            失败
-                          </span>
-                        )
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            {!loading && !batchGrid && batch.length > 1 && currentId && batch.includes(currentId) && (() => {
+              const done = batch.map((id) => gallery.find((x) => x.id === id)).filter((g): g is GalleryItem => !!g?.url);
+              const at = done.findIndex((g) => g.id === currentId);
+              const go = (d: number) => done.length && showItem(done[(at + d + done.length) % done.length]);
+              const arrow = "absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-[#1d1d1f] shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur hover:bg-white";
+              return (
+                <>
+                  <button type="button" onClick={() => setBatchGrid(true)} data-tip="回到全部" data-tip-start="" className="absolute left-3 top-3 z-20 flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[12px] tabular-nums text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur hover:bg-white">
+                    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>
+                    {at + 1}/{done.length}
+                  </button>
+                  {done.length > 1 && (
+                    <>
+                      <button type="button" aria-label="上一张" onClick={() => go(-1)} className={`${arrow} left-3`}>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round"><path d="M15 5l-7 7 7 7" /></svg>
+                      </button>
+                      <button type="button" aria-label="下一张" onClick={() => go(1)} className={`${arrow} right-3`}>
+                        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round"><path d="M9 5l7 7-7 7" /></svg>
+                      </button>
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </div>
           {/* Under the picture: only 对比 (when there was a reference) and 下载, centred (用户 2026-11-05). */}
-          {resultUrl && (!loading || showingPartial) && (
+          {resultUrl && (!loading || showingPartial) && !(batchGrid && batch.length > 1) && (
             <div className="flex shrink-0 flex-wrap items-center justify-center gap-1.5 px-3 pb-3">
               {compareRefs.length > 0 && (
                 <button
@@ -1520,6 +1634,16 @@ export default function StudioPage() {
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragState("none");
+                  const sid = e.dataTransfer.getData(HIST_DRAG);
+                  const fromHistory = sid ? gallery.find((x) => x.id === sid) : undefined;
+                  if (fromHistory?.url) {
+                    // History pictures load from COS, so fetch the bytes through the site.
+                    fetch(rawOf(fromHistory.url))
+                      .then((r) => (r.ok ? r.blob() : Promise.reject()))
+                      .then((b) => addRefs([new File([b], `history-${sid}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/png" })]))
+                      .catch(() => flash("图片读取失败，请稍后重试"));
+                    return;
+                  }
                   const files = Array.from(e.dataTransfer.files ?? []).filter((x) => x.type.startsWith("image/"));
                   if (!files.length) {
                     if (e.dataTransfer.files?.length) setError("请拖入图片文件（JPG / PNG / WEBP）");
@@ -1571,7 +1695,7 @@ export default function StudioPage() {
                             type="button"
                             title="查看大图"
                             aria-label={`查看图${i + 1}`}
-                            onClick={() => setRefView(r.url)}
+                            onClick={() => setViewer(r.url)}
                             className="flex h-5 w-5 items-center justify-center rounded-full text-white hover:bg-white/25"
                           >
                             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
@@ -1694,9 +1818,9 @@ export default function StudioPage() {
                       className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "denoise", "lora"].includes(openPanel) ? "w-[300px]" : "w-max min-w-[112px]"}`}
                       style={{ left: panelLeft }}
                     >
-                      <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
+                      {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
                         {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "只改局部", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
-                      </div>
+                      </div>}
                     
                     {openPanel === "model" && (
                       <div className="flex flex-col">
@@ -1751,14 +1875,32 @@ export default function StudioPage() {
                     {openPanel === "quality" && <Choice options={(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => [q, QUALITY_LABELS[q]])} value={quality} onPick={(v) => { setQuality(v as Quality); setOpenPanel(null); }} />}
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
-                    {openPanel === "complexity" && <Choice note="越高，复杂画面越准" options={[["auto", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
+                    {openPanel === "complexity" && <Choice note="越高，复杂画面越准；不影响价格" options={[["auto", "自动"], ["low", "低"], ["medium", "中"], ["high", "高"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="开：只改你说的地方，其他一点不动" options={[["0", "关"], ["1", "开"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
                     {openPanel === "denoise" && (
-                      <div className="flex items-center gap-3">
-                        <span className="shrink-0 text-[12px] text-[#6e6e73]">越大改得越多</span>
-                        <input type="range" min={0.01} max={1} step={0.01} value={denoise} onChange={(e) => setDenoise(Number(e.target.value))} aria-label="重绘幅度" className="flex-1" />
-                        <span className="w-10 text-right text-[12px] tabular-nums text-[#0071e3]">{denoise.toFixed(2)}</span>
+                      // 2026-11-05 (用户: 重绘幅度的 UI 别扭，重新设计): title + big number, a soft slider with its two
+                      // ends named (用户: 下面的快捷档去掉，要精简).
+                      <div className="px-2.5 pb-2 pt-1.5">
+                        <div className="flex items-baseline">
+                          <span className="text-[13px] font-semibold text-[#1d1d1f]">重绘幅度</span>
+                          <span className="ml-auto text-[20px] font-semibold tabular-nums tracking-tight text-[#0071e3]">{denoise.toFixed(2)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0.01}
+                          max={1}
+                          step={0.01}
+                          value={denoise}
+                          onChange={(e) => setDenoise(Number(e.target.value))}
+                          aria-label="重绘幅度"
+                          className="soft-range mt-2 w-full"
+                          style={{ "--p": `${((denoise - 0.01) / 0.99) * 100}%` } as React.CSSProperties}
+                        />
+                        <div className="mt-1 flex justify-between text-[11px] text-[#86868b]">
+                          <span>更像原图</span>
+                          <span>改得更多</span>
+                        </div>
                       </div>
                     )}
                     {openPanel === "lora" && (
@@ -1854,14 +1996,21 @@ export default function StudioPage() {
                 {error}
               </div>
             )}
-              {refView &&
-                createPortal(
-                  <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm" onClick={() => setRefView(null)}>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={refView} alt="参考图" className="animate-pop-in max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
-                  </div>,
-                  document.body
-                )}
+              {viewer && (() => {
+                // Several pictures from this run: ← → move between them.
+                const done = batch.map((id) => gallery.find((x) => x.id === id)).filter((g): g is GalleryItem => !!g?.url);
+                const at = done.findIndex((g) => g.url === viewer);
+                const step = at >= 0 && done.length > 1 ? (d: number) => () => { const g = done[(at + d + done.length) % done.length]; showItem(g); setViewer(g.url); } : null;
+                return (
+                  <ImageViewer
+                    src={viewer.startsWith("/api/img/") ? viewer : viewer}
+                    onClose={() => setViewer(null)}
+                    onPrev={step?.(-1)}
+                    onNext={step?.(1)}
+                    caption={at >= 0 && done.length > 1 ? `${at + 1}/${done.length}` : undefined}
+                  />
+                );
+              })()}
               <input
                 ref={fileRef}
                 type="file"
@@ -1938,7 +2087,7 @@ export default function StudioPage() {
           </svg>
         </button>
         <aside
-          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
+          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[34vw] lg:max-w-[calc(100vw-420px)] ${histHidden ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
           style={
             isDesktop
               ? {
@@ -1962,137 +2111,171 @@ export default function StudioPage() {
             }}
           >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
-            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
-            <span className="ml-auto truncate text-[11px] tabular-nums text-[#86868b]">
-              {histStats.done} 张{histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 累计约 ¥{histStats.cost}
-            </span>
+            {/* 2026-11-05 (用户选方案 A): 历史 + count, two icons; spend lives in the filter panel. */}
+            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">
+              历史 <span className="ml-0.5 text-[12px] font-normal tabular-nums text-[#86868b]">{histStats.done}{histStats.pending ? ` · 画着 ${histStats.pending}` : ""}</span>
+            </h2>
+            <span className="ml-auto" />
             <button
               type="button"
               onClick={() => setHistToolsOpen((v) => !v)}
               title="搜索 / 筛选"
+              aria-label="搜索 / 筛选"
               aria-pressed={histToolsOpen}
-              className={`shrink-0 rounded-full px-2 py-0.5 text-[12px] transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.05]"}`}
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" || histSort !== "new" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.05]"}`}
             >
-              筛选
+              <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" /></svg>
             </button>
             <button
               type="button"
               onClick={() => toggleHistory(true)}
               title="收起历史"
-              className="shrink-0 rounded-full px-2 py-0.5 text-[12px] text-[#0071e3] transition hover:bg-[#0071e3]/10"
+              aria-label="收起历史"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#6e6e73] transition hover:bg-black/[0.05]"
             >
-              收起 ›
+              <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M13 6l6 6-6 6M5 6l6 6-6 6" /></svg>
             </button>
           </div>
           {histToolsOpen && (
-          <div className="animate-chip-in shrink-0 border-b border-black/[0.06] px-3 py-2.5">
-            <input
-              value={histQuery}
-              onChange={(e) => {
-                setHistQuery(e.target.value);
-                setHistPage(0);
-              }}
-              placeholder="搜索提示词…"
-              className="mb-2 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-[12px] text-[#1d1d1f] outline-none focus:border-[rgba(0,113,227,0.45)]"
-            />
-            <div className="flex items-center gap-1.5">
-              <div className="apple-seg flex">
-                {(
-                  [
-                    ["all", "全部"],
-                    ["t2i", "文生图"],
-                    ["i2i", "图生图"],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    data-active={histMode === key}
-                    onClick={() => {
-                      setHistMode(key);
-                      setHistPage(0);
-                    }}
-                    className="apple-seg-item px-2 py-1 text-[11px] font-medium text-[#6e6e73]"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <select
-                value={histFilter}
+          // 2026-11-05 (用户: 筛选点开后要极简): one search line and one row of chips (state, model, order).
+          <div className="animate-pop-in shrink-0 space-y-2 px-3 pb-2.5 pt-1">
+            <label className="flex items-center gap-2 rounded-full bg-[#f2f2f4] px-3 py-1.5">
+              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px] shrink-0 text-[#86868b]" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+              <input
+                value={histQuery}
                 onChange={(e) => {
-                  setHistFilter(e.target.value);
+                  setHistQuery(e.target.value);
                   setHistPage(0);
                 }}
-                className={`hist-filter min-w-0 flex-1 rounded-full border bg-white px-2.5 py-1 text-[11px] outline-none transition ${
-                  histFilter === "all"
-                    ? "border-black/[0.08] text-[#1d1d1f]"
-                    : "border-[#0071e3]/40 text-[#0071e3]"
-                }`}
-                aria-label="筛选历史"
-              >
-                <option value="all">全部记录</option>
-                <option value="fav">★ 我的收藏（{gallery.filter((g) => g.fav).length}）</option>
-                <optgroup label="按模型">
+                placeholder="搜索描述"
+                className="min-w-0 flex-1 bg-transparent text-[12px] text-[#1d1d1f] outline-none placeholder:text-[#aeaeb2]"
+              />
+            </label>
+            <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+              {(
+                [
+                  ["all", "全部"],
+                  ["fav", "★ 收藏"],
+                  ["bad", "失败"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setHistFilter(key);
+                    setHistMode("all");
+                    setHistPage(0);
+                  }}
+                  className={`rounded-full px-2.5 py-1 ${histFilter === key ? "bg-[#1d1d1f] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}
+                >
+                  {label}
+                </button>
+              ))}
+              {/* Model and order: chips that open the system picker. */}
+              <label className={`relative flex items-center gap-1 rounded-full px-2.5 py-1 ${histFilter.startsWith("model:") ? "bg-[#1d1d1f] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}>
+                <span className="max-w-[110px] truncate">{histFilter.startsWith("model:") ? findModel(histFilter.slice(6))?.name ?? "模型" : "模型"}</span>
+                <svg viewBox="0 0 24 24" className="h-3 w-3 opacity-60" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
+                <select
+                  value={histFilter.startsWith("model:") ? histFilter : ""}
+                  onChange={(e) => {
+                    setHistFilter(e.target.value || "all");
+                    setHistPage(0);
+                  }}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  aria-label="按模型筛选"
+                >
+                  <option value="">全部模型</option>
                   {MODELS.map((m) => (
-                    <option key={m.id} value={`model:${m.id}`}>
-                      {m.name}
-                    </option>
+                    <option key={m.id} value={`model:${m.id}`}>{m.name}</option>
                   ))}
-                </optgroup>
-                <optgroup label="按状态">
-                  <option value="ok">已生成（{histStats.done}）</option>
-                  <option value="bad">失败 / 已过期（{histStats.failed}）</option>
-                </optgroup>
-              </select>
+                </select>
+              </label>
+              <label className="relative ml-auto flex items-center gap-1 rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
+                <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4" /></svg>
+                {{ new: "最新", old: "最早", cost: "最贵", slow: "最久" }[histSort]}
+                <select
+                  value={histSort}
+                  onChange={(e) => {
+                    setHistSort(e.target.value as typeof histSort);
+                    setHistPage(0);
+                  }}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                  aria-label="排序"
+                >
+                  <option value="new">最新在前</option>
+                  <option value="old">最早在前</option>
+                  <option value="cost">最贵在前</option>
+                  <option value="slow">用时最久在前</option>
+                </select>
+              </label>
             </div>
+            <div className="text-[11px] tabular-nums text-[#aeaeb2]">{visibleHistory.length} 张 · 累计约 ¥{histStats.cost}</div>
           </div>
           )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto p-2"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              if (histHasMore && el.scrollTop + el.clientHeight > el.scrollHeight - 500) setHistPage((p) => p + 1);
+            }}
+          >
             {visibleHistory.length === 0 ? (
               <p className="px-2 py-8 text-center text-[12px] text-[#aeaeb2]">
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid flex flex-col gap-2">
+              <div key={`${histMode}-${histFilter}-${histSort}`} className="history-grid flex flex-col gap-2">
                 {(() => {
-                  // 2026-11-05 (用户: 历史图片之间缺一块): two columns stacked by picture height, no gaps. Details open
-                  // full width right after the part that holds the selected picture.
-                  // Lay everything out once; the details open under the band of pictures that starts before the
-                  // selected one ends, so both columns behave the same whichever picture was clicked.
+                  // 2026-11-05 (用户: 历史图片之间缺一块): columns stacked by picture height, no gaps.
                   const heightOf = (g: GalleryItem) => (g.url ? aspects[g.id] ?? 1 : 1) + 0.05;
+                  // More columns as the panel is dragged wider.
+                  const nCols = !isDesktop ? 2 : rightPx >= 900 ? 4 : rightPx >= 620 ? 3 : 2;
                   const place = (list: GalleryItem[]) => {
-                    const h = [0, 0];
+                    const h = Array(nCols).fill(0) as number[];
                     return list.map((g) => {
-                      const c = h[0] <= h[1] ? 0 : 1;
+                      const c = h.indexOf(Math.min(...h));
                       const top = h[c];
                       h[c] += heightOf(g);
                       return { g, c, top, bottom: h[c] };
                     });
                   };
                   const laid = place(pageItems);
-                  const selCell = detailOpen && currentItem?.url ? laid.find((x) => x.g.id === currentId) : undefined;
-                  const sel = selCell ? 0 : -1;
-                  const selCol = selCell?.c ?? 0;
-                  const parts = selCell
-                    ? [laid.filter((x) => x.top < selCell.bottom - 0.001), place(laid.filter((x) => x.top >= selCell.bottom - 0.001).map((x) => x.g))]
-                    : [laid];
+                  const iconBtn =
+                    "relative flex h-7 w-7 items-center justify-center rounded-full text-white transition hover:bg-white/25 active:scale-90";
+                  // 2026-11-05 (用户: 历史再简化，信息和按钮合进鼠标悬停): hover (or the selected picture on phones)
+                  // shows the actions on top and model · time · cost + the description at the bottom.
                   const card = (g: GalleryItem) => {
                     const on = g.id === currentId;
+                    // The picture being viewed always shows its buttons and details (用户: 当前预览的直接显示，不然用户不知道);
+                    // the others show them on hover.
+                    const show = on ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100";
+                    const open = promptOpenId === g.id;
+                    const meta = [
+                      findModel(g.model)?.name ?? g.label ?? "棕色尘埃",
+                      formatDuration(g.durationMs),
+                      g.cost ? `¥${g.cost}` : "",
+                    ].filter(Boolean).join(" · ");
+                    const act = (e: React.MouseEvent, fn: () => void) => {
+                      e.stopPropagation();
+                      fn();
+                    };
                     return (
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      draggable={!!g.url}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData(HIST_DRAG, g.id);
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
                       onClick={() => {
                         if (g.url) {
                           setError(null);
                           setCompareOn(false);
-                          // Click once to view it, again to fold its details away.
-                          setDetailOpen(g.id === currentId ? (v) => !v : true);
                           showItem(g);
-                          if (window.innerWidth < 1024) {
-                            scrollToResult();
-                          }
+                          if (window.innerWidth < 1024) scrollToResult();
                         } else {
                           setError(
                             g.status === "expired"
@@ -2101,169 +2284,97 @@ export default function StudioPage() {
                           );
                         }
                       }}
-                      title={g.url ? g.prompt : `失败：${g.error || "任务失败"}\n${g.prompt}`}
-                      className={`history-card group relative overflow-hidden rounded-xl bg-white text-left ${
-                        on
-                          ? "outline outline-2 -outline-offset-2 outline-[#0071e3]"
-                          : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
+                      className={`history-card group relative cursor-pointer overflow-hidden rounded-xl bg-white text-left outline-none ${
+                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
                       }`}
                     >
-                      {g.url && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          aria-label={g.fav ? "取消收藏" : "收藏"}
-                          title={g.fav ? "取消收藏" : "收藏"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleFav(g);
-                          }}
-                          className={`absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/35 text-[13px] leading-none backdrop-blur transition hover:scale-110 ${
-                            g.fav ? "text-[#ffcc00] opacity-100" : "text-white opacity-0 group-hover:opacity-100 max-lg:opacity-70"
-                          }`}
-                        >
-                          {g.fav ? "★" : "☆"}
-                        </span>
-                      )}
-                      {/* 2026-11-05 (用户: 历史图片不要裁剪): each picture keeps its own shape. */}
-                      <span className={`relative block w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02] ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
+                      <span className={`relative block w-full bg-[#f2f2f4] ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" onLoad={(e) => noteAspect(g.id, e.currentTarget)} />
+                          <img src={thumbOf(g.url, isDesktop && rightPx / nCols > 200 ? 640 : 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" onLoad={(e) => noteAspect(g.id, e.currentTarget)} />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
-                            <span
-                              className={`text-[12px] font-semibold ${
-                                g.status === "expired" ? "text-[#86868b]" : "text-[#d70015]"
-                              }`}
-                            >
+                            <span className={`text-[12px] font-semibold ${g.status === "expired" ? "text-[#86868b]" : "text-[#d70015]"}`}>
                               {g.status === "expired" ? "已过期" : "失败"}
                             </span>
-                            <span className="line-clamp-3 text-[10px] leading-snug text-[#86868b]">
-                              {g.error || "任务失败"}
-                            </span>
+                            <span className="line-clamp-3 text-[10px] leading-snug text-[#86868b]">{g.error || "任务失败"}</span>
                           </span>
                         )}
                       </span>
-                    </button>
+                      {g.url && (
+                        <>
+                          <span className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/70 transition-opacity duration-300 ${show}`} />
+                          {/* 2026-11-05 (用户: 四个按钮并排在左上角，不要底框). */}
+                          <span className="absolute left-1 top-1 flex items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                          <button
+                            type="button"
+                            aria-label={g.fav ? "取消收藏" : "收藏"}
+                            data-tip={g.fav ? "取消收藏" : "收藏"}
+                            data-tip-start=""
+                            onClick={(e) => act(e, () => toggleFav(g))}
+                            className={`${iconBtn} text-[15px] leading-none transition-opacity duration-300 ${g.fav ? "!text-[#ffcc00] opacity-100" : show}`}
+                          >
+                            {g.fav ? "★" : "☆"}
+                          </button>
+                            <button type="button" data-tip="重新编辑" aria-label="重新编辑" onClick={(e) => act(e, () => reuseItem(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+                            </button>
+                            <button type="button" data-tip="当参考图" aria-label="当参考图" onClick={(e) => act(e, () => useAsReference(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.6" /><path d="M21 15l-5-5L5 21" /></svg>
+                            </button>
+                            <button type="button" data-tip="复制描述" aria-label="复制描述" onClick={(e) => act(e, () => copyPrompt(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                            </button>
+                          </span>
+                          <button
+                            type="button"
+                            aria-label="删除"
+                            data-tip={deleteArm === g.id ? "再点一次删除" : "删除"}
+                            data-tip-end=""
+                            onClick={(e) => act(e, () => deleteItem(g))}
+                            className={`${iconBtn.replace("relative ", "")} absolute right-1 top-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)] transition-opacity duration-300 ${deleteArm === g.id ? "!bg-[#ff3b30] opacity-100" : show}`}
+                          >
+                            <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>
+                          </button>
+                          <span
+                            className={`absolute inset-x-0 bottom-0 px-2.5 pb-2 text-white transition-opacity duration-300 ${open ? "max-h-full overflow-y-auto bg-black/70 pt-2 opacity-100 backdrop-blur-sm" : show}`}
+                            onClick={(e) => open && e.stopPropagation()}
+                          >
+                            <span className="block truncate text-[10px] font-medium tabular-nums opacity-80">{meta}</span>
+                            {g.prompt && <span className={`mt-0.5 text-[11px] leading-snug ${open ? "block whitespace-pre-wrap" : "line-clamp-2"}`}>{g.prompt}</span>}
+                            {g.prompt.length > 70 && (
+                              <button
+                                type="button"
+                                onClick={(e) => act(e, () => setPromptOpenId(open ? null : g.id))}
+                                className="mt-0.5 text-[11px] font-medium text-white/80 underline-offset-2 hover:text-white hover:underline"
+                              >
+                                {open ? "收起" : "展开"}
+                              </button>
+                            )}
+                          </span>
+                        </>
+                      )}
+                    </div>
                     );
                   };
-                  const columns = (cells: { g: GalleryItem; c: number }[]) => (
+                  return (
                     <div className="flex items-start gap-2">
-                      {[0, 1].map((ci) => (
+                      {Array.from({ length: nCols }, (_, ci) => ci).map((ci) => (
                         <div key={ci} className="flex min-w-0 flex-1 flex-col gap-2">
-                          {cells.filter((x) => x.c === ci).map((x) => <Fragment key={x.g.id}>{card(x.g)}</Fragment>)}
+                          {laid.filter((x) => x.c === ci).map((x) => <Fragment key={x.g.id}>{card(x.g)}</Fragment>)}
                         </div>
                       ))}
                     </div>
                   );
-                  const first = columns(parts[0]);
-                  return (
-                    <>
-                      {first}
-                      {sel >= 0 && currentItem && (
-                      <div
-                        key={`detail-${currentItem.id}`}
-                        className="history-detail relative rounded-2xl bg-[#f5f5f7] px-3 py-2.5"
-                      >
-                        <span
-                          aria-hidden
-                          className="absolute -top-1.5 h-3 w-3 rotate-45 rounded-[2px] bg-[#f5f5f7]"
-                          style={{ left: selCol === 0 ? "calc(25% - 6px)" : "calc(75% - 6px)" }}
-                        />
-                        <div className="flex items-center gap-1.5 text-[11px] text-[#86868b]">
-                          <span className="truncate font-semibold text-[#1d1d1f]">
-                            {findModel(currentItem.model)?.name ?? currentItem.label ?? "棕色尘埃"}
-                          </span>
-                          <span className="shrink-0">{currentItem.mode === "i2i" ? "图生图" : "文生图"}</span>
-                          {(currentItem.cost || formatDuration(currentItem.durationMs)) && (
-                            <span className="ml-auto shrink-0 tabular-nums">
-                              {formatDuration(currentItem.durationMs) && `用时 ${formatDuration(currentItem.durationMs)}`}
-                              {currentItem.cost && formatDuration(currentItem.durationMs) ? " · " : ""}
-                              {currentItem.cost && `¥${currentItem.cost}`}
-                            </span>
-                          )}
-                        </div>
-                        {currentItem.prompt && (
-                          <button
-                            type="button"
-                            onClick={() => setPromptOpen((v) => !v)}
-                            aria-expanded={promptOpen}
-                            className="prompt-toggle mt-1 block w-full text-left"
-                          >
-                            <span
-                              className={`text-[12px] leading-relaxed text-[#3a3a3c] ${
-                                promptOpen ? "block max-h-[30vh] overflow-y-auto" : "line-clamp-2"
-                              }`}
-                            >
-                              {withMentions(currentItem.prompt)}
-                            </span>
-                            {(currentItem.prompt.length > 60 || promptOpen) && (
-                              <span className="mt-0.5 block text-[11px] font-medium text-[#0071e3]">
-                                {promptOpen ? "收起" : "展开全文"}
-                              </span>
-                            )}
-                          </button>
-                        )}
-                        <div className="mt-2 flex flex-wrap items-center gap-1">
-                          {(
-                            [
-                              // 下载 / 对比 live under the big picture; here only what reuses this record.
-                              // 收藏 lives on the picture's star (2026-11-05 用户: 图片已经有收藏按钮了).
-                              ["重新编辑", () => reuseItem(currentItem)],
-                              ["当参考图", () => useAsReference(currentItem)],
-                              ["复制描述", () => copyPrompt(currentItem)],
-                            ] as const
-                          ).map(([label, fn]) => (
-                            <button
-                              key={label}
-                              type="button"
-                              onClick={fn}
-                              className={`item-action rounded-full px-2.5 py-1 text-[11px] font-medium transition active:scale-[0.96] ${
-                                "bg-white text-[#1d1d1f] hover:text-[#0071e3]"
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
-                          {notice && (
-                            <span className="animate-chip-in ml-auto truncate rounded-full bg-[#1d1d1f]/80 px-2 py-0.5 text-[10px] text-white">
-                              {notice}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      )}
-                      {parts[1]?.length ? columns(parts[1]) : null}
-                    </>
-                  );
                 })()}
+                {histHasMore && (
+                  <button type="button" onClick={() => setHistPage((p) => p + 1)} className="mx-auto mt-1 block rounded-full px-3 py-1 text-[11px] text-[#86868b] hover:bg-black/[0.04]">
+                    加载更多
+                  </button>
+                )}
               </div>
             )}
           </div>
-          {histPages > 1 && (
-            <div className="flex shrink-0 items-center justify-between border-t border-black/[0.06] px-3 py-2">
-              <button
-                type="button"
-                disabled={page === 0}
-                onClick={() => setHistPage(page - 1)}
-                className="pager-btn rounded-full px-3 py-1 text-[12px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-35"
-              >
-                上一页
-              </button>
-              <span className="text-[11px] tabular-nums text-[#6e6e73]">
-                {page + 1} / {histPages}
-              </span>
-              <button
-                type="button"
-                disabled={page >= histPages - 1}
-                onClick={() => setHistPage(page + 1)}
-                className="pager-btn rounded-full px-3 py-1 text-[12px] font-medium text-[#1d1d1f] ring-1 ring-black/[0.08] transition hover:text-[#0071e3] hover:ring-[#0071e3]/50 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-35"
-              >
-                下一页
-              </button>
-            </div>
-          )}
           </div>
         </aside>
       </main>

@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
  * patch, and the percentage in a pill at the bottom right.
  */
 
-type Props = { aspect: number; progress: number };
+type Props = { aspect: number; progress: number; compact?: boolean };
 
 /** Fits an aspect-correct, rounded frame inside whatever space it is given. */
 function Frame({ aspect, children }: { aspect: number; children: React.ReactNode }) {
@@ -136,7 +136,7 @@ function blobDensity(u: number, v: number, w: number, h: number, t: number) {
   return blob * edge;
 }
 
-export function GeneratingView({ aspect, progress }: Props) {
+export function GeneratingView({ aspect, progress, compact }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -204,7 +204,11 @@ export function GeneratingView({ aspect, progress }: Props) {
       <div ref={wrapRef} className="absolute inset-0 bg-[#f2f2f4]">
         <canvas ref={ref} className="absolute inset-0 h-full w-full" />
       </div>
-      <span className="absolute bottom-4 right-4 rounded-full bg-white px-4 py-1.5 text-[17px] font-medium tabular-nums text-[#0071e3] shadow-[0_2px_10px_rgba(0,0,0,0.1)]">
+      <span
+        className={`absolute rounded-full bg-white font-medium tabular-nums text-[#0071e3] shadow-[0_2px_10px_rgba(0,0,0,0.1)] ${
+          compact ? "bottom-2.5 right-2.5 px-2.5 py-1 text-[12px]" : "bottom-4 right-4 px-4 py-1.5 text-[17px]"
+        }`}
+      >
         {Math.floor(progress)}%
       </span>
     </Frame>

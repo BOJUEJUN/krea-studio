@@ -78,8 +78,10 @@ export type ModelParams = {
   lora?: boolean;
   /** GPT 背景: 自动 / 透明 / 不透明. */
   background?: boolean;
-  /** GPT 构思程度 (complexity). */
+  /** GPT 构思程度 (complexity). Measured 2026-11-05: same image tokens at every level, so no price change. */
   complexity?: boolean;
+  /** ¥ added per reference picture (Krea 3 bills each one). */
+  refPrice?: number;
   /** Krea 3 只改局部 (regional_edit, 图生图 only). */
   regional?: boolean;
   /** Price scales with output pixels (GPT custom sizes); base price is for ~1 MP. */
@@ -179,6 +181,7 @@ export const MODELS: ModelInfo[] = [
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"],
       resolutions: { "1K": 0.22, "2K": 0.43, "4K": 0.86 },
       thinking: 0.15,
+      refPrice: 0.15,
       maxRefs: 8,
       seed: true,
       negative: true,
@@ -249,4 +252,29 @@ export function expandImageMentions(prompt: string, count: number): string {
   if (count < 1 || !/@图\d/.test(prompt)) return prompt;
   const text = prompt.replace(/@图(\d+)/g, (_, n) => `image ${n}`);
   return `Reference images are numbered in the order given: ${Array.from({ length: count }, (_, i) => `image ${i + 1}`).join(", ")}.\n${text}`;
+}
+
+/**
+ * 2026-11-05 (用户: 后台要看到完整参数，比如重绘幅度): the settings a picture was made with, in plain words,
+ * only those the model takes. `get` reads one request field.
+ */
+export function settingsOf(model: string, mode: "t2i" | "i2i", get: (k: string) => string): Record<string, string> {
+  const p = paramsOf(model);
+  const out: Record<string, string> = {};
+  const w = Number(get("width")), h = Number(get("height"));
+  if (mode === "t2i" && w && h) out["尺寸"] = `${w}×${h}`;
+  if (mode === "i2i") out["尺寸"] = "跟参考图";
+  if (p.resolutions && get("res")) out["清晰度"] = get("res");
+  if (p.quality && get("quality")) out["画质"] = QUALITY_LABELS[get("quality") as Quality] ?? get("quality");
+  if (p.thinking != null) out["深度思考"] = get("thinking") === "1" || get("thinking") === "true" ? "开" : "关";
+  if (p.background && get("background") && get("background") !== "auto") out["背景"] = { transparent: "透明", opaque: "不透明" }[get("background")] ?? get("background");
+  if (p.complexity && get("complexity") && get("complexity") !== "auto") out["构思"] = { low: "低", medium: "中", high: "高" }[get("complexity")] ?? get("complexity");
+  if (mode === "i2i" && p.regional) out["只改局部"] = get("regional") === "1" ? "是" : "否";
+  if (mode === "i2i" && p.denoise && get("denoise")) out["重绘幅度"] = Number(get("denoise")).toFixed(2);
+  if (p.lora && get("lora")) out["风格强度"] = get("lora");
+  if (p.negative && get("negative")) out["不想要"] = get("negative").slice(0, 200);
+  if (get("refs")) out["参考图"] = `${get("refs")} 张`;
+  if (get("count")) out["张数"] = get("count");
+  if (get("optimized") === "1") out["提示词优化"] = "开";
+  return out;
 }
