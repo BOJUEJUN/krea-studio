@@ -1289,10 +1289,25 @@ export default function StudioPage() {
                   addRefs(files);
                 }}
                 data-drag={dragState}
-                className={`apple-card rounded-[22px] border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] ${
-                  dragState !== "none" ? "border-[#0071e3] ring-4 ring-[#0071e3]/10" : "border-black/[0.08]"
+                className={`apple-card relative rounded-[22px] border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] ${
+                  dragState === "zone"
+                    ? "scale-[1.01] border-[#0071e3] ring-4 ring-[#0071e3]/20"
+                    : dragState === "page"
+                      ? "border-[#0071e3]/60 ring-4 ring-[#0071e3]/10"
+                      : "border-black/[0.08]"
                 }`}
               >
+                {/* While a picture is dragged anywhere on the page, the card lights up to say where it goes. */}
+                {dragState !== "none" && (
+                  <div className="animate-pop-in pointer-events-none absolute inset-1.5 z-30 flex flex-col items-center justify-center gap-1.5 rounded-[18px] border-2 border-dashed border-[#0071e3] bg-[#eef6ff]/90 backdrop-blur-sm">
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full bg-[#0071e3] text-[18px] text-white shadow-[0_8px_22px_rgba(0,113,227,0.35)] ${dragState === "zone" ? "" : "animate-bounce"}`}>
+                      ↓
+                    </span>
+                    <span className="text-[13px] font-medium text-[#0071e3]">
+                      {dragState === "zone" ? "松开，放进参考图" : "拖到这里，当参考图"}
+                    </span>
+                  </div>
+                )}
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
