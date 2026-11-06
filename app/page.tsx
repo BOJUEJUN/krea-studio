@@ -1601,9 +1601,9 @@ export default function StudioPage() {
                       </div>
                     )}
                     {openPanel === "seed" && (
-                      <div className="flex items-center gap-3">
-                        <span className="shrink-0 text-[12px] text-[#6e6e73]">同一个种子出相似的图，留空随机</span>
-                        <input autoFocus inputMode="numeric" value={seedText} placeholder="随机" onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))} className="flex-1 rounded-lg bg-[#f5f5f7] px-3 py-1.5 text-[12px] tabular-nums outline-none" aria-label="种子" />
+                      <div className="px-1.5 pb-1">
+                        <div className="mb-1.5 text-[11px] text-[#86868b]">同一个种子出相似的图，留空就随机</div>
+                        <input autoFocus inputMode="numeric" value={seedText} placeholder="随机" onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))} className="w-full rounded-lg bg-[#f5f5f7] px-3 py-1.5 text-[13px] tabular-nums outline-none focus:ring-2 focus:ring-[#0071e3]/30" aria-label="种子" />
                       </div>
                     )}
                     {openPanel === "negative" && (

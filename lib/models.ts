@@ -90,7 +90,7 @@ export const WORKFLOW_PARAMS: ModelParams = {
   denoise: true,
   customSize: true,
   seed: true,
-  lora: true,
+  // 风格强度 is no longer offered on the page (用户 2026-11-05); workflows use the site default.
   ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
 };
 
