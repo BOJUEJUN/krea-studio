@@ -79,6 +79,28 @@ function iconOf(cover: string): string {
   return cover.replace("/models/", "/models/icon/") + "?v=2";
 }
 
+/** Pixel position of the caret inside a textarea (a hidden copy measures where the text before it ends). */
+function caretXY(el: HTMLTextAreaElement, pos: number): { x: number; y: number } {
+  const cs = getComputedStyle(el);
+  const div = document.createElement("div");
+  for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding", "border", "boxSizing", "whiteSpace", "wordWrap", "width"] as const) {
+    (div.style as any)[k] = (cs as any)[k];
+  }
+  div.style.position = "absolute";
+  div.style.visibility = "hidden";
+  div.style.whiteSpace = "pre-wrap";
+  div.style.overflowWrap = "break-word";
+  div.textContent = el.value.slice(0, pos);
+  const mark = document.createElement("span");
+  mark.textContent = "\u200b";
+  div.appendChild(mark);
+  document.body.appendChild(div);
+  const x = mark.offsetLeft;
+  const y = mark.offsetTop - el.scrollTop;
+  div.remove();
+  return { x: Math.min(x, el.clientWidth - 200), y };
+}
+
 /** Same picture as bytes on this site (for fetch(): download, 当参考图, 重新编辑); <img> loads go straight to COS. */
 function rawOf(url: string): string {
   return url.startsWith("/api/") ? `${url}${url.includes("?") ? "&" : "?"}raw=1` : url;
@@ -716,6 +738,8 @@ export default function StudioPage() {
   /** The first picture becomes the main reference; more go to the extra references (up to the model's limit). */
 
   const [mentionOpen, setMentionOpen] = useState(false);
+  // 2026-11-06 (用户: @ 的菜单在我 @ 的旁边出来): where the caret is, inside the description box.
+  const [mentionAt, setMentionAt] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   /** Inserts "@图N " at the caret in the description. */
   const insertMention = (n: number, replaceAt?: boolean) => {
     const el = promptRef.current;
@@ -1865,7 +1889,9 @@ export default function StudioPage() {
                       const v = e.target.value;
                       setPrompt(v);
                       const at = e.target.selectionStart ?? v.length;
-                      setMentionOpen(!!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@");
+                      const open = !!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@";
+                      if (open) setMentionAt(caretXY(e.target, at));
+                      setMentionOpen(open);
                     }}
                     onKeyDown={(e) => {
                       if (mentionOpen && e.key === "Escape") setMentionOpen(false);
@@ -1892,6 +1918,26 @@ export default function StudioPage() {
                       ...(prompt ? {} : { color: "#1d1d1f" }),
                     } as React.CSSProperties}
                   />
+                  {mentionOpen && (
+                    <div
+                      className="animate-pop-in absolute z-40 flex gap-1 rounded-2xl bg-white p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)] ring-1 ring-black/[0.06]"
+                      style={{ left: Math.max(4, mentionAt.x), top: mentionAt.y + 22 }}
+                    >
+                      {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => insertMention(i + 1, true)}
+                          className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] hover:bg-[#0071e3]/10"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
+                          图{i + 1}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
 
@@ -2116,23 +2162,6 @@ export default function StudioPage() {
                   addRefs(files);
                 }}
               />
-              {mentionOpen && (
-                <div className="animate-chip-in mt-1.5 flex flex-wrap gap-1.5 rounded-2xl border border-black/[0.08] bg-white p-1.5 shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
-                  {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => insertMention(i + 1, true)}
-                      className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] transition hover:bg-[#0071e3]/10"
-                    >
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
-                      图{i + 1}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
 
           </div>

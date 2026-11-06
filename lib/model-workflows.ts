@@ -82,6 +82,11 @@ export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
       ? { ...base, lora: undefined, fixed: [{ nodeId: "374", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "435", fieldName: "strength_model", fieldValue: 1 }] }
       : { ...base, lora: undefined, fixed: [{ nodeId: "244", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "380", fieldName: "strength_model", fieldValue: 1 }] };
   }
+  // CherryCHE: LoRA strength 1, not the workflow's 2 (用户 2026-11-06).
+  if (model === "cherryche") {
+    const base = krea2(id, mode);
+    return { ...base, lora: undefined, fixed: [{ nodeId: mode === "t2i" ? "374" : "244", fieldName: "strength_model", fieldValue: 1 }] };
+  }
   return krea2(id, mode);
 }
 
