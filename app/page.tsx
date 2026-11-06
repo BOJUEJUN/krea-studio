@@ -969,6 +969,9 @@ export default function StudioPage() {
             flash("已放回参考图和描述");
           })
           .catch(() => flash("描述已放回，参考图找不到了"));
+      } else if (g.mode === "i2i") {
+        // Made from a picture whose copy was not kept: leave the current pictures alone.
+        flash("描述已放回；这张的参考图当时没保存上");
       } else {
         onPickFile(null);
         setExtraRefs([]);
