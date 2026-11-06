@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+
 /** 2026-11-05: a plain 账号 + 密码 sign-in; the first sign-in with a new 账号 creates it. */
 export function LoginView({ onDone }: { onDone: (user: string) => void }) {
   const [name, setName] = useState("");
@@ -33,13 +34,9 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-[#f5f5f7] px-4">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{ background: "radial-gradient(800px 400px at 50% 0%, rgba(0,113,227,0.08), transparent 60%)" }}
-      />
-      <form onSubmit={submit} className="animate-pop-in relative w-full max-w-[340px] rounded-[24px] bg-white p-6 shadow-[0_24px_70px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.05]">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+      <div aria-hidden className="pointer-events-none absolute inset-0 bg-white/35 backdrop-blur-[6px]" />
+      <form onSubmit={submit} className="animate-pop-in relative w-full max-w-[340px] rounded-[24px] bg-white/80 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.16)] ring-1 ring-white/60 backdrop-blur-2xl">
         <div className="mb-1 text-[22px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</div>
         <div className="mb-5 text-[13px] text-[#86868b]">用手机号或账号登录</div>
         <input

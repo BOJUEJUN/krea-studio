@@ -1188,10 +1188,10 @@ export default function StudioPage() {
     localStorage.setItem(MODEL_KEY, id);
   };
 
-  if (user === null) return <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />;
-
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
+      {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
+      {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
       {user && (
         <div ref={userMenuRef} className="fixed left-4 top-4 z-50">

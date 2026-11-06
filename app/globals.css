@@ -451,3 +451,12 @@ textarea {
   animation: pop-in 0.2s var(--ease-standard) both;
   transform-origin: bottom left;
 }
+
+/* Sign-in backdrop: the collage drifts slowly. */
+@keyframes login-drift {
+  from { translate: 0 0; }
+  to { translate: 0 -120px; }
+}
+.login-drift {
+  animation: login-drift 40s ease-in-out infinite alternate;
+}
