@@ -3,6 +3,7 @@ import path from "path";
 import { onNetlify, type HistoryItem } from "./history";
 import { storeGet, storePut } from "./store";
 import { makeThumbs } from "./thumbs";
+import { storeKind } from "./store";
 
 /**
  * Permanent copies of generated images. RunningHub only keeps outputs for a
@@ -65,6 +66,27 @@ export async function readImage(id: string): Promise<Buffer | null> {
  */
 export async function withBackup(item: HistoryItem): Promise<HistoryItem> {
   if (!isRemoteImage(item.url)) return item;
+  // 2026-11-06: RunningHub refuses downloads from the site's US server, so a small function inside Tencent's
+  // Guangzhou network (tools/fetch-fn) moves the picture into COS; the sizes are made from that copy.
+  const fn = process.env.FETCH_FN_URL, token = process.env.FETCH_FN_TOKEN;
+  if (fn && token && storeKind() === "cos") {
+    try {
+      const res = await fetch(fn, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: item.url, key: `img-${safeId(item.id)}`, token }),
+        signal: AbortSignal.timeout(50_000),
+      });
+      const d: any = await res.json().catch(() => null);
+      if (!d?.ok) throw new Error(d?.error || `搬图失败 (${res.status})`);
+      const bytes = await storeGet(`img-${safeId(item.id)}`, 30_000);
+      if (bytes) await makeThumbs(safeId(item.id), bytes).catch((e) => console.error("[thumbs]", item.id, e?.message || e));
+      return { ...item, sourceUrl: item.url, url: imageUrlFor(item.id) };
+    } catch (e: any) {
+      console.error("[images] mover failed:", item.id, e?.message || e);
+      return item;
+    }
+  }
   try {
     const res = await fetch(item.url, { cache: "no-store", signal: AbortSignal.timeout(25_000) });
     if (!res.ok) throw new Error(`下载原图失败 (${res.status})`);

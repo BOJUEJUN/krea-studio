@@ -1,7 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { get as blobGet, list as blobList, put as blobPut } from "@vercel/blob";
-import { cosConf, cosGet, cosHas, cosKeys, cosPut, cosSignedGet } from "./cos";
+import { cosConf, cosGet, cosHas, cosKeys, cosList, cosPut, cosSignedGet } from "./cos";
 
 /**
  * One small key/value store for history records, image copies and references.
@@ -164,4 +164,10 @@ export function storeDirectUrl(key: string): string | null {
 export async function storeHas(key: string): Promise<boolean> {
   if (storeKind() === "cos") return cosHas(safeKey(key));
   return !!(await storeGet(key).catch(() => null));
+}
+
+/** Keys with last-change times (COS only; others report 0, which means "unknown"). */
+export async function storeList(prefix: string): Promise<{ key: string; mtime: number }[]> {
+  if (storeKind() === "cos") return cosList(prefix);
+  return (await storeKeys(prefix)).map((key) => ({ key, mtime: 0 }));
 }

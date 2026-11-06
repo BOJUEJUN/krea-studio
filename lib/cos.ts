@@ -86,8 +86,13 @@ export async function cosPut(key: string, body: Buffer | string, contentType: st
 
 /** Keys (without the site prefix) that start with `prefix`. */
 export async function cosKeys(prefix: string): Promise<string[]> {
+  return (await cosList(prefix)).map((x) => x.key);
+}
+
+/** Keys with their last-change time (ms). */
+export async function cosList(prefix: string): Promise<{ key: string; mtime: number }[]> {
   const c = cosConf()!;
-  const keys: string[] = [];
+  const keys: { key: string; mtime: number }[] = [];
   let marker = "";
   for (let page = 0; page < 50; page++) {
     const params: Record<string, string> = { prefix: c.prefix + prefix, "max-keys": "1000" };
@@ -100,8 +105,12 @@ export async function cosKeys(prefix: string): Promise<string[]> {
     });
     if (!res.ok) throw new Error(`存储列表失败 (${res.status})`);
     const xml = await res.text();
-    const found = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
-    for (const k of found) keys.push(k.slice(c.prefix.length));
+    const blocks = [...xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)].map((m) => m[1]);
+    const found = blocks.map((b) => b.match(/<Key>([^<]+)<\/Key>/)?.[1] ?? "").filter(Boolean);
+    for (const b of blocks) {
+      const k = b.match(/<Key>([^<]+)<\/Key>/)?.[1];
+      if (k) keys.push({ key: k.slice(c.prefix.length), mtime: Date.parse(b.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1] ?? "") || 0 });
+    }
     if (!/<IsTruncated>true<\/IsTruncated>/.test(xml) || !found.length) break;
     marker = xml.match(/<NextMarker>([^<]+)<\/NextMarker>/)?.[1] || found[found.length - 1];
   }

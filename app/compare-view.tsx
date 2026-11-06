@@ -15,7 +15,8 @@ function Tag({ children, side }: { children: string; side: "left" | "right" }) {
   return (
     <span
       className={`pointer-events-none absolute top-2 z-10 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white ${
-        side === "left" ? "left-2" : "right-2"
+        // Clear of the account button in the card's top-left corner (2026-11-06 用户: 重叠).
+        side === "left" ? "left-14" : "right-2"
       }`}
     >
       {children}

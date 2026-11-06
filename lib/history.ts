@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { persistentStore, storeGet, storeKeys, storePut } from "./store";
+import { persistentStore, storeGet, storeKeys, storeList, storePut } from "./store";
 
 export type HistoryStatus = "pending" | "done" | "failed" | "expired";
 
@@ -181,20 +181,35 @@ export async function readHistory(): Promise<HistoryItem[]> {
 
 async function readHistoryRaw(): Promise<HistoryItem[]> {
   if (!onNetlify()) return sortAndCap(await readFileList());
-  const index = await readIndex();
-  let keys: string[] = [];
-  try {
-    keys = await blobKeys(ITEM_PREFIX);
-  } catch {
-    return sortAndCap(index);
-  }
+  let listed: { key: string; mtime: number }[] = [];
+  const [index, ok] = await Promise.all([
+    readIndex(),
+    storeList("item").then((l) => ((listed = l), true)).catch(() => false),
+  ]);
+  if (!ok) return sortAndCap(index);
+  // 2026-11-06: two writes at once could leave the index with an older copy of a picture. Each picture's own
+  // record is the truth: re-read records missing from the index and those changed in the last 2 hours (the
+  // only ones a racing write can have overwritten).
   const known = new Set(index.map((x) => x.id));
-  const missing = keys.map((k) => k.slice(ITEM_PREFIX.length)).filter((id) => !known.has(id));
-  if (!missing.length) return sortAndCap(index);
-  const recovered = (
-    await Promise.all(missing.slice(0, 50).map((id) => blobGet<HistoryItem>(ITEM_PREFIX + id)))
-  ).filter((x): x is HistoryItem => !!x);
-  const next = sortAndCap([...recovered, ...index]);
-  await blobPut(INDEX_KEY, next).catch(() => {});
+  const recent = Date.now() - 2 * 3_600_000;
+  const stale = listed
+    .filter((x) => x.key.startsWith(ITEM_PREFIX))
+    .filter((x) => !known.has(x.key.slice(ITEM_PREFIX.length)) || x.mtime > recent)
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((x) => x.key.slice(ITEM_PREFIX.length));
+  if (!stale.length) return sortAndCap(index);
+  const fresh = (await Promise.all(stale.slice(0, 60).map((id) => blobGet<HistoryItem>(ITEM_PREFIX + id).catch(() => null)))).filter(
+    (x): x is HistoryItem => !!x
+  );
+  const byId = new Map(index.map((x) => [x.id, x]));
+  let changed = false;
+  for (const f of fresh) {
+    const before = byId.get(f.id);
+    const after = merge(before, f);
+    if (!before || JSON.stringify(before) !== JSON.stringify(after)) changed = true;
+    byId.set(f.id, after);
+  }
+  const next = sortAndCap([...byId.values()]);
+  if (changed) await blobPut(INDEX_KEY, next).catch(() => {});
   return next;
 }
