@@ -597,7 +597,10 @@ button:not(:disabled):active,
 }
 
 /* Instant little labels for icon buttons (用户: 悬停要告诉用户这是什么按钮). Shown under the button. */
-/* The button itself must be positioned (relative / absolute) for the label to sit under it. */
+/* The label sits under its element; anything not already placed absolutely becomes the anchor. */
+[data-tip]:not(.absolute):not(.fixed) {
+  position: relative;
+}
 [data-tip]::after {
   content: attr(data-tip);
   position: absolute;
@@ -613,7 +616,7 @@ button:not(:disabled):active,
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.18s var(--motion-in), translate 0.25s var(--motion-in);
+  transition: opacity 0.12s var(--motion-in), translate 0.18s var(--motion-in);
   z-index: 30;
 }
 [data-tip-end]::after {

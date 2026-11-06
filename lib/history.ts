@@ -167,9 +167,9 @@ export async function readDeleted(): Promise<Set<string>> {
   return new Set(Array.isArray(list) ? list : []);
 }
 
-export async function markDeleted(id: string): Promise<void> {
+export async function markDeleted(ids: string | string[]): Promise<void> {
   const set = await readDeleted();
-  set.add(id);
+  for (const id of Array.isArray(ids) ? ids : [ids]) set.add(id);
   await blobPut(DELETED_KEY, [...set]);
 }
 

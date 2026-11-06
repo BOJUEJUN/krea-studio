@@ -180,20 +180,20 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-/** 2026-11-06 (用户: 历史加删除): remove one of your own pictures from your history. */
+/** 2026-11-06 (用户: 历史加删除 / 批量删除): remove your own pictures (?id=… or JSON {ids: […]}). */
 export async function DELETE(req: NextRequest) {
   const user = sessionUser(req);
   if (!user) return unauthorized();
   try {
-    const id = new URL(req.url).searchParams.get("id") || "";
+    const one = new URL(req.url).searchParams.get("id");
+    const body = one ? null : ((await req.json().catch(() => null)) as { ids?: unknown } | null);
+    const ids = one ? [one] : Array.isArray(body?.ids) ? body!.ids.map(String).slice(0, 200) : [];
     const owner = await ownerName();
-    const item = (await readHistory()).find((x) => x.id === id);
-    if (!item || (item.owner ?? owner) !== user) {
-      return NextResponse.json({ ok: false, error: "找不到这张图" }, { status: 404 });
-    }
-    await markDeleted(item.id);
-    await upsertHistory({ ...item, deleted: true }).catch(() => {});
-    return NextResponse.json({ ok: true });
+    const all = await readHistory();
+    const mine = all.filter((x) => ids.includes(x.id) && (x.owner ?? owner) === user);
+    if (!mine.length) return NextResponse.json({ ok: false, error: "找不到这些图" }, { status: 404 });
+    await markDeleted(mine.map((x) => x.id));
+    return NextResponse.json({ ok: true, deleted: mine.length });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "删除失败" }, { status: 500 });
   }

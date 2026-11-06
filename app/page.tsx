@@ -857,6 +857,55 @@ export default function StudioPage() {
     },
     [deleteArm, currentId, flash]
   );
+  // 2026-11-06 (用户: 筛选里加批量选择，批量删除或下载).
+  const [selMode, setSelMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkArm, setBulkArm] = useState(false);
+  const toggleSel = (id: string) =>
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const endSel = () => {
+    setSelMode(false);
+    setSelected(new Set());
+    setBulkArm(false);
+  };
+  const bulkDelete = () => {
+    if (!bulkArm) {
+      setBulkArm(true);
+      window.setTimeout(() => setBulkArm(false), 3000);
+      return;
+    }
+    const ids = [...selected];
+    const removed = gallery.filter((g) => selected.has(g.id));
+    setGallery((list) => list.filter((g) => !selected.has(g.id)));
+    if (currentId && selected.has(currentId)) {
+      setResultUrl(null);
+      setCurrentId(null);
+    }
+    endSel();
+    fetchJson("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) })
+      .then((d) => {
+        if (!d?.ok) throw new Error(d?.error);
+        flash(`已删除 ${d.deleted} 张`);
+      })
+      .catch(() => {
+        setGallery((list) => [...removed, ...list].sort((a, b) => b.createdAt - a.createdAt));
+        flash("删除失败，请重试");
+      });
+  };
+  const bulkDownload = async () => {
+    const list = gallery.filter((g) => selected.has(g.id) && g.url);
+    flash(`开始下载 ${list.length} 张`);
+    for (const g of list) {
+      await downloadItem(g);
+      await sleep(350);
+    }
+  };
+
   // Full-screen viewer (用户: 点击图片打开查看细节，支持缩放).
   const [viewer, setViewer] = useState<string | null>(null);
 
@@ -1435,7 +1484,7 @@ export default function StudioPage() {
           <button
             type="button"
             onClick={() => setUserMenu((v) => !v)}
-            title={user}
+            data-tip={user} data-tip-start=""
             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
           >
             {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
@@ -1611,7 +1660,7 @@ export default function StudioPage() {
                     <button
                       key={url}
                       type="button"
-                      title={`和图${i + 1}对比`}
+                      data-tip={`和图${i + 1}对比`}
                       onClick={() => setCompareIdx(i)}
                       className={`relative h-8 w-8 overflow-hidden rounded-lg transition ${compareIdx === i ? "ring-2 ring-[#0071e3]" : "opacity-60 hover:opacity-100"}`}
                     >
@@ -1728,7 +1777,7 @@ export default function StudioPage() {
                         <span className="absolute inset-0 flex items-center justify-center gap-0.5 bg-black/45 opacity-0 transition-opacity group-hover/ref:opacity-100 group-focus-within/ref:opacity-100">
                           <button
                             type="button"
-                            title="查看大图"
+                            data-tip="查看大图"
                             aria-label={`查看图${i + 1}`}
                             onClick={() => setViewer(r.url)}
                             className="flex h-5 w-5 items-center justify-center rounded-full text-white hover:bg-white/25"
@@ -1737,7 +1786,7 @@ export default function StudioPage() {
                           </button>
                           <button
                             type="button"
-                            title="换一张"
+                            data-tip="换一张"
                             aria-label={`换掉图${i + 1}`}
                             onClick={() => {
                               replaceSlot.current = i;
@@ -1751,7 +1800,7 @@ export default function StudioPage() {
                         <button
                           type="button"
                           onClick={() => insertMention(i + 1)}
-                          title="在描述里 @ 这张图"
+                          data-tip="在描述里 @ 这张图" data-tip-start=""
                           className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
                         >
                           图{i + 1}
@@ -1779,7 +1828,7 @@ export default function StudioPage() {
                                 replaceSlot.current = null;
                                 fileRef.current?.click();
                               }}
-                              title="添加参考图（也可拖入或粘贴）"
+                              data-tip="添加参考图，也可拖入或粘贴" data-tip-start=""
                               className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-black/[0.15] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
                             >
                               <span className="text-[18px] leading-none">+</span>
@@ -2110,7 +2159,7 @@ export default function StudioPage() {
         <button
           type="button"
           onClick={() => toggleHistory(false)}
-          title="历史记录"
+          data-tip="历史记录" data-tip-end=""
           aria-label="打开历史记录"
           className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105 active:scale-95"
           style={{ opacity: histHidden ? 1 : 0, transform: histHidden ? "none" : "scale(0.6)", pointerEvents: histHidden ? undefined : "none", transition: "opacity 260ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" }}
@@ -2154,7 +2203,7 @@ export default function StudioPage() {
             <button
               type="button"
               onClick={() => setHistToolsOpen((v) => !v)}
-              title="搜索 / 筛选"
+              data-tip="搜索 / 筛选" data-tip-end=""
               aria-label="搜索 / 筛选"
               aria-pressed={histToolsOpen}
               className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" || histSort !== "new" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.05]"}`}
@@ -2164,7 +2213,7 @@ export default function StudioPage() {
             <button
               type="button"
               onClick={() => toggleHistory(true)}
-              title="收起历史"
+              data-tip="收起历史" data-tip-end=""
               aria-label="收起历史"
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#6e6e73] transition hover:bg-black/[0.05]"
             >
@@ -2226,7 +2275,14 @@ export default function StudioPage() {
                   ))}
                 </select>
               </label>
-              <label className="relative ml-auto flex items-center gap-1 rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
+              <button
+                type="button"
+                onClick={() => (selMode ? endSel() : setSelMode(true))}
+                className={`ml-auto rounded-full px-2.5 py-1 ${selMode ? "bg-[#0071e3] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}
+              >
+                多选
+              </button>
+              <label className="relative flex items-center gap-1 rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
                 <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4" /></svg>
                 {{ new: "最新", old: "最早", cost: "最贵", slow: "最久" }[histSort]}
                 <select
@@ -2285,7 +2341,8 @@ export default function StudioPage() {
                     const on = g.id === currentId;
                     // The picture being viewed always shows its buttons and details (用户: 当前预览的直接显示，不然用户不知道);
                     // the others show them on hover.
-                    const show = on ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100";
+                    const show = selMode ? "pointer-events-none opacity-0" : on ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100";
+                    const picked = selected.has(g.id);
                     const open = promptOpenId === g.id;
                     const meta = [
                       findModel(g.model)?.name ?? g.label ?? "棕色尘埃",
@@ -2306,6 +2363,10 @@ export default function StudioPage() {
                         e.dataTransfer.effectAllowed = "copy";
                       }}
                       onClick={() => {
+                        if (selMode) {
+                          toggleSel(g.id);
+                          return;
+                        }
                         if (g.url) {
                           setError(null);
                           setCompareOn(false);
@@ -2336,6 +2397,13 @@ export default function StudioPage() {
                           </span>
                         )}
                       </span>
+                      {selMode && (
+                        <span className={`pointer-events-none absolute inset-0 z-10 transition ${picked ? "bg-[#0071e3]/15 ring-[3px] ring-inset ring-[#0071e3]" : "bg-white/10"}`}>
+                          <span className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[13px] text-white shadow ${picked ? "border-[#0071e3] bg-[#0071e3]" : "border-white bg-black/20"}`}>
+                            {picked ? "✓" : ""}
+                          </span>
+                        </span>
+                      )}
                       {g.url && (
                         <>
                           <span className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/70 transition-opacity duration-300 ${show}`} />
@@ -2359,6 +2427,9 @@ export default function StudioPage() {
                             </button>
                             <button type="button" data-tip="复制描述" aria-label="复制描述" onClick={(e) => act(e, () => copyPrompt(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
                               <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                            </button>
+                            <button type="button" data-tip="下载" aria-label="下载" onClick={(e) => act(e, () => downloadItem(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
                             </button>
                           </span>
                           <button
@@ -2410,6 +2481,33 @@ export default function StudioPage() {
               </div>
             )}
           </div>
+          {selMode && (
+            <div className="animate-pop-in flex shrink-0 items-center gap-1.5 border-t border-black/[0.06] px-3 py-2 text-[12px]">
+              <span className="tabular-nums text-[#6e6e73]">已选 {selected.size}</span>
+              <button
+                type="button"
+                onClick={() => setSelected(selected.size === pageItems.filter((g) => g.url).length ? new Set() : new Set(pageItems.filter((g) => g.url).map((g) => g.id)))}
+                className="rounded-full px-2 py-1 text-[#0071e3] hover:bg-[#0071e3]/10"
+              >
+                {selected.size && selected.size === pageItems.filter((g) => g.url).length ? "全不选" : "全选"}
+              </button>
+              <span className="ml-auto" />
+              <button type="button" disabled={!selected.size} onClick={bulkDownload} className="rounded-full bg-[#f2f2f4] px-3 py-1 text-[#1d1d1f] hover:bg-black/[0.08] disabled:opacity-40">
+                下载
+              </button>
+              <button
+                type="button"
+                disabled={!selected.size}
+                onClick={bulkDelete}
+                className={`rounded-full px-3 py-1 disabled:opacity-40 ${bulkArm ? "bg-[#ff3b30] text-white" : "bg-[#ff3b30]/10 text-[#ff3b30] hover:bg-[#ff3b30]/15"}`}
+              >
+                {bulkArm ? "再点一次删除" : "删除"}
+              </button>
+              <button type="button" onClick={endSel} className="rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
+                完成
+              </button>
+            </div>
+          )}
           </div>
         </aside>
       </main>

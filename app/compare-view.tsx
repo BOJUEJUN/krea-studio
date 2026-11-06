@@ -125,7 +125,7 @@ function ZoomBar({ z, boxRef }: { z: ReturnType<typeof useZoom>; boxRef: React.R
       onWheel={(e) => e.stopPropagation()}
     >
       <button type="button" className={btn} onClick={() => step(1 / 1.5)} aria-label="缩小">−</button>
-      <button type="button" className={`${btn} w-11 text-[11px] tabular-nums`} onClick={() => z.setView({ s: 1, x: 0, y: 0 })} title="还原">
+      <button type="button" className={`${btn} w-11 text-[11px] tabular-nums`} onClick={() => z.setView({ s: 1, x: 0, y: 0 })} data-tip="还原">
         {Math.round(z.view.s * 100)}%
       </button>
       <button type="button" className={btn} onClick={() => step(1.5)} aria-label="放大">+</button>

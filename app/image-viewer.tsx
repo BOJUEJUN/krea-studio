@@ -91,7 +91,7 @@ export function ImageViewer({
       )}
       <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/12 p-1 text-white backdrop-blur">
         <button type="button" aria-label="缩小" onClick={() => z.zoomAt(boxRef.current!, innerWidth / 2, innerHeight / 2, z.view.s / 1.5)} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/20">−</button>
-        <button type="button" onClick={() => z.setView({ s: 1, x: 0, y: 0 })} className="h-8 min-w-12 rounded-full px-2 text-[12px] tabular-nums hover:bg-white/20" title="还原">
+        <button type="button" onClick={() => z.setView({ s: 1, x: 0, y: 0 })} className="h-8 min-w-12 rounded-full px-2 text-[12px] tabular-nums hover:bg-white/20" data-tip="还原">
           {Math.round(z.view.s * 100)}%
         </button>
         <button type="button" aria-label="放大" onClick={() => z.zoomAt(boxRef.current!, innerWidth / 2, innerHeight / 2, z.view.s * 1.5)} className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/20">+</button>
