@@ -69,7 +69,7 @@ const modelIcon = (id: string) => {
 };
 // Records carry signed Tencent links (direct); the site's own path is the fallback.
 let DIRECT: Record<string, Record<string, string>> = {};
-const thumb = (url: string, w: number | "full") => DIRECT[url]?.[w] ?? (url.startsWith("/api/img/") && w !== "full" ? `${url}?w=${w}` : url);
+const thumb = (url: string, w: number | "full" | "download") => DIRECT[url]?.[w] ?? (url.startsWith("/api/img/") && w !== "full" ? `${url}?w=${w}` : url);
 const yuan = (n: number) => `¥${n.toFixed(2)}`;
 const when = (t: number) =>
   t ? new Date(t).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -661,7 +661,7 @@ export default function AdminPage() {
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={() => { navigator.clipboard?.writeText(open.prompt); flash("已复制提示词"); }} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">复制提示词</button>
                 {open.url && (
-                  <a href={`${open.url}${open.url.includes("?") ? "&" : "?"}raw=1`} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
+                  <a href={DIRECT[open.url]?.download ?? `${open.url}${open.url.includes("?") ? "&" : "?"}raw=1`} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
                 )}
                 {open.url && (
                   <a href={open.url} target="_blank" rel="noreferrer" className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">看原图</a>

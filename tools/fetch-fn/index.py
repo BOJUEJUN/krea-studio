@@ -6,7 +6,8 @@ POST JSON {"url": ..., "key": "img-<id>" | "ref-<id>", "token": ...}. Standard l
 """
 import hashlib, hmac, json, os, re, time, urllib.parse, urllib.request
 
-ALLOWED = re.compile(r"^https://[a-z0-9.-]+\.(xiaoyaoyou\.com|runninghub\.cn|runninghub\.ai)/", re.I)
+# Any https picture link: the token is what keeps strangers out (RunningHub uses several hosts).
+ALLOWED = re.compile(r"^https://[a-z0-9.-]+(:\d+)?/", re.I)
 KEY = re.compile(r"^(img|ref)-[0-9A-Za-z_-]{1,64}$")
 
 

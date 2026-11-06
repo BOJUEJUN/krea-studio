@@ -157,8 +157,8 @@ export async function storeKeys(prefix: string): Promise<string[]> {
 }
 
 /** A link the browser loads straight from storage (COS only), so pictures don't pass through the site. */
-export function storeDirectUrl(key: string): string | null {
-  return storeKind() === "cos" ? cosSignedGet(safeKey(key)) : null;
+export function storeDirectUrl(key: string, params?: Record<string, string>): string | null {
+  return storeKind() === "cos" ? cosSignedGet(safeKey(key), params) : null;
 }
 
 export async function storeHas(key: string): Promise<boolean> {

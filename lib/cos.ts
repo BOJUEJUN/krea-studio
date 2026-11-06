@@ -51,12 +51,13 @@ function url(c: Conf, method: string, key: string, ttl = 600) {
 }
 
 /** A GET link the browser can use directly; it stays the same for a whole (UTC) day so the picture is cached. */
-export function cosSignedGet(key: string): string {
+export function cosSignedGet(key: string, params: Record<string, string> = {}): string {
   const c = cosConf()!;
   const day = 86_400;
   const start = Math.floor(Date.now() / 1000 / day) * day;
   const path = objectPath(c, key);
-  return `https://${host(c)}${path}?${sign(c, "get", decodeURIComponent(path), start - 3600, start + 2 * day)}`;
+  const qs = Object.entries(params).map(([k, v]) => `${enc(k)}=${enc(v)}&`).join("");
+  return `https://${host(c)}${path}?${qs}${sign(c, "get", decodeURIComponent(path), start - 3600, start + 2 * day, params)}`;
 }
 
 export async function cosGet(key: string, timeoutMs = 15_000): Promise<Buffer | null> {

@@ -1,6 +1,6 @@
 """Deploy the picture mover to Tencent Cloud ap-guangzhou. Keys are read from local files and never printed.
 
-Run:  <python with tencentcloud-sdk-python-scf> -I tools/fetch-fn/deploy.py
+Run:  <python with tencentcloud-sdk-python-scf> -I tools/fetch-fn/deploy.py [region, default ap-guangzhou; ap-singapore is the one the site uses]
 Reads ~/.cho-siren-cos.json and ~/.enzoban-fetch.token (made on first run, mode 600).
 Prints only the function URL.
 """
@@ -8,7 +8,8 @@ import base64, io, json, os, secrets, time, zipfile
 from tencentcloud.common import credential
 from tencentcloud.scf.v20180416 import scf_client, models
 
-NAME, REGION = "enzoban-picture-mover", "ap-guangzhou"
+import sys
+NAME, REGION = "enzoban-picture-mover", (sys.argv[1] if len(sys.argv) > 1 else "ap-guangzhou")
 HERE = os.path.dirname(os.path.abspath(__file__))
 home = os.path.expanduser
 c = json.load(open(home("~/.cho-siren-cos.json")))

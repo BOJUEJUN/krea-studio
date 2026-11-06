@@ -22,7 +22,11 @@ export function directLinks(url: string | undefined, refUrl?: string): { direct?
   const out: { direct?: Record<string, string>; refDirect?: string } = {};
   const id = url?.match(/^\/api\/img\/([0-9A-Za-z_-]{1,64})$/)?.[1];
   if (id && storeDirectUrl(`img-${id}`)) {
-    const d: Record<string, string> = { full: storeDirectUrl(`img-${id}`)! };
+    const d: Record<string, string> = {
+      full: storeDirectUrl(`img-${id}`)!,
+      // Saves as a file straight from storage (2026-11-06: downloads no longer pass through the site).
+      download: storeDirectUrl(`img-${id}`, { "response-content-disposition": `attachment; filename="AI-Studio_${id}.png"` })!,
+    };
     for (const w of THUMB_WIDTHS) d[w] = storeDirectUrl(`thumb-${w}-${id}`)!;
     out.direct = d;
   }

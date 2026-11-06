@@ -61,6 +61,35 @@ export async function readImage(id: string): Promise<Buffer | null> {
 }
 
 /**
+ * 2026-11-06: store a finished picture that lives on another site (RunningHub, Banana…) under /api/img/<id>.
+ * The Guangzhou mover is used first because RunningHub refuses the site's US server; a direct download is the
+ * fallback. Returns the site's own link.
+ */
+export async function copyRemoteImage(id: string, url: string): Promise<string> {
+  const fn = process.env.FETCH_FN_URL, token = process.env.FETCH_FN_TOKEN;
+  if (fn && token && storeKind() === "cos") {
+    try {
+      const res = await fetch(fn, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, key: `img-${safeId(id)}`, token }),
+        signal: AbortSignal.timeout(50_000),
+      });
+      const d: any = await res.json().catch(() => null);
+      if (!d?.ok) throw new Error(d?.error || `搬图失败 (${res.status})`);
+      const bytes = await storeGet(`img-${safeId(id)}`, 30_000);
+      if (bytes) await makeThumbs(safeId(id), bytes).catch(() => {});
+      return imageUrlFor(id);
+    } catch (e: any) {
+      console.error("[images] mover failed, trying direct:", id, e?.message || e);
+    }
+  }
+  const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(25_000) });
+  if (!res.ok) throw new Error(`下载结果失败 (${res.status})`);
+  return saveImageBytes(id, Buffer.from(await res.arrayBuffer()));
+}
+
+/**
  * Copy a history item's RunningHub image into storage and point the item at
  * the copy. On any failure the item is returned unchanged (retried later).
  */

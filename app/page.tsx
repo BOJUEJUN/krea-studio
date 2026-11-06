@@ -986,7 +986,12 @@ export default function StudioPage() {
       try {
         let href = g.url;
         let revoke = false;
-        if (!g.url.startsWith("/")) {
+        const direct = DIRECT.get(g.url)?.download;
+        if (direct) {
+          href = direct;
+        } else if (g.url.startsWith("/api/")) {
+          href = rawOf(g.url);
+        } else {
           const res = await fetch(rawOf(g.url));
           if (!res.ok) throw new Error();
           href = URL.createObjectURL(await res.blob());
@@ -1950,7 +1955,7 @@ export default function StudioPage() {
                 <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
                   {openPanel && (
                     <div
-                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "denoise", "lora"].includes(openPanel) ? "w-[300px]" : "w-max min-w-[112px]"}`}
+                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
                       style={{ left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
@@ -2014,12 +2019,11 @@ export default function StudioPage() {
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
                     {openPanel === "denoise" && (
-                      // 2026-11-05 (用户: 重绘幅度的 UI 别扭，重新设计): title + big number, a soft slider with its two
-                      // ends named (用户: 下面的快捷档去掉，要精简).
-                      <div className="px-2.5 pb-2 pt-1.5">
-                        <div className="flex items-baseline">
-                          <span className="text-[13px] font-semibold text-[#1d1d1f]">重绘幅度</span>
-                          <span className="ml-auto text-[20px] font-semibold tabular-nums tracking-tight text-[#0071e3]">{denoise.toFixed(2)}</span>
+                      // Same look as the other menus (用户 2026-11-06: 要统一): small grey title, then the control.
+                      <div className="px-2.5 pb-2">
+                        <div className="flex items-center pb-1 pt-1">
+                          <span className="text-[12px] font-semibold text-[#86868b]">重绘幅度</span>
+                          <span className="ml-auto text-[14px] tabular-nums text-[#0071e3]">{denoise.toFixed(2)}</span>
                         </div>
                         <input
                           type="range"
@@ -2029,10 +2033,10 @@ export default function StudioPage() {
                           value={denoise}
                           onChange={(e) => setDenoise(Number(e.target.value))}
                           aria-label="重绘幅度"
-                          className="soft-range mt-2 w-full"
+                          className="soft-range w-full"
                           style={{ "--p": `${((denoise - 0.01) / 0.99) * 100}%` } as React.CSSProperties}
                         />
-                        <div className="mt-1 flex justify-between text-[11px] text-[#86868b]">
+                        <div className="flex justify-between text-[11px] text-[#86868b]">
                           <span>更像原图</span>
                           <span>改得更多</span>
                         </div>

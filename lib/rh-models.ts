@@ -1,4 +1,4 @@
-import { saveImageBytes } from "./images";
+import { copyRemoteImage } from "./images";
 
 /**
  * Hosted models on RunningHub's standard API (openapi/v2), no workflow needed:
@@ -118,9 +118,7 @@ export async function queryRhHostedTask(taskId: string): Promise<{
     const item = (json.results || [])[0] || {};
     const url = item.url || item.outputUrl;
     if (!url) return { status: "FAILED", outputs: [], errorMessage: "没有返回图片" };
-    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`下载结果失败 (${res.status})`);
-    const saved = await saveImageBytes(taskId, Buffer.from(await res.arrayBuffer()));
+    const saved = await copyRemoteImage(taskId, url);
     // Estimate in ¥: the global site bills about $0.03 per 2K image.
     // Estimate in ¥: the global site bills about $0.03 per 1K/2K image, about double at 4K (task id ends -4k).
     return { status: "SUCCESS", outputs: [saved], cost: site === "b" ? (taskId.endsWith("_4") ? "0.43" : "0.22") : undefined };

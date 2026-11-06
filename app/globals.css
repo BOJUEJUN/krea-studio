@@ -646,3 +646,9 @@ button:not(:disabled):active,
     display: none;
   }
 }
+
+/* 2026-11-06 (用户: 图片多了会不会卡): pictures far off screen are not laid out or painted until scrolled near. */
+.history-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+}
