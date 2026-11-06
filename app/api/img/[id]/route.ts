@@ -1,5 +1,6 @@
 import { sessionUser, unauthorized } from "@/lib/auth";
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
+import { makeThumbs } from "@/lib/thumbs";
 import { readImage } from "@/lib/images";
 import { imageMime } from "@/lib/refs";
 import { storeDirectUrl, storeGet, storeHas, storePut } from "@/lib/store";
@@ -37,6 +38,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         const sharp = (await import("sharp")).default;
         thumb = await sharp(bytes).rotate().resize({ width: w, withoutEnlargement: true }).webp({ quality: w >= 1600 ? 86 : 74 }).toBuffer();
         await storePut(key, thumb, "image/webp").catch(() => {});
+        // One size was missing, so the others probably are too: make them all once, after answering.
+        after(() => makeThumbs(id, bytes).catch(() => {}));
       }
       return new NextResponse(new Uint8Array(thumb), { headers: { "Content-Type": "image/webp", "Cache-Control": FOREVER } });
     }

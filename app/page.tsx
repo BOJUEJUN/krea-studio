@@ -727,6 +727,23 @@ export default function StudioPage() {
     };
   }, [loading]);
 
+  // 2026-11-06 (用户: 点历史图预览慢): show the picture the history already loaded at once, then the sharp one.
+  const [mainSrc, setMainSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!resultUrl) return setMainSrc(null);
+    const big = thumbOf(resultUrl, 1600);
+    setMainSrc(thumbOf(resultUrl, isDesktop && rightPx > 620 ? 640 : 320));
+    const im = new Image();
+    im.onload = () => setMainSrc((cur) => (cur === big ? cur : big));
+    im.onerror = () => setMainSrc(big); // let the <img> fall back on its own
+    im.src = big;
+    return () => {
+      im.onload = null;
+      im.onerror = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultUrl]);
+
   const showItem = useCallback((g: GalleryItem) => {
     setBatchGrid(false);
     setCurrentId(g.id);
@@ -1688,7 +1705,7 @@ export default function StudioPage() {
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={resultKey}
-                src={thumbOf(resultUrl, 1600)}
+                src={mainSrc ?? thumbOf(resultUrl, 1600)}
                 alt="生成结果"
                 onClick={() => setViewer(resultUrl)}
                 onDragStart={(e) => currentId && e.dataTransfer.setData(HIST_DRAG, currentId)}

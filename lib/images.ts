@@ -89,9 +89,26 @@ export async function readImage(id: string): Promise<Buffer | null> {
  * The Guangzhou mover is used first because RunningHub refuses the site's US server; a direct download is the
  * fallback. Returns the site's own link.
  */
+/** Make the display sizes in the background when the saved picture has none yet. */
+function ensureThumbsLater(id: string) {
+  const run = async () => {
+    if (await storeHas(`thumb-1600-${safeId(id)}`).catch(() => true)) return;
+    const bytes = await storeGet(`img-${safeId(id)}`, 40_000);
+    if (bytes) await makeThumbs(safeId(id), bytes);
+  };
+  try {
+    after(() => run().catch(() => {}));
+  } catch {
+    void run().catch(() => {});
+  }
+}
+
 export async function copyRemoteImage(id: string, url: string): Promise<string> {
   // Already saved by an earlier poll (the page asked again while we were saving): answer at once.
-  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) return imageUrlFor(id);
+  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) {
+    ensureThumbsLater(id);
+    return imageUrlFor(id);
+  }
   const fn = process.env.FETCH_FN_URL, token = process.env.FETCH_FN_TOKEN;
   if (fn && token && storeKind() === "cos") {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -128,7 +145,10 @@ export async function copyRemoteImage(id: string, url: string): Promise<string> 
 
 /** Pictures that arrive as bytes (GPT): skip the work when an earlier poll already saved it. */
 export async function saveFinishedBytes(id: string, bytes: () => Buffer): Promise<string> {
-  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) return imageUrlFor(id);
+  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) {
+    ensureThumbsLater(id);
+    return imageUrlFor(id);
+  }
   return saveImageBytes(id, bytes());
 }
 
