@@ -14,6 +14,7 @@ export type ModelId =
   | "lol-236-v11"
   | "lol-236"
   | "cherryche"
+  | "lol-ingame"
   | "banana-21"
   | "krea-3"
   | "gpt-26-flare"
@@ -31,6 +32,8 @@ export type WorkflowSpec = {
   image?: FieldRef;
   /** LoraLoaderModelOnly strength; always sent so the site controls it. */
   lora?: FieldRef;
+  /** Values always sent as they are (e.g. a second LoRA's strength). */
+  fixed?: (FieldRef & { fieldValue: string | number })[];
 };
 
 /** LoRA strength sent with every request (workflows default to 1-1.5). */
@@ -134,6 +137,19 @@ export const MODELS: ModelInfo[] = [
     name: "CherryCHE Skills",
     tagline: "速写线稿风",
     cover: "/models/cherryche.jpg",
+  },
+  {
+    // 2026-11-05 用户新加的 RunningHub 工作流：串联两个 LoRA，LOL0811 强度 2、LOL1105 强度 1（固定，不在网站上改）.
+    id: "lol-ingame",
+    name: "局内视角",
+    tagline: "英雄联盟局内视角",
+    cover: "/models/lol-ingame.jpg",
+    params: {
+      denoise: true,
+      customSize: true,
+      seed: true,
+      ratios: ["1:1", "3:4", "2:3", "9:16", "4:3", "3:2", "16:9", "21:9"],
+    },
   },
   {
     id: "banana-21",

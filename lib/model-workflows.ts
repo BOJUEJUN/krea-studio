@@ -68,12 +68,21 @@ const WORKFLOW_IDS: Partial<Record<ModelId, Record<Mode, string | null>>> = {
   "lol-236-v11": { t2i: "2117877015239028737", i2i: "2117877879672492034" },
   "lol-236": { t2i: "2117876136859492354", i2i: "2117830038564458498" },
   cherryche: { t2i: "2117875544472768514", i2i: "2117873712153325569" },
+  "lol-ingame": { t2i: "2118543962234511362", i2i: "2118543371127058434" },
 };
 
 export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
   if (model === "brown-dust") return brownDust(mode);
   const id = WORKFLOW_IDS[model]?.[mode];
-  return id ? krea2(id, mode) : null;
+  if (!id) return null;
+  // 局内视角 chains two LoRAs (用户): LOL0811 at 2, LOL1105 at 1.
+  if (model === "lol-ingame") {
+    const base = krea2(id, mode);
+    return mode === "t2i"
+      ? { ...base, lora: undefined, fixed: [{ nodeId: "374", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "435", fieldName: "strength_model", fieldValue: 1 }] }
+      : { ...base, lora: undefined, fixed: [{ nodeId: "244", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "380", fieldName: "strength_model", fieldValue: 1 }] };
+  }
+  return krea2(id, mode);
 }
 
 export function availability(model: ModelId): Record<Mode, boolean> {

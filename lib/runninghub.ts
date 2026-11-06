@@ -217,6 +217,7 @@ export function buildWorkflowNodes(
   add(spec.height, input.height);
   add(spec.denoise, input.denoise);
   add(spec.image, input.imageFileName);
+  for (const f of spec.fixed ?? []) list.push({ nodeId: f.nodeId, fieldName: f.fieldName, fieldValue: f.fieldValue });
   add(spec.lora, input.lora != null && Number.isFinite(input.lora) ? Math.min(3, Math.max(0, input.lora)) : LORA_STRENGTH);
   return list;
 }
