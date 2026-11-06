@@ -88,10 +88,12 @@ export async function GET(req: Request) {
   if (!user) return unauthorized();
   try {
     // Each account sees only its own pictures; records from before accounts belong to the owner account.
-    const owner = await ownerName();
-    const mine = async () => (await readHistory()).filter((x) => (x.owner ?? owner) === user && !x.deleted);
-    let items = await mine();
-    if (await settlePending(items)) items = await mine();
+    const [owner, all] = await Promise.all([ownerName(), readHistory()]);
+    const items = all.filter((x) => (x.owner ?? owner) === user && !x.deleted);
+    // Finished-but-unsaved pictures are settled after answering (2026-11-06: it made history wait seconds);
+    // the page polls its own running tasks anyway.
+    const pendingNow = items;
+    after(() => settlePending(pendingNow).catch(() => false));
     // Copying RunningHub images can take a while from abroad: do it after answering (2026-11-05: history took 30 s).
     const snapshot = items;
     after(() => backfillImages(snapshot).catch(() => {}));
