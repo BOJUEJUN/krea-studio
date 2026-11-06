@@ -58,7 +58,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
           onChange={(e) => setName(e.target.value)}
         />
         <input
-          className="mt-2.5 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] uppercase tracking-[0.2em] text-[#1d1d1f] outline-none transition placeholder:normal-case placeholder:tracking-normal focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+          className="mt-2.5 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] text-[#1d1d1f] outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
           placeholder="邀请码"
           value={invite}
           onChange={(e) => setInvite(e.target.value)}
