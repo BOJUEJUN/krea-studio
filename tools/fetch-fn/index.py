@@ -43,7 +43,8 @@ def main_handler(event, context):
     if not body or len(body) > 30 * 1024 * 1024:
         return reply(502, {"ok": False, "error": "bad size"})
     took_dl = time.time() - t
-    path = "/" + urllib.parse.quote(os.environ.get("COS_PREFIX", "enzoban-studio/") + key)
+    prefix = os.environ.get("COS_PREFIX", "enzoban-studio/")
+    path = "/" + urllib.parse.quote(("" if prefix == "root" else prefix) + key)
     host = f"{os.environ['COS_BUCKET']}.cos.{os.environ['COS_REGION']}.myqcloud.com"
     req = urllib.request.Request(f"https://{host}{path}?{sign('put', urllib.parse.unquote(path))}", data=body, method="PUT",
                                  headers={"Content-Type": "image/png", "x-cos-acl": "private"})

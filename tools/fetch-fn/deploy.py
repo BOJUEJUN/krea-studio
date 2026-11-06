@@ -24,9 +24,10 @@ buf = io.BytesIO()
 with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
     z.write(os.path.join(HERE, "index.py"), "index.py")
 code = base64.b64encode(buf.getvalue()).decode()
+# 2026-11-06: the site's pictures live in their own Hong Kong bucket (keys at the top: COS_PREFIX "root").
 variables = [{"Key": "COS_SECRET_ID", "Value": c["secretId"]}, {"Key": "COS_SECRET_KEY", "Value": c["secretKey"]},
-             {"Key": "COS_BUCKET", "Value": c["bucket"]}, {"Key": "COS_REGION", "Value": c["region"]},
-             {"Key": "COS_PREFIX", "Value": "enzoban-studio/"}, {"Key": "TOKEN", "Value": token}]
+             {"Key": "COS_BUCKET", "Value": "enzoban-studio-1318245308"}, {"Key": "COS_REGION", "Value": "ap-hongkong"},
+             {"Key": "COS_PREFIX", "Value": "root"}, {"Key": "TOKEN", "Value": token}]
 cl = scf_client.ScfClient(credential.Credential(c["secretId"], c["secretKey"]), REGION)
 
 

@@ -10,7 +10,9 @@ type Conf = { id: string; key: string; bucket: string; region: string; prefix: s
 export function cosConf(): Conf | null {
   const { COS_SECRET_ID: id, COS_SECRET_KEY: key, COS_BUCKET: bucket, COS_REGION: region } = process.env;
   if (!id || !key || !bucket || !region) return null;
-  return { id, key, bucket, region, prefix: process.env.COS_PREFIX ?? "enzoban-studio/" };
+  // COS_PREFIX "root" = keys at the top of their own bucket (the Hong Kong bucket, 2026-11-06).
+  const p = process.env.COS_PREFIX ?? "enzoban-studio/";
+  return { id, key, bucket, region, prefix: p === "root" ? "" : p };
 }
 
 function host(c: Conf) {
