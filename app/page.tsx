@@ -152,6 +152,8 @@ function formatDuration(ms?: number): string | null {
 }
 
 type PendingJob = {
+  /** When 生成 was clicked (2026-11-06 用户: 用时比体感短 — it now includes 提示词优化 and the upload). */
+  startedAt?: number;
   taskId: string;
   seed?: number;
   mode: Mode;
@@ -1132,7 +1134,7 @@ export default function StudioPage() {
         refUrl: pending.refUrl,
         cost: done.cost || null,
         createdAt: pending.createdAt,
-        durationMs: Date.now() - pending.createdAt,
+        durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
       };
       setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
         (a, b) => b.createdAt - a.createdAt
@@ -1258,6 +1260,7 @@ export default function StudioPage() {
     }
     busyRef.current = true;
     const job = ++jobRef.current;
+    const clickedAt = Date.now();
     const useReverse = mode === "i2i" && reverse;
     const renderKey = `${model}:${mode}`;
     timingRef.current = {
@@ -1366,6 +1369,7 @@ export default function StudioPage() {
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
         createdAt: now + i,
+        startedAt: clickedAt,
       }));
       writePending(pendings);
       try {

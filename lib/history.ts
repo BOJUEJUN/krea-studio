@@ -109,7 +109,8 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     sourceUrl: next.sourceUrl ?? prev.sourceUrl,
     cost: next.cost ?? prev.cost,
     seed: next.seed ?? prev.seed,
-    durationMs: prev.durationMs ?? next.durationMs,
+    // The page measures from the click (includes 提示词优化 + upload), so its number wins when it has one.
+    durationMs: Math.max(prev.durationMs ?? 0, next.durationMs ?? 0) || undefined,
     owner: prev.owner ?? next.owner,
     fav: next.fav ?? prev.fav,
     settings: next.settings ?? prev.settings,
