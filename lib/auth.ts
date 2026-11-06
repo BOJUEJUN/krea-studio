@@ -55,9 +55,16 @@ export async function registerUser(name: string, password: string, invite: strin
  * 2026-11-05 (用户: 不弄真的登录，只记录用户好分历史): a name is enough. The first name ever used becomes the
  * owner and keeps the history from before names existed.
  */
-export async function enterByName(name: string): Promise<UserRecord> {
-  if (!validName(name)) throw new Error("名字 2–20 个字，只能用字母、数字、中文、_ . -");
+export async function enterByName(name: string, invite?: string): Promise<UserRecord> {
+  if (!validName(name)) throw new Error("用户名 2–20 个字，只能用字母、数字、中文、_ . -");
+  // 2026-11-05 (用户: 用户名 + 邀请码就行): the invite code is what keeps strangers out.
+  if (invite !== undefined) {
+    const code = await inviteCode();
+    if (!code || invite.trim().toUpperCase() !== code.toUpperCase()) throw new Error(invite.trim() ? "邀请码不对" : "请填邀请码");
+  }
   const file = await readUsers();
+  const disabled = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase())?.disabled;
+  if (disabled) throw new Error("这个账号已被停用");
   const found = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
   if (found) return found;
   const user: UserRecord = { name, salt: "", hash: "", owner: file.users.length === 0, createdAt: Date.now() };

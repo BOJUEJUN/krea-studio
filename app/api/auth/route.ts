@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
       action === "signin"
         ? await signIn(name, password, String(body.invite || ""))
         : action === "enter"
-        ? await enterByName(name)
+        ? await enterByName(name, String(body.invite ?? ""))
         : action === "register"
         ? await registerUser(name, password, String(body.invite || ""))
         : await checkLogin(name, password);
