@@ -342,14 +342,11 @@ export default function StudioPage() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [openPanel]);
-  const [histHidden, setHistHidden] = useState(false);
-  useEffect(() => {
-    try { setHistHidden(localStorage.getItem("krea-studio.history-hidden") === "1"); } catch {}
-  }, []);
-  const toggleHistory = (hide: boolean) => {
-    setHistHidden(hide);
-    try { localStorage.setItem("krea-studio.history-hidden", hide ? "1" : "0"); } catch {}
-  };
+  // History starts folded on every visit and opens when a picture is made (or when you open it).
+  const [histHidden, setHistHidden] = useState(true);
+  const toggleHistory = (hide: boolean) => setHistHidden(hide);
+  const [histToolsOpen, setHistToolsOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   /** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
   const sizeFor = (ratio: number, fallback?: { width: number; height: number }) => {
     if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
@@ -380,6 +377,9 @@ export default function StudioPage() {
   const [error, setError] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultRef, setResultRef] = useState<string | null>(null);
+  // Every reference of the latest batch (图1, 图2, …) so 对比 can pick which one.
+  const [jobRefs, setJobRefs] = useState<string[]>([]);
+  const [compareIdx, setCompareIdx] = useState(0);
   const [resultSize, setResultSize] = useState<{ w: number; h: number } | null>(null);
   const [compareOn, setCompareOn] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -811,6 +811,8 @@ export default function StudioPage() {
       if (!shown.v) {
         shown.v = true;
         showItem(item);
+        setHistHidden(false);
+        setDetailOpen(false);
       }
       dropPending(pending.taskId);
       const saved = await fetchJson("/api/history", {
@@ -928,6 +930,8 @@ export default function StudioPage() {
       aspect: mode === "i2i" && preview ? previewAspect : width / height,
       reference: mode === "i2i" ? preview : null,
     });
+    setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : []);
+    setCompareIdx(0);
     setLoading(true);
     // On phones the result sits below the form: bring it into view.
     if (window.innerWidth < 1024) {
@@ -1053,6 +1057,8 @@ export default function StudioPage() {
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
   const modelParams = paramsOf(model);
+  /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
+  const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : resultRef ? [resultRef] : [];
   const chips: { key: string; label: string }[] = [
     { key: "model", label: (findModel(model) ?? MODELS[0]).name },
     ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }] : []),
@@ -1132,17 +1138,13 @@ export default function StudioPage() {
           className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
                     <div
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,245,247,0.96))",
-              boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.06)",
-            }}
+
           >
             {loading ? (
               <GeneratingView aspect={jobVisual.aspect} progress={progress} />
-            ) : resultUrl && resultRef && compareOn ? (
+            ) : resultUrl && compareRefs.length > 0 && compareOn ? (
               <div className="h-full w-full p-2">
-                <CompareView key={`${resultKey}-${compareMode}`} before={resultRef} after={resultUrl} mode={compareMode} />
+                <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={compareRefs[compareIdx] ?? resultRef} after={resultUrl} mode={compareMode} />
               </div>
             ) : resultUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -1199,67 +1201,64 @@ export default function StudioPage() {
               </div>
             )}
           </div>
-          {/* Under the picture: what you can do with it (用户: 图片下面加对比、下载等). */}
+          {/* Under the picture: only 对比 (when there was a reference) and 下载, centred (用户 2026-11-05). */}
           {resultUrl && !loading && (
-            <div className="flex shrink-0 flex-wrap items-center gap-1.5 px-3 pb-3 sm:px-4">
-              {resultSize && (
-                <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[11px] tabular-nums text-[#6e6e73]">
-                  {resultSize.w} × {resultSize.h}
-                </span>
+            <div className="flex shrink-0 flex-wrap items-center justify-center gap-1.5 px-3 pb-3">
+              {compareRefs.length > 0 && (
+                <button
+                  type="button"
+                  aria-pressed={compareOn}
+                  onClick={() => setCompareOn((v) => !v)}
+                  className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition active:scale-[0.97] ${
+                    compareOn ? "bg-[#0071e3] text-white" : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
+                  }`}
+                >
+                  {compareOn ? "退出对比" : "对比"}
+                </button>
               )}
-              {currentItem?.durationMs ? (
-                <span className="rounded-full bg-black/[0.04] px-2.5 py-1 text-[11px] tabular-nums text-[#6e6e73]">
-                  {formatDuration(currentItem.durationMs)}
-                </span>
-              ) : null}
-              <div className="ml-auto flex flex-wrap items-center gap-1.5">
-                {resultRef && compareOn && (
-                  <div className="apple-seg flex">
-                    {COMPARE_MODES.map((m) => (
-                      <button
-                        key={m.key}
-                        type="button"
-                        data-active={compareMode === m.key}
-                        onClick={() => setCompareMode(m.key)}
-                        className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {resultRef && (
-                  <button
-                    type="button"
-                    aria-pressed={compareOn}
-                    onClick={() => setCompareOn((v) => !v)}
-                    className={`rounded-full px-3 py-1.5 text-[12px] font-medium transition active:scale-[0.97] ${
-                      compareOn ? "bg-[#0071e3] text-white" : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
-                    }`}
-                  >
-                    {compareOn ? "退出对比" : "对比原图"}
-                  </button>
-                )}
-                {currentItem && (
-                  <>
-                    <button type="button" onClick={() => useAsReference(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
-                      拿来改图
+              {compareOn && compareRefs.length > 1 && (
+                <div className="flex items-center gap-1">
+                  {compareRefs.map((url, i) => (
+                    <button
+                      key={url}
+                      type="button"
+                      title={`和图${i + 1}对比`}
+                      onClick={() => setCompareIdx(i)}
+                      className={`relative h-8 w-8 overflow-hidden rounded-lg transition ${compareIdx === i ? "ring-2 ring-[#0071e3]" : "opacity-60 hover:opacity-100"}`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt={`图${i + 1}`} className="h-full w-full object-cover" />
+                      <span className="absolute inset-x-0 bottom-0 bg-black/55 text-[8px] leading-[11px] text-white">图{i + 1}</span>
                     </button>
-                    <button type="button" onClick={() => reuseItem(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
-                      复用设置
+                  ))}
+                </div>
+              )}
+              {compareOn && (
+                <div className="apple-seg flex">
+                  {COMPARE_MODES.map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      data-active={compareMode === m.key}
+                      onClick={() => setCompareMode(m.key)}
+                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
+                    >
+                      {m.label}
                     </button>
-                    <button type="button" onClick={() => copyPrompt(currentItem)} className="rounded-full bg-black/[0.05] px-3 py-1.5 text-[12px] font-medium text-[#1d1d1f] transition hover:bg-black/[0.09] active:scale-[0.97]">
-                      复制描述
-                    </button>
-                    <button type="button" onClick={() => downloadItem(currentItem)} className="rounded-full bg-[#0071e3] px-3.5 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#0077ed] active:scale-[0.97]">
-                      下载
-                    </button>
-                  </>
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
+              {currentItem && (
+                <button
+                  type="button"
+                  onClick={() => downloadItem(currentItem)}
+                  className="rounded-full bg-[#0071e3] px-4 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#0077ed] active:scale-[0.97]"
+                >
+                  下载
+                </button>
+              )}
             </div>
           )}
-
 
         </section>
         <section
@@ -1620,14 +1619,30 @@ export default function StudioPage() {
         />
         )}
 
+        {/* Folded history: one small clock button in the corner (用户: 改成历史的图标). */}
+        <button
+          type="button"
+          onClick={() => toggleHistory(false)}
+          title="历史记录"
+          aria-label="打开历史记录"
+          className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105 active:scale-95"
+          style={{ opacity: histHidden ? 1 : 0, transform: histHidden ? "none" : "scale(0.6)", pointerEvents: histHidden ? undefined : "none", transition: "opacity 260ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 1 0 3-6.7" />
+            <path d="M3 4v5h5" />
+            <path d="M12 7.5V12l3 2" />
+          </svg>
+        </button>
         <aside
-          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "min-h-[52px]" : "min-h-[40vh]"} ${histHidden && isDesktop ? "lg:ml-2" : ""}`}
+          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
           style={
             isDesktop
               ? {
-                  width: histHidden ? 48 : rightPx,
+                  width: histHidden ? 0 : rightPx,
+                  opacity: histHidden ? 0 : 1,
                   // Glides open / closed; follows the pointer instantly while being dragged.
-                  transition: draggingRef.current ? "none" : "width 420ms cubic-bezier(0.22, 1, 0.36, 1), margin 420ms cubic-bezier(0.22, 1, 0.36, 1)",
+                  transition: draggingRef.current ? "none" : "width 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms ease",
                 }
               : undefined
           }
@@ -1650,6 +1665,15 @@ export default function StudioPage() {
             </span>
             <button
               type="button"
+              onClick={() => setHistToolsOpen((v) => !v)}
+              title="搜索 / 筛选"
+              aria-pressed={histToolsOpen}
+              className={`shrink-0 rounded-full px-2 py-0.5 text-[12px] transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.05]"}`}
+            >
+              筛选
+            </button>
+            <button
+              type="button"
               onClick={() => toggleHistory(true)}
               title="收起历史"
               className="shrink-0 rounded-full px-2 py-0.5 text-[12px] text-[#0071e3] transition hover:bg-[#0071e3]/10"
@@ -1657,7 +1681,8 @@ export default function StudioPage() {
               收起 ›
             </button>
           </div>
-          <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">
+          {histToolsOpen && (
+          <div className="animate-chip-in shrink-0 border-b border-black/[0.06] px-3 py-2.5">
             <input
               value={histQuery}
               onChange={(e) => {
@@ -1718,6 +1743,7 @@ export default function StudioPage() {
               </select>
             </div>
           </div>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {visibleHistory.length === 0 ? (
@@ -1740,6 +1766,8 @@ export default function StudioPage() {
                         if (g.url) {
                           setError(null);
                           setCompareOn(false);
+                          // Click once to view it, again to fold its details away.
+                          setDetailOpen(g.id === currentId ? (v) => !v : true);
                           showItem(g);
                           if (window.innerWidth < 1024) {
                             scrollToResult();
@@ -1759,7 +1787,7 @@ export default function StudioPage() {
                           : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
                       }`}
                     >
-                      <span className="relative block aspect-square w-full bg-[#f2f2f4]">
+                      <span className="relative block aspect-square w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02]">
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={g.url} alt="" loading="lazy" className="h-full w-full object-cover" />
@@ -1777,26 +1805,9 @@ export default function StudioPage() {
                             </span>
                           </span>
                         )}
-                        <span className="absolute left-1 top-1 rounded-full bg-black/50 px-1.5 py-px text-[9px] font-medium text-white">
-                          {g.mode === "i2i" ? "图生图" : "文生图"}
-                        </span>
-                        {g.cost && g.url && (
-                          <span className="absolute right-1 top-1 rounded-full bg-black/50 px-1.5 py-px text-[9px] tabular-nums text-white">
-                            ¥{g.cost}
-                          </span>
-                        )}
-                      </span>
-                      <span className="block px-1.5 py-1">
-                        <span className="block truncate text-[10px] font-medium text-[#1d1d1f]">
-                          {findModel(g.model)?.name ?? g.label ?? "棕色尘埃"}
-                        </span>
-                        <span className="block text-[10px] tabular-nums text-[#86868b]">
-                          {formatTime(g.createdAt)}
-                          {formatDuration(g.durationMs) && <> · {formatDuration(g.durationMs)}</>}
-                        </span>
                       </span>
                     </button>
-                    {i === rowEnd && currentItem && currentItem.url && (
+                    {detailOpen && i === rowEnd && currentItem && currentItem.url && (
                       <div
                         key={`detail-${currentItem.id}`}
                         className="history-detail relative col-span-2 rounded-2xl bg-[#f5f5f7] px-3 py-2.5"
@@ -1905,18 +1916,6 @@ export default function StudioPage() {
             </div>
           )}
           </div>
-          <button
-            type="button"
-            onClick={() => toggleHistory(false)}
-            title="展开历史"
-            aria-hidden={!histHidden}
-            tabIndex={histHidden ? 0 : -1}
-            className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] font-semibold text-[#1d1d1f] transition-colors hover:bg-black/[0.03] lg:flex-col"
-            style={{ opacity: histHidden ? 1 : 0, pointerEvents: histHidden ? undefined : "none", transition: "opacity 300ms ease 120ms" }}
-          >
-            <span className="text-[#86868b]">‹</span>
-            <span className="lg:[writing-mode:vertical-rl]">历史</span>
-          </button>
         </aside>
       </main>
 
