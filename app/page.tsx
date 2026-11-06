@@ -1,9 +1,9 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { LoginView } from "./login-view";
-import { AdminPanel } from "./admin-panel";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import {
@@ -326,7 +326,6 @@ export default function StudioPage() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [userMenu, setUserMenu] = useState(false);
   const [isOwnerUser, setIsOwnerUser] = useState(false);
-  const [adminOpen, setAdminOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   // The name menu closes when you click anywhere else.
   useEffect(() => {
@@ -441,6 +440,13 @@ export default function StudioPage() {
   const [histMode, setHistMode] = useState<"all" | Mode>("all");
   // "all" | "ok" | "bad" | "model:<id>"
   const [histFilter, setHistFilter] = useState<string>("all");
+  /** Height / width of each history picture once loaded, for the two-column layout. */
+  const [aspects, setAspects] = useState<Record<string, number>>({});
+  const noteAspect = (id: string, el: HTMLImageElement) => {
+    if (!el.naturalWidth) return;
+    const a = el.naturalHeight / el.naturalWidth;
+    setAspects((m) => (Math.abs((m[id] ?? 0) - a) < 0.01 ? m : { ...m, [id]: a }));
+  };
   const [histQuery, setHistQuery] = useState("");
   const [histPage, setHistPage] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -695,6 +701,9 @@ export default function StudioPage() {
    * Adds pictures up to what the model takes (2026-11-05 用户: 第二张传不上去要有提示). A one-picture model
    * swaps the picture; a full multi-picture model says how many it takes.
    */
+  /** Which picture 换图 replaces (null = add new ones), and the one shown large. */
+  const replaceSlot = useRef<number | null>(null);
+  const [refView, setRefView] = useState<string | null>(null);
   const refLimitRef = useRef(1);
   const addRefs = useCallback(
     (files: File[]) => {
@@ -787,9 +796,23 @@ export default function StudioPage() {
         localStorage.setItem(MODEL_KEY, m.id);
       }
       setPrompt(g.prompt);
-      flash("已填入这条记录的模型与提示词");
+      // 2026-11-05 (用户: 点了图片也要返回回来): the reference picture comes back too; 文生图 records clear it.
+      if (g.mode === "i2i" && g.refUrl) {
+        fetch(g.refUrl)
+          .then((r) => (r.ok ? r.blob() : Promise.reject()))
+          .then((b) => {
+            onPickFile(new File([b], "reference." + (b.type.split("/")[1] || "png"), { type: b.type || "image/png" }));
+            setExtraRefs([]);
+            flash("已放回参考图和描述");
+          })
+          .catch(() => flash("描述已放回，参考图找不到了"));
+      } else {
+        onPickFile(null);
+        setExtraRefs([]);
+        flash("已放回模型和描述");
+      }
     },
-    [flash]
+    [flash, onPickFile]
   );
 
   /** Save an image with a readable name (works for our copies and remote links). */
@@ -1280,7 +1303,6 @@ export default function StudioPage() {
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
-      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
       {notice && (
         <div key={notice} className="animate-pop-in pointer-events-none fixed left-1/2 top-5 z-[95] -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-4 py-2 text-[13px] text-white shadow-[0_10px_30px_rgba(0,0,0,0.2)] backdrop-blur">
           {notice}
@@ -1305,8 +1327,8 @@ export default function StudioPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setAdminOpen(true);
-                    setUserMenu(false);
+                    // 2026-11-05 (用户: 管理要是正常的页面): its own page, not a pop-up.
+                    window.location.href = "/admin";
                   }}
                   className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]"
                 >
@@ -1356,7 +1378,7 @@ export default function StudioPage() {
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={resultKey}
-                src={resultUrl}
+                src={thumbOf(resultUrl, 1600)}
                 alt="生成结果"
                 onLoad={(e) => {
                   const el = e.currentTarget;
@@ -1528,7 +1550,7 @@ export default function StudioPage() {
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
-                      <span key={r.url} className="relative h-12 w-12 overflow-hidden rounded-lg border border-black/[0.08]">
+                      <span key={r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-black/[0.08] outline-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={r.url}
@@ -1543,18 +1565,42 @@ export default function StudioPage() {
                           }
                           className="h-full w-full object-cover"
                         />
+                        {/* 2026-11-05 (用户: 换图合并到图片里，切换、查看按钮): hover a picture to swap or enlarge it. */}
+                        <span className="absolute inset-0 flex items-center justify-center gap-0.5 bg-black/45 opacity-0 transition-opacity group-hover/ref:opacity-100 group-focus-within/ref:opacity-100">
+                          <button
+                            type="button"
+                            title="查看大图"
+                            aria-label={`查看图${i + 1}`}
+                            onClick={() => setRefView(r.url)}
+                            className="flex h-5 w-5 items-center justify-center rounded-full text-white hover:bg-white/25"
+                          >
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+                          </button>
+                          <button
+                            type="button"
+                            title="换一张"
+                            aria-label={`换掉图${i + 1}`}
+                            onClick={() => {
+                              replaceSlot.current = i;
+                              fileRef.current?.click();
+                            }}
+                            className="flex h-5 w-5 items-center justify-center rounded-full text-white hover:bg-white/25"
+                          >
+                            <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 4v4h-4M20 15a8 8 0 0 1-14 3l-2-2M4 20v-4h4" /></svg>
+                          </button>
+                        </span>
                         <button
                           type="button"
                           onClick={() => insertMention(i + 1)}
                           title="在描述里 @ 这张图"
-                          className="absolute inset-x-0 bottom-0 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
+                          className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
                         >
                           图{i + 1}
                         </button>
                         <button
                           type="button"
                           onClick={() => (i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
-                          className="absolute right-0.5 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
+                          className="absolute right-0.5 top-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
                           aria-label={`删除图${i + 1}`}
                         >
                           ×
@@ -1567,21 +1613,22 @@ export default function StudioPage() {
                       const full = !!preview && used >= limit;
                       return (
                         <>
-                          {!(full && limit > 1) && (
+                          {!full && (
                             <button
                               type="button"
-                              onClick={() => fileRef.current?.click()}
-                              title={limit === 1 && preview ? "这个模型只用 1 张参考图，点了会替换" : "添加参考图（也可拖入或粘贴）"}
-                              className="flex h-12 min-w-12 items-center justify-center gap-1 rounded-lg border border-dashed border-black/[0.15] px-2 text-[12px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
+                              onClick={() => {
+                                replaceSlot.current = null;
+                                fileRef.current?.click();
+                              }}
+                              title="添加参考图（也可拖入或粘贴）"
+                              className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-black/[0.15] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
                             >
-                              {limit === 1 && preview ? "换图" : <span className="text-[18px] leading-none">+</span>}
+                              <span className="text-[18px] leading-none">+</span>
                             </button>
                           )}
-                          {preview && (
-                            <span className="self-end pb-0.5 text-[11px] text-[#aeaeb2]">
-                              {limit === 1 ? "这个模型只用 1 张" : `${used}/${limit}${full ? "，已满" : ""}`}
-                              {extraRefs.length > limit - 1 && limit > 1 ? `（多的 ${extraRefs.length - (limit - 1)} 张这个模型用不上）` : ""}
-                              {limit === 1 && extraRefs.length > 0 ? `，其余 ${extraRefs.length} 张不会用` : ""}
+                          {preview && limit > 1 && (
+                            <span className="self-end pb-0.5 text-[11px] tabular-nums text-[#aeaeb2]">
+                              {used}/{limit}
                             </span>
                           )}
                         </>
@@ -1807,6 +1854,14 @@ export default function StudioPage() {
                 {error}
               </div>
             )}
+              {refView &&
+                createPortal(
+                  <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm" onClick={() => setRefView(null)}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={refView} alt="参考图" className="animate-pop-in max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
+                  </div>,
+                  document.body
+                )}
               <input
                 ref={fileRef}
                 type="file"
@@ -1814,8 +1869,18 @@ export default function StudioPage() {
                 multiple
                 className="hidden"
                 onChange={(e) => {
-                  addRefs(Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/")));
+                  const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith("image/"));
+                  const slot = replaceSlot.current;
+                  replaceSlot.current = null;
                   e.target.value = "";
+                  if (slot != null && files[0]) {
+                    // 换图 on a picture swaps just that one.
+                    if (slot === 0) onPickFile(files[0]);
+                    else setExtraRefs((list) => list.map((x, j) => (j === slot - 1 ? { file: files[0], url: URL.createObjectURL(files[0]) } : x)));
+                    flash(`已换掉图${slot + 1}`);
+                    return;
+                  }
+                  addRefs(files);
                 }}
               />
               {mentionOpen && (
@@ -1990,16 +2055,33 @@ export default function StudioPage() {
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid grid grid-cols-2 items-start gap-2">
-                {pageItems.map((g, i) => {
-                  const on = g.id === currentId;
-                  const sel = pageItems.findIndex((x) => x.id === currentId);
-                  // Details open under the row that holds the selected card (2 columns).
-                  const rowEnd = sel < 0 ? -1 : Math.min(sel % 2 === 0 ? sel + 1 : sel, pageItems.length - 1);
-                  return (
-                    <Fragment key={g.id}>
+              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid flex flex-col gap-2">
+                {(() => {
+                  // 2026-11-05 (用户: 历史图片之间缺一块): two columns stacked by picture height, no gaps. Details open
+                  // full width right after the part that holds the selected picture.
+                  // Lay everything out once; the details open under the band of pictures that starts before the
+                  // selected one ends, so both columns behave the same whichever picture was clicked.
+                  const heightOf = (g: GalleryItem) => (g.url ? aspects[g.id] ?? 1 : 1) + 0.05;
+                  const place = (list: GalleryItem[]) => {
+                    const h = [0, 0];
+                    return list.map((g) => {
+                      const c = h[0] <= h[1] ? 0 : 1;
+                      const top = h[c];
+                      h[c] += heightOf(g);
+                      return { g, c, top, bottom: h[c] };
+                    });
+                  };
+                  const laid = place(pageItems);
+                  const selCell = detailOpen && currentItem?.url ? laid.find((x) => x.g.id === currentId) : undefined;
+                  const sel = selCell ? 0 : -1;
+                  const selCol = selCell?.c ?? 0;
+                  const parts = selCell
+                    ? [laid.filter((x) => x.top < selCell.bottom - 0.001), place(laid.filter((x) => x.top >= selCell.bottom - 0.001).map((x) => x.g))]
+                    : [laid];
+                  const card = (g: GalleryItem) => {
+                    const on = g.id === currentId;
+                    return (
                     <button
-                      key={g.id}
                       type="button"
                       onClick={() => {
                         if (g.url) {
@@ -2047,7 +2129,7 @@ export default function StudioPage() {
                       <span className={`relative block w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02] ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" />
+                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" onLoad={(e) => noteAspect(g.id, e.currentTarget)} />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
                             <span
@@ -2064,15 +2146,30 @@ export default function StudioPage() {
                         )}
                       </span>
                     </button>
-                    {detailOpen && i === rowEnd && currentItem && currentItem.url && (
+                    );
+                  };
+                  const columns = (cells: { g: GalleryItem; c: number }[]) => (
+                    <div className="flex items-start gap-2">
+                      {[0, 1].map((ci) => (
+                        <div key={ci} className="flex min-w-0 flex-1 flex-col gap-2">
+                          {cells.filter((x) => x.c === ci).map((x) => <Fragment key={x.g.id}>{card(x.g)}</Fragment>)}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                  const first = columns(parts[0]);
+                  return (
+                    <>
+                      {first}
+                      {sel >= 0 && currentItem && (
                       <div
                         key={`detail-${currentItem.id}`}
-                        className="history-detail relative col-span-2 rounded-2xl bg-[#f5f5f7] px-3 py-2.5"
+                        className="history-detail relative rounded-2xl bg-[#f5f5f7] px-3 py-2.5"
                       >
                         <span
                           aria-hidden
                           className="absolute -top-1.5 h-3 w-3 rotate-45 rounded-[2px] bg-[#f5f5f7]"
-                          style={{ left: sel % 2 === 0 ? "calc(25% - 6px)" : "calc(75% - 6px)" }}
+                          style={{ left: selCol === 0 ? "calc(25% - 6px)" : "calc(75% - 6px)" }}
                         />
                         <div className="flex items-center gap-1.5 text-[11px] text-[#86868b]">
                           <span className="truncate font-semibold text-[#1d1d1f]">
@@ -2106,19 +2203,14 @@ export default function StudioPage() {
                                 {promptOpen ? "收起" : "展开全文"}
                               </span>
                             )}
-                            {promptOpen && currentItem.seed != null && (
-                              <span className="mt-1 block text-[11px] tabular-nums text-[#86868b]">
-                                种子 {currentItem.seed}
-                              </span>
-                            )}
                           </button>
                         )}
                         <div className="mt-2 flex flex-wrap items-center gap-1">
                           {(
                             [
                               // 下载 / 对比 live under the big picture; here only what reuses this record.
-                              [currentItem.fav ? "★ 已收藏" : "☆ 收藏", () => toggleFav(currentItem)],
-                              ["用这组设置", () => reuseItem(currentItem)],
+                              // 收藏 lives on the picture's star (2026-11-05 用户: 图片已经有收藏按钮了).
+                              ["重新编辑", () => reuseItem(currentItem)],
                               ["当参考图", () => useAsReference(currentItem)],
                               ["复制描述", () => copyPrompt(currentItem)],
                             ] as const
@@ -2141,10 +2233,11 @@ export default function StudioPage() {
                           )}
                         </div>
                       </div>
-                    )}
-                    </Fragment>
+                      )}
+                      {parts[1]?.length ? columns(parts[1]) : null}
+                    </>
                   );
-                })}
+                })()}
               </div>
             )}
           </div>
