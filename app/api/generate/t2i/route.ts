@@ -7,6 +7,7 @@ import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
+import { overLimit } from "@/lib/quota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +45,9 @@ export async function POST(req: NextRequest) {
         : Number(body.seed);
 
     const count = Math.min(4, Math.max(1, Math.round(Number(body.count || 1)) || 1));
+    // 2026-11-06 (用户: 加上限): each friend has a daily picture limit.
+    const limitMsg = await overLimit(user, count);
+    if (limitMsg) return NextResponse.json({ ok: false, error: limitMsg }, { status: 429 });
     const width = body.width ? Number(body.width) : undefined;
     const height = body.height ? Number(body.height) : undefined;
 

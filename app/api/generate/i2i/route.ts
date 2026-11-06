@@ -11,6 +11,7 @@ import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
 import { workflowFor } from "@/lib/model-workflows";
 import { upsertHistory } from "@/lib/history";
+import { overLimit } from "@/lib/quota";
 import { refUrlFor, saveReference } from "@/lib/refs";
 
 export const runtime = "nodejs";
@@ -58,6 +59,9 @@ export async function POST(req: NextRequest) {
     }
 
     const count = Math.min(4, Math.max(1, Math.round(Number(form.get("count") || 1)) || 1));
+    // 2026-11-06 (用户: 加上限): each friend has a daily picture limit.
+    const limitMsg = await overLimit(user, count);
+    if (limitMsg) return NextResponse.json({ ok: false, error: limitMsg }, { status: 429 });
     // Upload the reference once; every image of the batch reuses it.
     const imageFileName = gptModel || hosted ? "" : await uploadInputForWorkflow(file, file.name || "input.png");
     const gptImage = gptModel || hosted

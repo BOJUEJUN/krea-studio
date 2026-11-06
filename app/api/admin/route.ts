@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { inviteCode, isOwner, listUsers, sessionUser, setDisabled, setInviteCode, unauthorized } from "@/lib/auth";
+import { dailyLimit, inviteCode, isOwner, listUsers, sessionUser, setDailyLimit, setDisabled, setInviteCode, unauthorized } from "@/lib/auth";
 import { readHistory } from "@/lib/history";
 import { directLinks } from "@/lib/thumbs";
 import { ownerName } from "@/lib/auth";
@@ -18,7 +18,7 @@ async function ownerOnly(req: Request) {
 export async function GET(req: NextRequest) {
   const deny = await ownerOnly(req);
   if (deny) return deny;
-  const [users, items, owner, code] = await Promise.all([listUsers(), readHistory(), ownerName(), inviteCode()]);
+  const [users, items, owner, code, limitPerDay] = await Promise.all([listUsers(), readHistory(), ownerName(), inviteCode(), dailyLimit()]);
   const want = new URL(req.url).searchParams.get("user");
   if (want) {
     // One account's records, newest first (2026-11-05 用户: 后台要看到用户的生图记录).
@@ -52,10 +52,12 @@ export async function GET(req: NextRequest) {
     if (it.createdAt >= Date.now() - 7 * 86_400_000) summary.week += c;
     if (!it.url && (it.status === "failed" || it.status === "expired")) summary.failed++;
   }
-  const stats = new Map<string, { images: number; cost: number; last: number; failed: number; models: Record<string, number> }>();
+  const stats = new Map<string, { images: number; cost: number; last: number; failed: number; today: number; models: Record<string, number> }>();
   for (const it of items) {
     const who = it.owner ?? owner ?? "";
-    const s = stats.get(who) ?? { images: 0, cost: 0, last: 0, failed: 0, models: {} as Record<string, number> };
+    const s = stats.get(who) ?? { images: 0, cost: 0, last: 0, failed: 0, today: 0, models: {} as Record<string, number> };
+    // Same rule as the daily limit (lib/quota): today's pictures that did not fail.
+    if (it.createdAt >= dayStart && it.status !== "failed" && it.status !== "expired") s.today++;
     if (it.url) s.images++;
     else if (it.status === "failed" || it.status === "expired") s.failed++;
     const m = it.model ?? it.label ?? "其他";
@@ -123,6 +125,7 @@ export async function GET(req: NextRequest) {
     {
       ok: true,
       invite: code,
+      dailyLimit: limitPerDay,
       summary: {
         ...summary,
         month,
@@ -137,7 +140,7 @@ export async function GET(req: NextRequest) {
         .sort((a, b) => b.cost - a.cost || b.images - a.images),
       records,
       users: users
-        .map((u) => ({ ...u, ...(stats.get(u.name) ?? { images: 0, cost: 0, last: 0, failed: 0, models: {} }) }))
+        .map((u) => ({ ...u, ...(stats.get(u.name) ?? { images: 0, cost: 0, last: 0, failed: 0, today: 0, models: {} }) }))
         .sort((a, b) => b.last - a.last),
     },
     { headers: { "Cache-Control": "no-store" } }
@@ -155,6 +158,12 @@ export async function POST(req: NextRequest) {
       if (!/^[0-9A-Za-z_-]{4,32}$/.test(code)) throw new Error("邀请码 4–32 位，只能用字母、数字、_ -");
       await setInviteCode(code);
       return NextResponse.json({ ok: true, invite: code });
+    }
+    if (body.action === "setLimit") {
+      const n = Math.round(Number(body.limit));
+      if (!Number.isFinite(n) || n < 0 || n > 10000) throw new Error("上限填 0–10000 的整数，0 表示不限");
+      await setDailyLimit(n);
+      return NextResponse.json({ ok: true, dailyLimit: n });
     }
     if (body.action === "invite") {
       const abc = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";

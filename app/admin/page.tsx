@@ -6,7 +6,7 @@ import { MODELS, findModel } from "@/lib/models";
 /**
  * enzoban.com/admin — the owner's back office as a real page (2026-11-05 用户: 管理要是一个正常的页面，多功能的).
  * 概览: spend, pictures, success rate, 30-day chart, models. 用户: every account, its numbers, stop / restore.
- * 生图记录: every picture from everyone, filtered by account, model, state, time and words. 设置: invite code.
+ * 生图记录: every picture from everyone, filtered by account, model, state, time and words. 设置: invite code and the daily picture limit.
  */
 
 type Row = {
@@ -15,6 +15,7 @@ type Row = {
   disabled: boolean;
   images: number;
   failed: number;
+  today: number;
   cost: number;
   last: number;
   createdAt: number;
@@ -52,7 +53,7 @@ type Rec = {
   deleted?: boolean;
   createdAt: number;
 };
-type Data = { invite: string; summary: Summary; users: Row[]; daily: Day[]; models: ModelStat[]; records: Rec[] };
+type Data = { invite: string; dailyLimit: number; summary: Summary; users: Row[]; daily: Day[]; models: ModelStat[]; records: Rec[] };
 type Tab = "overview" | "users" | "records" | "settings";
 
 const TABS: { key: Tab; label: string; icon: string }[] = [
@@ -194,6 +195,7 @@ export default function AdminPage() {
   const [metric, setMetric] = useState<"cost" | "images">("cost");
   const [userQuery, setUserQuery] = useState("");
   const [inviteDraft, setInviteDraft] = useState("");
+  const [limitDraft, setLimitDraft] = useState("");
 
   const flash = (t: string) => {
     setToast(t);
@@ -423,6 +425,7 @@ export default function AdminPage() {
                     <tr className="text-left text-[11px] text-[#86868b]">
                       <th className="px-4 py-2 font-normal">账号</th>
                       <th className="px-2 py-2 font-normal">加入</th>
+                      <th className="px-2 py-2 text-right font-normal">今天</th>
                       <th className="px-2 py-2 text-right font-normal">图片</th>
                       <th className="px-2 py-2 text-right font-normal">失败</th>
                       <th className="px-2 py-2 text-right font-normal">花费</th>
@@ -445,6 +448,10 @@ export default function AdminPage() {
                             </div>
                           </td>
                           <td className="px-2 py-2.5 text-[12px] text-[#86868b]">{date(u.createdAt)}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums">
+                            {u.today}
+                            {!u.owner && data.dailyLimit > 0 && <span className={u.today >= data.dailyLimit ? "text-[#d70015]" : "text-[#aeaeb2]"}>/{data.dailyLimit}</span>}
+                          </td>
                           <td className="px-2 py-2.5 text-right tabular-nums">{u.images}</td>
                           <td className={`px-2 py-2.5 text-right tabular-nums ${u.failed ? "text-[#d70015]" : "text-[#aeaeb2]"}`}>{u.failed}</td>
                           <td className="px-2 py-2.5 text-right tabular-nums">{yuan(u.cost)}</td>
@@ -593,6 +600,23 @@ export default function AdminPage() {
                   </button>
                 </div>
                 <p className="mt-2 text-[11px] text-[#aeaeb2]">不分大小写。</p>
+              </Card>
+              <Card title="每人每天上限">
+                <p className="mb-3 text-[12px] text-[#86868b]">朋友每天最多能出几张图（按北京时间算，第二天自动清零）。失败的不算，删掉的照算。你自己不受限制。</p>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-xl bg-[#f2f2f4] px-3 py-2 text-[18px] tabular-nums">{data.dailyLimit ? `${data.dailyLimit} 张` : "不限"}</span>
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <input value={limitDraft} onChange={(e) => setLimitDraft(e.target.value.replace(/\D/g, ""))} inputMode="numeric" placeholder="填数字，0 表示不限" className={`${select} min-w-0 flex-1`} />
+                  <button
+                    type="button"
+                    disabled={!limitDraft}
+                    onClick={() => act({ action: "setLimit", limit: limitDraft }, "上限已更新").then(() => setLimitDraft(""))}
+                    className="rounded-full bg-[#0071e3] px-4 py-1.5 text-[12px] text-white disabled:opacity-40"
+                  >
+                    保存
+                  </button>
+                </div>
               </Card>
               <Card title="说明">
                 <ul className="space-y-2 text-[13px] text-[#3a3a3c]">

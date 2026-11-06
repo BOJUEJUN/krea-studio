@@ -99,18 +99,43 @@ export async function enterByName(name: string, invite?: string): Promise<UserRe
  * 2026-11-05 (用户: 弄成假登录): looks like a normal sign-in. A new name is created with the password typed the
  * first time (a name made earlier without a password takes it now); after that the same password is needed.
  */
-/** Current invite code: the one set from the admin page, else env INVITE_CODE. */
-export async function inviteCode(): Promise<string> {
+/** Site settings kept in storage (settings.json): invite code and the daily picture limit. */
+type Settings = { inviteCode?: string; dailyLimit?: number };
+
+async function readSettings(): Promise<Settings> {
   const bytes = await storeGet("settings.json").catch(() => null);
   try {
-    const code = bytes ? JSON.parse(bytes.toString("utf8"))?.inviteCode : null;
-    if (typeof code === "string" && code) return code;
-  } catch {}
-  return process.env.INVITE_CODE || "";
+    const data = bytes ? JSON.parse(bytes.toString("utf8")) : null;
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+async function writeSettings(patch: Settings): Promise<void> {
+  const next = { ...(await readSettings()), ...patch };
+  await storePut("settings.json", JSON.stringify(next), "application/json");
+}
+
+/** Current invite code: the one set from the admin page, else env INVITE_CODE. */
+export async function inviteCode(): Promise<string> {
+  const code = (await readSettings()).inviteCode;
+  return typeof code === "string" && code ? code : process.env.INVITE_CODE || "";
 }
 
 export async function setInviteCode(code: string): Promise<void> {
-  await storePut("settings.json", JSON.stringify({ inviteCode: code }), "application/json");
+  await writeSettings({ inviteCode: code });
+}
+
+/** 2026-11-06 (用户: 加上限): pictures each friend may make per day (Beijing day); 0 = no limit. The owner has none. */
+export const DEFAULT_DAILY_LIMIT = 30;
+export async function dailyLimit(): Promise<number> {
+  const n = (await readSettings()).dailyLimit;
+  return typeof n === "number" && n >= 0 ? n : DEFAULT_DAILY_LIMIT;
+}
+
+export async function setDailyLimit(n: number): Promise<void> {
+  await writeSettings({ dailyLimit: n });
 }
 
 export class NeedInvite extends Error {}
