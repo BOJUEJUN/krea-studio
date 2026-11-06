@@ -38,11 +38,11 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
       />
       <form onSubmit={submit} className="animate-pop-in relative w-full max-w-[340px] rounded-[24px] bg-white p-6 shadow-[0_24px_70px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.05]">
         <div className="mb-1 text-[22px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</div>
-        <div className="mb-5 text-[13px] text-[#86868b]">登录你的账号</div>
+        <div className="mb-5 text-[13px] text-[#86868b]">用手机号或账号登录</div>
         <input
           autoFocus
           className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] text-[#1d1d1f] outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
-          placeholder="账号"
+          placeholder="手机号 / 账号"
           autoComplete="username"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -55,7 +55,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <div className="mt-2 text-[11px] text-[#aeaeb2]">新账号第一次登录会自动创建</div>
+        <div className="mt-2 text-[11px] text-[#aeaeb2]">第一次登录会自动注册</div>
         {error && <div className="mt-3 rounded-xl bg-[#fff1f0] px-3 py-2 text-[12px] text-[#d70015]">{error}</div>}
         <button type="submit" disabled={busy || !name.trim() || !password} className="apple-btn-primary mt-4 flex w-full items-center justify-center py-3 text-[15px]">
           {busy ? "请稍候…" : "登录"}

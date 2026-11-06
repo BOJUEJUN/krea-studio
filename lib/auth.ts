@@ -70,8 +70,11 @@ export async function enterByName(name: string): Promise<UserRecord> {
  * 2026-11-05 (用户: 弄成假登录): looks like a normal sign-in. A new name is created with the password typed the
  * first time (a name made earlier without a password takes it now); after that the same password is needed.
  */
-export async function signIn(name: string, password: string): Promise<UserRecord> {
-  if (!validName(name)) throw new Error("账号 2–20 个字，只能用字母、数字、中文、_ . -");
+export async function signIn(rawName: string, password: string): Promise<UserRecord> {
+  // A phone number may be typed with spaces, dashes or +86.
+  const digits = rawName.replace(/[\s-]/g, "").replace(/^\+?86(?=1\d{10}$)/, "");
+  const name = /^1\d{10}$/.test(digits) ? digits : rawName.trim();
+  if (!validName(name)) throw new Error("请填手机号，或 2–20 个字的账号（字母、数字、中文、_ . -）");
   if (password.length < 4) throw new Error("密码至少 4 位");
   const file = await readUsers();
   let user = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());

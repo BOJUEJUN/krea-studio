@@ -1194,11 +1194,13 @@ export default function StudioPage() {
             title={user}
             className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
           >
-            {user.slice(0, 1).toUpperCase()}
+            {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
           </button>
           {userMenu && (
             <div className="animate-pop-in absolute left-0 top-11 min-w-[140px] rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-              <div className="px-2.5 py-1.5 text-[12px] text-[#86868b]">{user}</div>
+              <div className="px-2.5 py-1.5 text-[12px] text-[#86868b]">
+                {/^1\d{10}$/.test(user) ? `${user.slice(0, 3)}****${user.slice(-4)}` : user}
+              </div>
               <button
                 type="button"
                 onClick={async () => {
