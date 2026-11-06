@@ -194,7 +194,8 @@ const PANEL_LEFT_KEY = "krea-studio.panel-left";
 const PANEL_RIGHT_KEY = "krea-studio.panel-right-2";
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
-const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
+// 2026-11-06: smaller uploads keep the site's Vercel traffic down; 2048 px JPEG stays sharp for every model.
+const MAX_UPLOAD_BYTES = 1.5 * 1024 * 1024;
 
 function clampRes(n: number) {
   if (!Number.isFinite(n)) return MIN_RES;

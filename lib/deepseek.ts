@@ -32,10 +32,20 @@ function stripStyle(prompt: string): string {
 
 /** Reads "写实：是/否" and "提示词：…"; falls back to the last paragraph for replies in another shape. */
 export function parseReply(text: string): { prompt: string; realistic: boolean } {
-  const real = text.match(/写实\s*[:：]\s*\**\s*(是|否)/);
-  const tagged = text.match(/提示词\s*[:：]\s*([\s\S]+)$/);
-  const raw = tagged ? tagged[1].replace(/\*\*/g, "").replace(/^[`"“'「\s]+|[`"”'」\s]+$/g, "").trim() : lastParagraph(text);
-  return { prompt: stripStyle(raw), realistic: real?.[1] === "是" };
+  // 2026-11-06 (用户: 重新编辑后提示词有多余信息): the reply may say "提示词：" more than once (the model
+  // sometimes echoes the format first), so only the last one counts, and no "写实：" line may leak in.
+  const reals = [...text.matchAll(/写实\s*[:：]\s*\**\s*(是|否)/g)];
+  const tags = [...text.matchAll(/提示词\s*[:：]\s*/g)];
+  const last = tags[tags.length - 1];
+  let raw = last ? text.slice((last.index ?? 0) + last[0].length) : lastParagraph(text);
+  raw = raw
+    .split(/\n/)
+    .filter((l) => !/^\s*\**\s*写实\s*[:：]/.test(l))
+    .join(" ")
+    .replace(/\*\*/g, "")
+    .replace(/^[`"“'「\s]+|[`"”'」\s]+$/g, "")
+    .trim();
+  return { prompt: stripStyle(raw), realistic: reals[reals.length - 1]?.[1] === "是" };
 }
 
 export function hasDeepSeek(): boolean {
