@@ -1821,14 +1821,19 @@ export default function StudioPage() {
                             <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 9a8 8 0 0 1 14-3l2 2M20 4v4h-4M20 15a8 8 0 0 1-14 3l-2-2M4 20v-4h4" /></svg>
                           </button>
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => insertMention(i + 1)}
-                          data-tip="在描述里 @ 这张图" data-tip-start=""
-                          className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
-                        >
-                          图{i + 1}
-                        </button>
+                        {(modelParams.maxRefs ?? 1) > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => insertMention(i + 1)}
+                            data-tip="在描述里 @ 这张图" data-tip-start=""
+                            className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
+                          >
+                            图{i + 1}
+                          </button>
+                        ) : (
+                          // One-picture models don't take @, so the label is only a label.
+                          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white">参考图</span>
+                        )}
                         <button
                           type="button"
                           onClick={() => (i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
@@ -1905,8 +1910,8 @@ export default function StudioPage() {
                       mode === "t2i"
                         ? "描述你想要的画面，或点 + 放参考图改图…"
                         : reverse
-                          ? "可不填，会根据参考图优化提示词；输入 @ 指定哪张图"
-                          : "想怎么改？输入 @ 指定哪张图"
+                          ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
+                          : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
                     }
                     className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25"
                     style={{
