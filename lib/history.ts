@@ -189,17 +189,17 @@ async function readHistoryRaw(): Promise<HistoryItem[]> {
   ]);
   if (!ok) return sortAndCap(index);
   // 2026-11-06: two writes at once could leave the index with an older copy of a picture. Each picture's own
-  // record is the truth: re-read records missing from the index and those changed in the last 2 hours (the
-  // only ones a racing write can have overwritten).
+  // record is the truth: re-read records missing from the index and those changed in the last minutes (the
+  // only ones a racing write can have overwritten). 15 minutes is plenty and keeps reads fast.
   const known = new Set(index.map((x) => x.id));
-  const recent = Date.now() - 2 * 3_600_000;
+  const recent = Date.now() - 15 * 60_000;
   const stale = listed
     .filter((x) => x.key.startsWith(ITEM_PREFIX))
     .filter((x) => !known.has(x.key.slice(ITEM_PREFIX.length)) || x.mtime > recent)
     .sort((a, b) => b.mtime - a.mtime)
     .map((x) => x.key.slice(ITEM_PREFIX.length));
   if (!stale.length) return sortAndCap(index);
-  const fresh = (await Promise.all(stale.slice(0, 60).map((id) => blobGet<HistoryItem>(ITEM_PREFIX + id).catch(() => null)))).filter(
+  const fresh = (await Promise.all(stale.slice(0, 24).map((id) => blobGet<HistoryItem>(ITEM_PREFIX + id).catch(() => null)))).filter(
     (x): x is HistoryItem => !!x
   );
   const byId = new Map(index.map((x) => [x.id, x]));

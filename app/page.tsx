@@ -185,6 +185,7 @@ const MAX_RES = 2560;
 const MIN_RES = 256;
 const EST_COST = "0.07";
 const PENDING_KEY = "krea-studio.pending-job";
+const HIST_CACHE_KEY = "krea-studio.history-cache";
 /** Drag type for a history picture dropped into the compose box (2026-11-05 用户: 拖历史图进来没反应). */
 const HIST_DRAG = "application/x-studio-item";
 // 2026-11-05 (用户: 刷新后进度从 22% 掉回 11%): the running job's timing, so a reload continues the same bar.
@@ -652,13 +653,30 @@ export default function StudioPage() {
         }
       })
       .catch(() => {});
+    // 2026-11-06 (用户: 刷新要等几秒): show the history this browser saw last time at once, then refresh it.
+    let fromCache = false;
+    try {
+      const cached = JSON.parse(localStorage.getItem(HIST_CACHE_KEY) || "null");
+      if (Array.isArray(cached) && cached.length) {
+        fromCache = true;
+        rememberDirect(cached);
+        setGallery(cached);
+        const first = (cached as GalleryItem[]).find((x) => x.url);
+        if (first && !busyRef.current) showItem(first);
+      }
+    } catch {}
     fetchJson("/api/history")
       .then((d) => {
+        if (d?.ok && Array.isArray(d.items)) {
+          try {
+            localStorage.setItem(HIST_CACHE_KEY, JSON.stringify(d.items.slice(0, 80)));
+          } catch {}
+        }
         if (d?.ok && Array.isArray(d.items) && d.items.length) {
           rememberDirect(d.items);
           setGallery(d.items);
           const first = (d.items as GalleryItem[]).find((x) => x.url);
-          if (first && !busyRef.current) showItem(first);
+          if (first && !busyRef.current && !fromCache) showItem(first);
         }
         // 2026-11-05 (用户: 刷新后进度没了): the server remembers every submitted task; pick unfinished ones up again.
         const local = readPending();
@@ -1573,6 +1591,9 @@ export default function StudioPage() {
                 type="button"
                 onClick={async () => {
                   await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
+                  try {
+                    localStorage.removeItem(HIST_CACHE_KEY); // the next account must not see this one's pictures
+                  } catch {}
                   setUser(null);
                   setUserMenu(false);
                 }}
