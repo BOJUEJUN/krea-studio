@@ -1,4 +1,4 @@
-import { saveImageBytes } from "./images";
+import { saveFinishedBytes } from "./images";
 import { GPT_PRICE, type Quality } from "./models";
 
 /**
@@ -112,7 +112,7 @@ export async function queryGptTask(taskId: string): Promise<{
   if (status === "queued" || status === "in_progress") return { status: "RUNNING", outputs: [] };
   const image = (json?.output || []).find((o: any) => o?.type === "image_generation_call");
   if (status === "completed" && image?.result) {
-    const url = await saveImageBytes(taskId, Buffer.from(image.result, "base64"));
+    const url = await saveFinishedBytes(taskId, () => Buffer.from(image.result, "base64"));
     const tool = (json?.tools || []).find((t: any) => t?.type === "image_generation") || {};
     const quality = tool.quality;
     // Estimate in ¥ (OpenAI bills USD by tokens and returns no per-image price here); scales with pixels.

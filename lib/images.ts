@@ -1,8 +1,9 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { onNetlify, type HistoryItem } from "./history";
-import { storeGet, storePut } from "./store";
+import { storeGet, storeHas, storePut } from "./store";
 import { makeThumbs } from "./thumbs";
+import { after } from "next/server";
 import { storeKind } from "./store";
 
 /**
@@ -44,9 +45,32 @@ async function save(id: string, input: ArrayBuffer | Buffer): Promise<void> {
     await fs.writeFile(path.join(LOCAL_DIR, safeId(id)), Buffer.from(bytes));
     return;
   }
-  await storePut(`img-${safeId(id)}`, Buffer.from(bytes), "image/png");
-  // Every display size is made now, so viewing never waits for it.
-  await makeThumbs(safeId(id), Buffer.from(bytes)).catch((e) => console.error("[thumbs]", id, e?.message || e));
+  await putWithRetry(`img-${safeId(id)}`, Buffer.from(bytes), "image/png");
+  thumbsLater(safeId(id), Buffer.from(bytes));
+}
+
+/** Big PNGs from the US to Tencent can be slow: a long limit and up to 3 tries. */
+async function putWithRetry(key: string, body: Buffer, type: string): Promise<void> {
+  let last: unknown;
+  for (let i = 0; i < 3; i++) {
+    try {
+      await storePut(key, body, type, 50_000);
+      return;
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
+}
+
+/** Display sizes are made after the answer is sent, so a finished picture shows at once (fallback: on demand). */
+function thumbsLater(id: string, bytes: Buffer) {
+  const run = () => makeThumbs(id, bytes).catch((e) => console.error("[thumbs]", id, e?.message || e));
+  try {
+    after(run);
+  } catch {
+    void run(); // outside a request (scripts)
+  }
 }
 
 export async function readImage(id: string): Promise<Buffer | null> {
@@ -66,27 +90,46 @@ export async function readImage(id: string): Promise<Buffer | null> {
  * fallback. Returns the site's own link.
  */
 export async function copyRemoteImage(id: string, url: string): Promise<string> {
+  // Already saved by an earlier poll (the page asked again while we were saving): answer at once.
+  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) return imageUrlFor(id);
   const fn = process.env.FETCH_FN_URL, token = process.env.FETCH_FN_TOKEN;
   if (fn && token && storeKind() === "cos") {
-    try {
-      const res = await fetch(fn, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, key: `img-${safeId(id)}`, token }),
-        signal: AbortSignal.timeout(50_000),
-      });
-      const d: any = await res.json().catch(() => null);
-      if (!d?.ok) throw new Error(d?.error || `搬图失败 (${res.status})`);
-      const bytes = await storeGet(`img-${safeId(id)}`, 30_000);
-      if (bytes) await makeThumbs(safeId(id), bytes).catch(() => {});
-      return imageUrlFor(id);
-    } catch (e: any) {
-      console.error("[images] mover failed, trying direct:", id, e?.message || e);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(fn, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, key: `img-${safeId(id)}`, token }),
+          signal: AbortSignal.timeout(45_000),
+        });
+        const d: any = await res.json().catch(() => null);
+        if (!d?.ok) throw new Error(d?.error || `搬图失败 (${res.status})`);
+        // Display sizes from the stored copy, in the background.
+        const run = async () => {
+          const bytes = await storeGet(`img-${safeId(id)}`, 40_000);
+          if (bytes) await makeThumbs(safeId(id), bytes);
+        };
+        try {
+          after(() => run().catch(() => {}));
+        } catch {
+          await run().catch(() => {});
+        }
+        return imageUrlFor(id);
+      } catch (e: any) {
+        console.error("[images] mover failed:", id, attempt, e?.message || e);
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 1500));
+      }
     }
   }
   const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(25_000) });
   if (!res.ok) throw new Error(`下载结果失败 (${res.status})`);
   return saveImageBytes(id, Buffer.from(await res.arrayBuffer()));
+}
+
+/** Pictures that arrive as bytes (GPT): skip the work when an earlier poll already saved it. */
+export async function saveFinishedBytes(id: string, bytes: () => Buffer): Promise<string> {
+  if (storeKind() === "cos" && (await storeHas(`img-${safeId(id)}`).catch(() => false))) return imageUrlFor(id);
+  return saveImageBytes(id, bytes());
 }
 
 /**
@@ -95,34 +138,11 @@ export async function copyRemoteImage(id: string, url: string): Promise<string> 
  */
 export async function withBackup(item: HistoryItem): Promise<HistoryItem> {
   if (!isRemoteImage(item.url)) return item;
-  // 2026-11-06: RunningHub refuses downloads from the site's US server, so a small function inside Tencent's
-  // Guangzhou network (tools/fetch-fn) moves the picture into COS; the sizes are made from that copy.
-  const fn = process.env.FETCH_FN_URL, token = process.env.FETCH_FN_TOKEN;
-  if (fn && token && storeKind() === "cos") {
-    try {
-      const res = await fetch(fn, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: item.url, key: `img-${safeId(item.id)}`, token }),
-        signal: AbortSignal.timeout(50_000),
-      });
-      const d: any = await res.json().catch(() => null);
-      if (!d?.ok) throw new Error(d?.error || `搬图失败 (${res.status})`);
-      const bytes = await storeGet(`img-${safeId(item.id)}`, 30_000);
-      if (bytes) await makeThumbs(safeId(item.id), bytes).catch((e) => console.error("[thumbs]", item.id, e?.message || e));
-      return { ...item, sourceUrl: item.url, url: imageUrlFor(item.id) };
-    } catch (e: any) {
-      console.error("[images] mover failed:", item.id, e?.message || e);
-      return item;
-    }
-  }
+  // Same single save routine as finished tasks: Tencent relay first (RunningHub refuses the US server),
+  // retries, background display sizes, instant answer when it is already saved.
   try {
-    const res = await fetch(item.url, { cache: "no-store", signal: AbortSignal.timeout(25_000) });
-    if (!res.ok) throw new Error(`下载原图失败 (${res.status})`);
-    const bytes = await res.arrayBuffer();
-    if (!bytes.byteLength || bytes.byteLength > MAX_BYTES) throw new Error("原图大小异常");
-    await save(item.id, bytes);
-    return { ...item, sourceUrl: item.url, url: imageUrlFor(item.id) };
+    const url = await copyRemoteImage(item.id, item.url);
+    return { ...item, sourceUrl: item.url, url };
   } catch (e: any) {
     console.error("[images] backup failed:", item.id, e?.message || e);
     return item;

@@ -1,4 +1,4 @@
-import { saveImageBytes } from "./images";
+import { copyRemoteImage } from "./images";
 
 /**
  * Krea 3 through Krea's own API (env KREA_API_KEY): submit returns a job id, the page
@@ -89,9 +89,8 @@ export async function queryKreaTask(taskId: string): Promise<{
   if (status === "completed") {
     const url = job?.result?.urls?.[0];
     if (!url) return { status: "FAILED", outputs: [], errorMessage: "Krea 没有返回图片" };
-    const res = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new Error(`下载结果失败 (${res.status})`);
-    const saved = await saveImageBytes(taskId, Buffer.from(await res.arrayBuffer()));
+    // 2026-11-06 (用户: Krea 卡在 98%): saving a big PNG from the US to Tencent timed out; one save routine now.
+    const saved = await copyRemoteImage(taskId, url);
     // Estimate in ¥: $0.03 at 1K, $0.06 at 2K, +$0.02 per reference.
     const base = meta[0] === "1" ? 0.22 : meta[0] === "4" ? 0.86 : 0.43;
     const think = meta[1] === "h" ? 0.15 : 0;
