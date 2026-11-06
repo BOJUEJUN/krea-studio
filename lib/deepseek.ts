@@ -6,7 +6,10 @@
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const DEEPSEEK_MODEL = "deepseek-flash";
-const INSTRUCTION = "描述这张图，最后仅输出一段生图提示词。";
+// 2026-11-05 (用户): a realistic / photographic reference gets "anime style" in front of the prompt; others nothing.
+const INSTRUCTION =
+  "描述这张图，最后仅输出一段生图提示词。" +
+  "如果这张图是写实风格（真人照片、写实摄影、写实 CG），提示词必须以“anime style, ”开头；不是写实风格就不要加。";
 
 export function hasDeepSeek(): boolean {
   return !!process.env.DEEPSEEK_API_KEY;

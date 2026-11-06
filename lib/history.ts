@@ -27,6 +27,8 @@ export type HistoryItem = {
   createdAt: number;
   /** Submit → finished image, in ms. */
   durationMs?: number;
+  /** Starred by its owner (2026-11-05 用户: 历史加收藏). */
+  fav?: boolean;
 };
 
 const MAX_ITEMS = 5000;
@@ -100,6 +102,7 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     seed: next.seed ?? prev.seed,
     durationMs: prev.durationMs ?? next.durationMs,
     owner: prev.owner ?? next.owner,
+    fav: next.fav ?? prev.fav,
     createdAt: prev.createdAt || next.createdAt,
   };
   if (merged.url) delete merged.error;

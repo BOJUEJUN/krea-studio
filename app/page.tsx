@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
 import { LoginView } from "./login-view";
 import { AdminPanel } from "./admin-panel";
+import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import {
   DEFAULT_MODEL,
@@ -35,6 +36,7 @@ type GalleryItem = {
   taskId?: string;
   createdAt: number;
   durationMs?: number;
+  fav?: boolean;
 };
 
 /** Text with every "@图N" in blue (the description box and history). */
@@ -449,7 +451,7 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 多张时出一张就先显示一张): how many of the current batch are done.
   const [batchDone, setBatchDone] = useState(0);
   const [batchTotal, setBatchTotal] = useState(0);
-  const showingPartial = loading && batchDone > 0;
+  const showingPartial = loading && batchDone > 0 && batchDone < batchTotal;
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -568,10 +570,21 @@ export default function StudioPage() {
         if (d?.ok && Array.isArray(d.items) && d.items.length) {
           setGallery(d.items);
           const first = (d.items as GalleryItem[]).find((x) => x.url);
-          if (first) showItem(first);
+          if (first && !busyRef.current) showItem(first);
+        }
+        // 2026-11-05 (用户: 刷新后进度没了): the server remembers every submitted task; pick unfinished ones up again.
+        const local = readPending();
+        const server: PendingJob[] = Array.isArray(d?.running) ? d.running.filter((p: any) => p?.taskId && p?.mode) : [];
+        const all = [...local, ...server.filter((p) => !local.some((l) => l.taskId === p.taskId))];
+        if (all.length) {
+          writePending(all);
+          resumePendingRef.current?.(all);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        const local = readPending();
+        if (local.length) resumePendingRef.current?.(local);
+      });
   }, []);
 
   useEffect(() => {
@@ -705,6 +718,51 @@ export default function StudioPage() {
       });
     },
     [onPickFile, flash]
+  );
+
+  // 2026-11-05 (用户: 刷新后上传的图片没了): reference pictures and the description come back after a reload.
+  const draftReady = useRef(false);
+  useEffect(() => {
+    if (!user || draftReady.current) return;
+    loadDraft(user).then((d) => {
+      if (d && !fileBlobRef.current) {
+        const files = d.images.map((x) => new File([x.blob], x.name || "ref.png", { type: x.blob.type }));
+        if (files[0]) onPickFile(files[0]);
+        if (files.length > 1) setExtraRefs(files.slice(1).map((file) => ({ file, url: URL.createObjectURL(file) })));
+        if (d.prompt) setPrompt((p) => p || d.prompt);
+      }
+      draftReady.current = true;
+    });
+  }, [user, onPickFile]);
+  useEffect(() => {
+    if (!user || !draftReady.current) return;
+    const t = window.setTimeout(() => {
+      const files = [fileBlobRef.current, ...extraRefs.map((r) => r.file)].filter((f): f is File => !!f);
+      saveDraft(user, { prompt, images: files.map((f) => ({ blob: f, name: f.name })) });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [user, prompt, preview, extraRefs]);
+
+  /** 2026-11-05 (用户: 历史加收藏，能筛选找到): star a picture; saved on the server. */
+  const toggleFav = useCallback(
+    (g: GalleryItem) => {
+      const fav = !g.fav;
+      setGallery((list) => list.map((x) => (x.id === g.id ? { ...x, fav } : x)));
+      fetchJson("/api/history", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: g.id, fav }),
+      })
+        .then((d) => {
+          if (!d?.ok) throw new Error(d?.error);
+          flash(fav ? "已收藏" : "已取消收藏");
+        })
+        .catch(() => {
+          setGallery((list) => list.map((x) => (x.id === g.id ? { ...x, fav: !fav } : x)));
+          flash("收藏失败，请重试");
+        });
+    },
+    [flash]
   );
 
   const copyPrompt = useCallback(
@@ -889,16 +947,20 @@ export default function StudioPage() {
         setDetailOpen(false);
       }
       dropPending(pending.taskId);
-      const saved = await fetchJson("/api/history", {
+      // Saved in the background so the finished picture shows at once.
+      fetchJson("/api/history", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(item),
-      }).catch(() => null);
-      // The server keeps a permanent copy; point history at it.
-      const kept = saved?.item?.url;
-      if (typeof kept === "string" && kept !== url) {
-        setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
-      }
+      })
+        .then((saved) => {
+          // The server keeps a permanent copy; point history at it.
+          const kept = saved?.item?.url;
+          if (typeof kept === "string" && kept !== url) {
+            setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
+          }
+        })
+        .catch(() => {});
       return item;
     },
     [pollTask, showItem]
@@ -962,10 +1024,8 @@ export default function StudioPage() {
       });
   }, [finishBatch]);
 
-  useEffect(() => {
-    const pendings = readPending();
-    if (pendings.length) resumePending(pendings);
-  }, [resumePending]);
+  const resumePendingRef = useRef(resumePending);
+  resumePendingRef.current = resumePending;
 
   const generate = useCallback(async () => {
     if (busyRef.current) return;
@@ -1165,7 +1225,7 @@ export default function StudioPage() {
     ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改局部" : "整体改" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
-    ...(modelParams.seed ? [{ key: "seed", label: seedText ? `种子 ${seedText}` : "随机种子" }] : []),
+    // 2026-11-05 (用户: 随机种子去掉吧，没什么人用): every picture gets a random seed.
     ...(modelParams.negative ? [{ key: "negative", label: negative ? "不想要 ✓" : "不想要…" }] : []),
     { key: "count", label: `${count} 张` },
   ];
@@ -1198,6 +1258,7 @@ export default function StudioPage() {
     (g) =>
       (histMode === "all" || g.mode === histMode) &&
       (histFilter === "all" ||
+        (histFilter === "fav" && !!g.fav) ||
         (histFilter === "ok" && !!g.url) ||
         (histFilter === "bad" && !g.url) ||
         histFilter === `model:${g.model ?? (g.label ? "" : "brown-dust")}`) &&
@@ -1317,9 +1378,9 @@ export default function StudioPage() {
               </div>
             )}
             {showingPartial && (
-              <div className="animate-pop-in absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-[12px] text-white backdrop-blur">
-                <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                已出 {batchDone}/{batchTotal}，剩下的还在画
+              <div className="animate-pop-in absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-white/85 px-2.5 py-1 text-[12px] text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur">
+                <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-black/10 border-t-[#0071e3]" />
+                {batchDone}/{batchTotal}
               </div>
             )}
             {(!loading || showingPartial) && batch.length > 1 && (
@@ -1906,6 +1967,7 @@ export default function StudioPage() {
                 aria-label="筛选历史"
               >
                 <option value="all">全部记录</option>
+                <option value="fav">★ 我的收藏（{gallery.filter((g) => g.fav).length}）</option>
                 <optgroup label="按模型">
                   {MODELS.map((m) => (
                     <option key={m.id} value={`model:${m.id}`}>
@@ -1928,7 +1990,7 @@ export default function StudioPage() {
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid grid grid-cols-2 gap-2">
+              <div key={`${page}-${histMode}-${histFilter}`} className="history-grid grid grid-cols-2 items-start gap-2">
                 {pageItems.map((g, i) => {
                   const on = g.id === currentId;
                   const sel = pageItems.findIndex((x) => x.id === currentId);
@@ -1958,16 +2020,34 @@ export default function StudioPage() {
                         }
                       }}
                       title={g.url ? g.prompt : `失败：${g.error || "任务失败"}\n${g.prompt}`}
-                      className={`history-card overflow-hidden rounded-xl bg-white text-left ${
+                      className={`history-card group relative overflow-hidden rounded-xl bg-white text-left ${
                         on
                           ? "outline outline-2 -outline-offset-2 outline-[#0071e3]"
                           : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
                       }`}
                     >
-                      <span className="relative block aspect-square w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02]">
+                      {g.url && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={g.fav ? "取消收藏" : "收藏"}
+                          title={g.fav ? "取消收藏" : "收藏"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFav(g);
+                          }}
+                          className={`absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/35 text-[13px] leading-none backdrop-blur transition hover:scale-110 ${
+                            g.fav ? "text-[#ffcc00] opacity-100" : "text-white opacity-0 group-hover:opacity-100 max-lg:opacity-70"
+                          }`}
+                        >
+                          {g.fav ? "★" : "☆"}
+                        </span>
+                      )}
+                      {/* 2026-11-05 (用户: 历史图片不要裁剪): each picture keeps its own shape. */}
+                      <span className={`relative block w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02] ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
                             <span
@@ -2037,6 +2117,7 @@ export default function StudioPage() {
                           {(
                             [
                               // 下载 / 对比 live under the big picture; here only what reuses this record.
+                              [currentItem.fav ? "★ 已收藏" : "☆ 收藏", () => toggleFav(currentItem)],
                               ["用这组设置", () => reuseItem(currentItem)],
                               ["当参考图", () => useAsReference(currentItem)],
                               ["复制描述", () => copyPrompt(currentItem)],

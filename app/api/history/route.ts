@@ -90,6 +90,10 @@ export async function GET(req: Request) {
         ok: true,
         items: items.filter((x) => x.url || x.status === "failed" || x.status === "expired"),
         pending: items.filter((x) => !x.url && x.status === "pending").length,
+        // 2026-11-05 (用户: 刷新后生成进度没了): tasks still running, so a reloaded page picks them up again.
+        running: items
+          .filter((x) => !x.url && x.status === "pending" && x.taskId && Date.now() - x.createdAt < 30 * 60_000)
+          .map((x) => ({ taskId: x.taskId, seed: x.seed, mode: x.mode, model: x.model, prompt: x.prompt, refUrl: x.refUrl, createdAt: x.createdAt })),
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -143,5 +147,23 @@ export async function POST(req: NextRequest) {
       { ok: false, error: e?.message || "写入失败" },
       { status: 500 }
     );
+  }
+}
+
+/** Star / unstar one of your own pictures. */
+export async function PATCH(req: NextRequest) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
+  try {
+    const body = (await req.json()) as { id?: string; fav?: boolean };
+    const owner = await ownerName();
+    const item = (await readHistory()).find((x) => x.id === String(body.id || ""));
+    if (!item || (item.owner ?? owner) !== user) {
+      return NextResponse.json({ ok: false, error: "找不到这张图" }, { status: 404 });
+    }
+    const saved = await upsertHistory({ ...item, fav: !!body.fav });
+    return NextResponse.json({ ok: true, fav: !!saved.fav });
+  } catch (e: any) {
+    return NextResponse.json({ ok: false, error: e?.message || "收藏失败" }, { status: 500 });
   }
 }
