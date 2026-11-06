@@ -48,6 +48,25 @@ function withMentions(text: string) {
   );
 }
 
+/** A row of choices for one setting (shown when its chip is opened). */
+function Choice({ options, value, onPick, note }: { options: [string, string][]; value: string; onPick: (v: string) => void; note?: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {note && <span className="mr-1 text-[12px] text-[#86868b]">{note}</span>}
+      {options.map(([v, t]) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onPick(v)}
+          className={`rounded-lg px-3 py-1.5 text-[12px] font-medium transition ${value === v ? "bg-[#0071e3] text-white" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
+        >
+          {t}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** 24 秒 / 1 分 05 秒 */
 function formatDuration(ms?: number): string | null {
   if (!ms || ms <= 0) return null;
@@ -309,6 +328,16 @@ export default function StudioPage() {
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
   const [paramsOpen, setParamsOpen] = useState(false);
+  const [countOpen, setCountOpen] = useState(false);
+  const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const [histHidden, setHistHidden] = useState(false);
+  useEffect(() => {
+    try { setHistHidden(localStorage.getItem("krea-studio.history-hidden") === "1"); } catch {}
+  }, []);
+  const toggleHistory = (hide: boolean) => {
+    setHistHidden(hide);
+    try { localStorage.setItem("krea-studio.history-hidden", hide ? "1" : "0"); } catch {}
+  };
   /** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
   const sizeFor = (ratio: number, fallback?: { width: number; height: number }) => {
     if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
@@ -1012,6 +1041,21 @@ export default function StudioPage() {
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
   const modelParams = paramsOf(model);
+  const chips: { key: string; label: string }[] = [
+    { key: "model", label: (findModel(model) ?? MODELS[0]).name },
+    ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }] : []),
+    ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
+    ...(modelParams.quality ? [{ key: "quality", label: QUALITY_LABELS[quality] }] : []),
+    ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
+    ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
+    ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "默认", low: "低", medium: "中", high: "高" }[complexity]}` }] : []),
+    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改局部" : "整体改" }] : []),
+    ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
+    ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
+    ...(modelParams.seed ? [{ key: "seed", label: seedText ? `种子 ${seedText}` : "随机种子" }] : []),
+    ...(modelParams.negative ? [{ key: "negative", label: negative ? "不想要 ✓" : "不想要…" }] : []),
+    { key: "count", label: `${count} 张` },
+  ];
   /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
   const paramSummary = [
     mode === "t2i" ? RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` : "跟参考图",
@@ -1315,8 +1359,9 @@ export default function StudioPage() {
                   />
                 </div>
 
-                {modelOpen && (
-                  <div className="max-h-[40vh] overflow-y-auto border-t border-black/[0.06] p-2">
+                {openPanel && (
+                  <div className="max-h-[40vh] overflow-y-auto px-3 py-2">
+                    {openPanel === "model" && (
 <div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
                     {MODELS.map((m) => {
                       const on = model === m.id;
@@ -1329,7 +1374,7 @@ export default function StudioPage() {
                           aria-checked={on}
                           onClick={() => {
                             pickModel(m.id);
-                            setModelOpen(false);
+                            setOpenPanel(null);
                           }}
                           className={`model-card group relative mb-2 block w-full break-inside-avoid overflow-hidden rounded-2xl text-left transition ${
                             on
@@ -1366,347 +1411,80 @@ export default function StudioPage() {
                       );
                     })}
                   </div>
-                  </div>
-                )}
-                {paramsOpen && <div className="max-h-[40vh] overflow-y-auto">            {mode === "t2i" && (
-              <div className="border-t border-black/[0.06] px-3.5 py-1">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowMoreRatio((v) => !v)}
-                    className="flex w-full items-center justify-between py-1.5 text-left"
-                  >
-                    <span className="text-[12px] text-[#6e6e73]">比例</span>
-                    <span className="flex items-center gap-1.5 text-[13px] font-medium text-[#1d1d1f]">
-                      {/* A preset shows its ratio name; custom sizes show the resolution. */}
-                      {RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}`}
-                      <svg
-                        className={`h-3.5 w-3.5 text-[#86868b] transition-transform ${showMoreRatio ? "rotate-180" : ""}`}
-                        viewBox="0 0 16 16"
-                        fill="none"
-                      >
-                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    </span>
-                  </button>
-
-                  {showMoreRatio && (
-                    <div className="animate-chip-in absolute left-0 right-0 top-full z-20 mt-2 overflow-hidden rounded-2xl border border-black/[0.08] bg-white p-3 shadow-[0_12px_40px_rgba(0,0,0,0.12)]">
-                      <div className="grid grid-cols-4 gap-2">
-                        {RATIOS.filter((p) => !modelParams.ratios || modelParams.ratios.includes(p.label)).map((p) => {
-                          const on = width === p.w && height === p.h;
-                          return (
+                    )}
+                    {openPanel === "ratio" && (
+                      <div>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {RATIOS.filter((r) => !modelParams.ratios || modelParams.ratios.includes(r.label)).map((r) => (
                             <button
-                              key={p.label}
-                              onClick={() => {
-                                applyRatio(p.w, p.h);
-                                setShowMoreRatio(false);
-                              }}
-                              className={`flex flex-col items-center gap-1.5 rounded-xl px-1 py-2.5 transition ${
-                                on
-                                  ? "bg-[#eef6ff] ring-1 ring-[#0071e3]"
-                                  : "hover:bg-black/[0.04]"
-                              }`}
+                              key={r.label}
+                              type="button"
+                              onClick={() => { applyRatio(r.w, r.h); setOpenPanel(null); }}
+                              className={`rounded-lg py-1.5 text-[12px] font-medium transition ${width === r.w && height === r.h ? "bg-[#0071e3] text-white" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
                             >
-                              <span
-                                className={`rounded-[4px] border ${
-                                  on ? "border-[#0071e3] bg-[#0071e3]/10" : "border-[#c7c7cc]"
-                                }`}
-                                style={{
-                                  width:
-                                    p.kind === "square"
-                                      ? 22
-                                      : p.kind === "portrait"
-                                        ? 16
-                                        : 26,
-                                  height:
-                                    p.kind === "square"
-                                      ? 22
-                                      : p.kind === "portrait"
-                                        ? 24
-                                        : 16,
-                                }}
-                              />
-                              <span
-                                className={`text-[11px] font-medium ${
-                                  on ? "text-[#0071e3]" : "text-[#1d1d1f]"
-                                }`}
-                              >
-                                {p.label}
-                              </span>
+                              {r.label}
                             </button>
-                          );
-                        })}
-                      </div>
-                      {modelParams.customSize && (
-                      <div className="mt-3 flex items-center gap-2 border-t border-black/[0.06] pt-3">
-                        <input
-                          inputMode="numeric"
-                          value={widthText}
-                          onChange={(e) =>
-                            setWidthText(e.target.value.replace(/[^\d]/g, ""))
-                          }
-                          onBlur={commitWidth}
-                          className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-center text-[13px] tabular-nums text-[#1d1d1f] outline-none focus:border-[rgba(0,113,227,0.45)]"
-                          aria-label="宽度"
-                        />
-                        <span className="text-[#aeaeb2]">×</span>
-                        <input
-                          inputMode="numeric"
-                          value={heightText}
-                          onChange={(e) =>
-                            setHeightText(e.target.value.replace(/[^\d]/g, ""))
-                          }
-                          onBlur={commitHeight}
-                          className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-center text-[13px] tabular-nums text-[#1d1d1f] outline-none focus:border-[rgba(0,113,227,0.45)]"
-                          aria-label="高度"
-                        />
-                      </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {modelParams.resolutions && (
-              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
-                <span className="text-[12px] text-[#6e6e73]">清晰度</span>
-                <div className="apple-seg flex" role="radiogroup" aria-label="清晰度">
-                  {(Object.keys(modelParams.resolutions) as Res[]).map((r) => (
-                    <button
-                      key={r}
-                      type="button"
-                      role="radio"
-                      aria-checked={res === r}
-                      onClick={() => setRes(r)}
-                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
-                        res === r ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                      }`}
-                    >
-                      {r}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {modelParams.quality && (
-              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
-                <span className="text-[12px] text-[#6e6e73]">画质</span>
-                <div className="apple-seg flex" role="radiogroup" aria-label="画质">
-                  {(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      role="radio"
-                      aria-checked={quality === q}
-                      onClick={() => setQuality(q)}
-                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
-                        quality === q ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                      }`}
-                    >
-                      {QUALITY_LABELS[q]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {modelParams.thinking != null && (
-              <div className="flex items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5">
-                <span className="text-[12px] text-[#6e6e73]">
-                  深度思考 <span className="text-[#aeaeb2]">更懂复杂描述 · 慢一点 · +¥{modelParams.thinking.toFixed(2)}</span>
-                </span>
-                <div className="apple-seg flex" role="radiogroup" aria-label="深度思考">
-                  {[false, true].map((on) => (
-                    <button
-                      key={String(on)}
-                      type="button"
-                      role="radio"
-                      aria-checked={thinking === on}
-                      onClick={() => setThinking(on)}
-                      className={`rounded-full px-3 py-1 text-[12px] font-medium transition ${
-                        thinking === on ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                      }`}
-                    >
-                      {on ? "开" : "关"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {mode === "i2i" && modelParams.denoise && (
-              <div className="border-t border-black/[0.06] px-3.5 py-2.5">
-                <div className="mb-1 flex items-center justify-between text-[12px] text-[#6e6e73]">
-                  <span>重绘幅度</span>
-                  {denoiseText === null ? (
-                    <button
-                      type="button"
-                      onClick={() => setDenoiseText(denoise.toFixed(2))}
-                      title="点击输入数值（0.01 – 1）"
-                      className="denoise-value rounded-full px-2 py-0.5 tabular-nums text-[12px] text-[#0071e3] transition hover:bg-[#0071e3]/10"
-                    >
-                      {denoise.toFixed(2)}
-                    </button>
-                  ) : (
-                    <input
-                      autoFocus
-                      inputMode="decimal"
-                      value={denoiseText}
-                      onChange={(e) => setDenoiseText(e.target.value.replace(/[^\d.]/g, ""))}
-                      onFocus={(e) => e.currentTarget.select()}
-                      onBlur={(e) => commitDenoise(e.currentTarget.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") commitDenoise(e.currentTarget.value);
-                        if (e.key === "Escape") setDenoiseText(null);
-                      }}
-                      aria-label="重绘幅度数值"
-                      className="w-16 rounded-full border border-[#0071e3]/50 bg-white px-2 py-0.5 text-center text-[12px] tabular-nums text-[#0071e3] outline-none ring-4 ring-[#0071e3]/10"
-                    />
-                  )}
-                </div>
-                <input
-                  type="range"
-                  min={0.01}
-                  max={1}
-                  step={0.01}
-                  value={denoise}
-                  onChange={(e) => setDenoise(Number(e.target.value))}
-                  aria-label="重绘幅度"
-                  className="w-full"
-                />
-              </div>
-            )}
-            {(modelParams.seed || modelParams.negative || modelParams.lora || modelParams.background || modelParams.complexity || (mode === "i2i" && modelParams.regional)) && (
-              <div>
-                {(
-                  <div className="space-y-3 border-t border-black/[0.06] px-3.5 py-3">
-                    {mode === "i2i" && modelParams.regional && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12px] text-[#6e6e73]">只改局部 <span className="text-[#aeaeb2]">其他地方一点不动</span></span>
-                        <div className="apple-seg flex" role="radiogroup" aria-label="只改局部">
-                    {([[false, "关"], [true, "开"]] as const).map(([v, t]) => (
-                      <button
-                        key={String(v)}
-                        type="button"
-                        role="radio"
-                        aria-checked={regional === v}
-                        onClick={() => setRegional(v as any)}
-                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
-                          regional === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                      </div>
-                    )}
-                    {modelParams.background && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12px] text-[#6e6e73]">背景</span>
-                        <div className="apple-seg flex" role="radiogroup" aria-label="背景">
-                    {([["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]] as const).map(([v, t]) => (
-                      <button
-                        key={v}
-                        type="button"
-                        role="radio"
-                        aria-checked={background === v}
-                        onClick={() => setBackground(v as any)}
-                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
-                          background === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                      </div>
-                    )}
-                    {modelParams.complexity && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-[12px] text-[#6e6e73]">构思程度 <span className="text-[#aeaeb2]">高=复杂画面更准</span></span>
-                        <div className="apple-seg flex" role="radiogroup" aria-label="构思程度">
-                    {([["auto", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"]] as const).map(([v, t]) => (
-                      <button
-                        key={v}
-                        type="button"
-                        role="radio"
-                        aria-checked={complexity === v}
-                        onClick={() => setComplexity(v as any)}
-                        className={`rounded-full px-2.5 py-1 text-[12px] font-medium transition ${
-                          complexity === v ? "bg-white text-[#1d1d1f] shadow-sm" : "text-[#6e6e73] hover:text-[#1d1d1f]"
-                        }`}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                      </div>
-                    )}
-                    {modelParams.lora && (
-                      <div>
-                        <div className="mb-1 flex items-center justify-between text-[12px] text-[#6e6e73]">
-                          <span>风格强度（LoRA）</span>
-                          <span className="tabular-nums text-[#0071e3]">{lora.toFixed(1)}</span>
+                          ))}
                         </div>
-                        <input type="range" min={0} max={3} step={0.1} value={lora} onChange={(e) => setLora(Number(e.target.value))} aria-label="风格强度" className="w-full" />
+                        {modelParams.customSize && (
+                          <div className="mt-2 flex items-center gap-2 text-[12px] text-[#6e6e73]">
+                            自定义
+                            <input inputMode="numeric" value={widthText} onChange={(e) => setWidthText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitWidth} className="w-20 rounded-lg bg-[#f5f5f7] px-2 py-1 text-center tabular-nums outline-none" aria-label="宽度" />
+                            ×
+                            <input inputMode="numeric" value={heightText} onChange={(e) => setHeightText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitHeight} className="w-20 rounded-lg bg-[#f5f5f7] px-2 py-1 text-center tabular-nums outline-none" aria-label="高度" />
+                          </div>
+                        )}
                       </div>
                     )}
-                    {modelParams.seed && (
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="shrink-0 text-[12px] text-[#6e6e73]">种子 <span className="text-[#aeaeb2]">同种子出相似图</span></span>
-                        <input
-                          inputMode="numeric"
-                          value={seedText}
-                          placeholder="随机"
-                          onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))}
-                          className="w-24 min-w-0 rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-1.5 text-right text-[12px] tabular-nums outline-none focus:border-[rgba(0,113,227,0.45)]"
-                          aria-label="种子"
-                        />
+                    {openPanel === "res" && <Choice options={(Object.keys(modelParams.resolutions ?? {}) as Res[]).map((r) => [r, r])} value={res} onPick={(v) => { setRes(v as Res); setOpenPanel(null); }} />}
+                    {openPanel === "quality" && <Choice options={(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => [q, QUALITY_LABELS[q]])} value={quality} onPick={(v) => { setQuality(v as Quality); setOpenPanel(null); }} />}
+                    {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
+                    {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
+                    {openPanel === "complexity" && <Choice note="越高，复杂画面越准" options={[["auto", "默认"], ["low", "低"], ["medium", "中"], ["high", "高"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
+                    {openPanel === "regional" && <Choice note="开：只改你说的地方，其他一点不动" options={[["0", "关"], ["1", "开"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
+                    {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
+                    {openPanel === "denoise" && (
+                      <div className="flex items-center gap-3">
+                        <span className="shrink-0 text-[12px] text-[#6e6e73]">越大改得越多</span>
+                        <input type="range" min={0.01} max={1} step={0.01} value={denoise} onChange={(e) => setDenoise(Number(e.target.value))} aria-label="重绘幅度" className="flex-1" />
+                        <span className="w-10 text-right text-[12px] tabular-nums text-[#0071e3]">{denoise.toFixed(2)}</span>
                       </div>
                     )}
-                    {modelParams.negative && (
-                      <div>
-                        <div className="mb-1 text-[12px] text-[#6e6e73]">不想要的内容</div>
-                        <input
-                          value={negative}
-                          placeholder="比如：文字、水印、多余的手指"
-                          onChange={(e) => setNegative(e.target.value.slice(0, 300))}
-                          className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3 py-2 text-[12px] outline-none focus:border-[rgba(0,113,227,0.45)]"
-                          aria-label="不想要的内容"
-                        />
+                    {openPanel === "lora" && (
+                      <div className="flex items-center gap-3">
+                        <span className="shrink-0 text-[12px] text-[#6e6e73]">风格越强越像这个模型</span>
+                        <input type="range" min={0} max={3} step={0.1} value={lora} onChange={(e) => setLora(Number(e.target.value))} aria-label="风格强度" className="flex-1" />
+                        <span className="w-10 text-right text-[12px] tabular-nums text-[#0071e3]">{lora.toFixed(1)}</span>
                       </div>
+                    )}
+                    {openPanel === "seed" && (
+                      <div className="flex items-center gap-3">
+                        <span className="shrink-0 text-[12px] text-[#6e6e73]">同一个种子出相似的图，留空随机</span>
+                        <input autoFocus inputMode="numeric" value={seedText} placeholder="随机" onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))} className="flex-1 rounded-lg bg-[#f5f5f7] px-3 py-1.5 text-[12px] tabular-nums outline-none" aria-label="种子" />
+                      </div>
+                    )}
+                    {openPanel === "negative" && (
+                      <input autoFocus value={negative} placeholder="不想出现的东西，比如：文字、水印、多余的手指" onChange={(e) => setNegative(e.target.value.slice(0, 300))} className="w-full rounded-lg bg-[#f5f5f7] px-3 py-2 text-[12px] outline-none" aria-label="不想要的内容" />
                     )}
                   </div>
                 )}
-              </div>
-            )}
-</div>}
-                {/* Everything you can set sits in this one row (用户: 参数全在底部一排). */}
-                <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] px-2 py-2">
-                  <button
-                    type="button"
-                    aria-expanded={modelOpen}
-                    onClick={() => { setModelOpen((v) => !v); setParamsOpen(false); }}
-                    className="flex h-8 items-center gap-1.5 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.08]"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={(findModel(model) ?? MODELS[0]).cover} alt="" className="h-5 w-5 rounded object-cover" />
-                    {(findModel(model) ?? MODELS[0]).name}
-                    <span className="text-[#86868b]">▾</span>
-                  </button>
-                  <button
-                    type="button"
-                    aria-expanded={paramsOpen}
-                    onClick={() => { setParamsOpen((v) => !v); setModelOpen(false); }}
-                    className="flex h-8 items-center gap-1.5 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.08]"
-                  >
-                    {paramSummary}
-                    <span className="text-[#86868b]">▾</span>
-                  </button>
+                {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
+                <div className="flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                  {chips.map((c) => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      aria-expanded={openPanel === c.key}
+                      onClick={() => setOpenPanel((v) => (v === c.key ? null : c.key))}
+                      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[12px] transition ${openPanel === c.key ? "bg-[#0071e3]/10 text-[#0071e3]" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
+                    >
+                      {c.key === "model" && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={(findModel(model) ?? MODELS[0]).cover} alt="" className="h-5 w-5 rounded object-cover" />
+                      )}
+                      {c.label}
+                    </button>
+                  ))}
                   {mode === "i2i" && (
                     <button
                       type="button"
@@ -1725,26 +1503,7 @@ export default function StudioPage() {
                       </span>
                     </button>
                   )}
-                  <div className="ml-auto flex items-center gap-2">
-                    <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    role="radio"
-                    aria-checked={count === n}
-                    data-active={count === n}
-                    disabled={loading}
-                    onClick={() => {
-                      setCount(n);
-                      localStorage.setItem(COUNT_KEY, String(n));
-                    }}
-                    className="apple-seg-item w-7 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
+                  <div className="ml-auto">
                     <button
               onClick={generate}
               disabled={
@@ -1770,6 +1529,7 @@ export default function StudioPage() {
             </button>
                   </div>
                 </div>
+
 
           
               </div>
@@ -1813,6 +1573,7 @@ export default function StudioPage() {
         </section>
         </div>
 
+        {!histHidden && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -1825,16 +1586,36 @@ export default function StudioPage() {
           }}
           className="panel-resizer hidden w-1.5 shrink-0 cursor-col-resize lg:block"
         />
+        )}
 
+        {histHidden && (
+          <button
+            type="button"
+            onClick={() => toggleHistory(false)}
+            title="展开历史"
+            className="apple-card stagger-3 ml-2 flex shrink-0 flex-row items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-[13px] font-semibold text-[#1d1d1f] transition hover:bg-black/[0.03] lg:w-12 lg:flex-col lg:py-5"
+          >
+            <span className="text-[#86868b]">‹</span>
+            <span className="lg:[writing-mode:vertical-rl]">历史 {histStats.done}</span>
+          </button>
+        )}
         <aside
-          className="apple-card stagger-3 flex min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0"
+          className={`apple-card stagger-3 min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "hidden" : "flex"}`}
           style={isDesktop ? { width: rightPx } : undefined}
         >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
-            <span className="truncate text-[11px] tabular-nums text-[#86868b]">
+            <span className="ml-auto truncate text-[11px] tabular-nums text-[#86868b]">
               {histStats.done} 张{histStats.pending ? ` · 进行中 ${histStats.pending}` : ""} · 累计约 ¥{histStats.cost}
             </span>
+            <button
+              type="button"
+              onClick={() => toggleHistory(true)}
+              title="收起历史"
+              className="shrink-0 rounded-full px-2 py-0.5 text-[12px] text-[#0071e3] transition hover:bg-[#0071e3]/10"
+            >
+              收起 ›
+            </button>
           </div>
           <div className="shrink-0 border-b border-black/[0.06] px-3 py-2.5">
             <input
