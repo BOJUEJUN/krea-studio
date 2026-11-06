@@ -414,15 +414,6 @@ export default function StudioPage() {
   const fileBlobRef = useRef<File | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  // Grow the description box with its text, up to a cap (then it scrolls).
-  useEffect(() => {
-    const el = promptRef.current;
-    if (!el) return;
-    const max = Math.max(160, Math.round(window.innerHeight * 0.4));
-    el.style.height = "auto";
-    el.style.height = `${Math.min(max, Math.max(104, el.scrollHeight + 2))}px`;
-    el.style.overflowY = el.scrollHeight + 2 > max ? "auto" : "hidden";
-  }, [prompt, mode]);
   const jobRef = useRef(0);
   const busyRef = useRef(false);
 
@@ -1079,23 +1070,133 @@ export default function StudioPage() {
       />
 
       <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
         <section
-          className="apple-card stagger-1 m-0 flex min-h-0 w-full shrink-0 flex-col overflow-visible rounded-[22px] lg:overflow-hidden"
-          style={isDesktop ? { width: leftPx } : undefined}
-        >
-          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
+          ref={resultRef_}
+          className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
+          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4">
             <h1 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</h1>
             <span
               title="所有生成记录的花费合计（GPT / Krea / Banana 为估算）"
-              className="animate-chip-in rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]"
+              className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#6e6e73]"
             >
               已花费约 ¥{histStats.cost}
             </span>
+            {resultUrl && !loading && resultSize && (
+              <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] tabular-nums text-[#6e6e73]">
+                {resultSize.w} × {resultSize.h}
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              {resultUrl && resultRef && !loading && compareOn && (
+                <div className="apple-seg flex">
+                  {COMPARE_MODES.map((m) => (
+                    <button
+                      key={m.key}
+                      type="button"
+                      data-active={compareMode === m.key}
+                      onClick={() => setCompareMode(m.key)}
+                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {resultUrl && resultRef && !loading && (
+                <button
+                  type="button"
+                  aria-pressed={compareOn}
+                  onClick={() => setCompareOn((v) => !v)}
+                  className={`compare-btn rounded-full px-3 py-1 text-[12px] font-medium transition active:scale-[0.97] ${
+                    compareOn
+                      ? "bg-[#0071e3] text-white hover:bg-[#0077ed]"
+                      : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
+                  }`}
+                >
+                  {compareOn ? "退出对比" : "对比"}
+                </button>
+              )}
+            </div>
+          </div>
+          <div
+            className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
+            style={{
+              background:
+                "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,245,247,0.96))",
+              boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.06)",
+            }}
+          >
+            {loading ? (
+              <GeneratingView aspect={jobVisual.aspect} progress={progress} />
+            ) : resultUrl && resultRef && compareOn ? (
+              <div className="h-full w-full p-2">
+                <CompareView key={`${resultKey}-${compareMode}`} before={resultRef} after={resultUrl} mode={compareMode} />
+              </div>
+            ) : resultUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={resultKey}
+                src={resultUrl}
+                alt="生成结果"
+                onLoad={(e) => {
+                  const el = e.currentTarget;
+                  setResultSize({ w: el.naturalWidth, h: el.naturalHeight });
+                }}
+                className="animate-image-reveal max-h-full w-auto max-w-full object-contain"
+              />
+            ) : (
+              <div className="max-w-sm px-6 text-center">
+                <div
+                  className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] text-[20px]"
+                  style={{ background: "rgba(0,113,227,0.1)", color: "#0071e3" }}
+                >
+                  ✦
+                </div>
+                <p className="text-[15px] font-medium text-[#1d1d1f]">
+                  从一句描述开始
+                </p>
+              </div>
+            )}
+            {!loading && batch.length > 1 && (
+              <div className="batch-strip absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-2xl bg-white/80 p-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl">
+                {batch.map((id, i) => {
+                  const g = gallery.find((x) => x.id === id);
+                  const on = id === currentId;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      disabled={!g?.url}
+                      onClick={() => g && showItem(g)}
+                      title={`第 ${i + 1} 张`}
+                      className={`h-12 w-12 overflow-hidden rounded-xl bg-[#f2f2f4] transition active:scale-[0.95] ${
+                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "opacity-80 hover:opacity-100"
+                      }`}
+                    >
+                      {g?.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={g.url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
+                          失败
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-4">
+        </section>
+        <section
+          className="stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
+        >
+
+          <div className="max-h-[56vh] min-h-0 overflow-y-auto">
             {/* 2026-11-05 (用户: 极简，参考图跟提示词在同一个框): one compose box — pictures on top, words below, + to add. */}
-            <div className="mb-3">
+            <div>
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -1116,7 +1217,7 @@ export default function StudioPage() {
                   addRefs(files);
                 }}
                 data-drag={dragState}
-                className={`rounded-2xl border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] focus-within:ring-4 focus-within:ring-[rgba(0,113,227,0.12)] ${
+                className={`apple-card rounded-[22px] border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] ${
                   dragState !== "none" ? "border-[#0071e3] ring-4 ring-[#0071e3]/10" : "border-black/[0.08]"
                 }`}
               >
@@ -1184,7 +1285,7 @@ export default function StudioPage() {
                     onKeyDown={(e) => {
                       if (mentionOpen && e.key === "Escape") setMentionOpen(false);
                     }}
-                    rows={4}
+                    rows={2}
                     placeholder={
                       mode === "t2i"
                         ? "描述你想要的画面，或点 + 放参考图改图…"
@@ -1193,7 +1294,14 @@ export default function StudioPage() {
                           : "想怎么改？输入 @ 指定哪张图"
                     }
                     className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25"
-                    style={prompt ? undefined : { color: "#1d1d1f" }}
+                    style={{
+                      // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
+                      fieldSizing: "content",
+                      minHeight: 76,
+                      maxHeight: "22vh",
+                      overflowY: "auto",
+                      ...(prompt ? {} : { color: "#1d1d1f" }),
+                    } as React.CSSProperties}
                   />
                 </div>
                 <div className="flex items-center justify-between px-2 pb-2">
@@ -1657,6 +1765,60 @@ export default function StudioPage() {
               </>
             )}
                 </div>
+          <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.06] p-2.5">
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
+                张数
+              </span>
+              <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    role="radio"
+                    aria-checked={count === n}
+                    data-active={count === n}
+                    disabled={loading}
+                    onClick={() => {
+                      setCount(n);
+                      localStorage.setItem(COUNT_KEY, String(n));
+                    }}
+                    className="apple-seg-item w-9 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={generate}
+              disabled={
+                loading || !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
+              }
+              className="apple-btn-primary flex flex-1 items-center justify-center gap-2 py-3 text-[15px]"
+            >
+              {loading ? (
+                <>
+                  <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
+                  生成中 {Math.floor(progress)}%
+                </>
+              ) : !modelReady ? (
+                <span>{findModel(model)?.name} 待接入</span>
+              ) : (
+                <>
+                  <span>开始生成</span>
+                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
+                    ¥{btnPrice}
+                  </span>
+                </>
+              )}
+            </button>
+            {error && (
+              <div className="animate-chip-in mt-2 rounded-2xl bg-[#fff1f0] px-3.5 py-2.5 text-[12px] text-[#d70015]">
+                {error}
+              </div>
+            )}
+          </div>
               </div>
               <input
                 ref={fileRef}
@@ -1690,189 +1852,8 @@ export default function StudioPage() {
 
           </div>
 
-          <div className="shrink-0 border-t border-black/[0.06] p-4 sm:p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                张数
-              </span>
-              <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    role="radio"
-                    aria-checked={count === n}
-                    data-active={count === n}
-                    disabled={loading}
-                    onClick={() => {
-                      setCount(n);
-                      localStorage.setItem(COUNT_KEY, String(n));
-                    }}
-                    className="apple-seg-item w-9 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <button
-              onClick={generate}
-              disabled={
-                loading || !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
-              }
-              className="apple-btn-primary flex w-full items-center justify-center gap-2 py-3.5 text-[15px]"
-            >
-              {loading ? (
-                <>
-                  <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                  生成中 {Math.floor(progress)}%
-                </>
-              ) : !modelReady ? (
-                <span>{findModel(model)?.name} 待接入</span>
-              ) : (
-                <>
-                  <span>开始生成</span>
-                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
-                    ¥{btnPrice}
-                  </span>
-                </>
-              )}
-            </button>
-            {error && (
-              <div className="animate-chip-in mt-2 rounded-2xl bg-[#fff1f0] px-3.5 py-2.5 text-[12px] text-[#d70015]">
-                {error}
-              </div>
-            )}
-          </div>
         </section>
-
-        {/* drag handle */}
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="拖动调整左栏宽度"
-          onPointerDown={(e) => {
-            draggingRef.current = "left";
-            document.body.style.cursor = "col-resize";
-            document.body.style.userSelect = "none";
-            (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-          }}
-          className="panel-resizer hidden w-1.5 shrink-0 cursor-col-resize lg:block"
-        />
-
-        <section
-          ref={resultRef_}
-          className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
-          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4">
-            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">结果</h2>
-            {resultUrl && !loading && resultSize && (
-              <span className="rounded-full bg-black/[0.04] px-2 py-0.5 text-[11px] tabular-nums text-[#6e6e73]">
-                {resultSize.w} × {resultSize.h}
-              </span>
-            )}
-            <div className="ml-auto flex items-center gap-1.5">
-              {resultUrl && resultRef && !loading && compareOn && (
-                <div className="apple-seg flex">
-                  {COMPARE_MODES.map((m) => (
-                    <button
-                      key={m.key}
-                      type="button"
-                      data-active={compareMode === m.key}
-                      onClick={() => setCompareMode(m.key)}
-                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {resultUrl && resultRef && !loading && (
-                <button
-                  type="button"
-                  aria-pressed={compareOn}
-                  onClick={() => setCompareOn((v) => !v)}
-                  className={`compare-btn rounded-full px-3 py-1 text-[12px] font-medium transition active:scale-[0.97] ${
-                    compareOn
-                      ? "bg-[#0071e3] text-white hover:bg-[#0077ed]"
-                      : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
-                  }`}
-                >
-                  {compareOn ? "退出对比" : "对比"}
-                </button>
-              )}
-            </div>
-          </div>
-          <div
-            className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
-            style={{
-              background:
-                "linear-gradient(180deg, rgba(255,255,255,0.92), rgba(245,245,247,0.96))",
-              boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.06)",
-            }}
-          >
-            {loading ? (
-              <GeneratingView aspect={jobVisual.aspect} progress={progress} />
-            ) : resultUrl && resultRef && compareOn ? (
-              <div className="h-full w-full p-2">
-                <CompareView key={`${resultKey}-${compareMode}`} before={resultRef} after={resultUrl} mode={compareMode} />
-              </div>
-            ) : resultUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={resultKey}
-                src={resultUrl}
-                alt="生成结果"
-                onLoad={(e) => {
-                  const el = e.currentTarget;
-                  setResultSize({ w: el.naturalWidth, h: el.naturalHeight });
-                }}
-                className="animate-image-reveal max-h-full w-auto max-w-full object-contain"
-              />
-            ) : (
-              <div className="max-w-sm px-6 text-center">
-                <div
-                  className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] text-[20px]"
-                  style={{ background: "rgba(0,113,227,0.1)", color: "#0071e3" }}
-                >
-                  ✦
-                </div>
-                <p className="text-[15px] font-medium text-[#1d1d1f]">
-                  从一句描述开始
-                </p>
-              </div>
-            )}
-            {!loading && batch.length > 1 && (
-              <div className="batch-strip absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-2xl bg-white/80 p-1.5 shadow-[0_6px_24px_rgba(0,0,0,0.12)] backdrop-blur-xl">
-                {batch.map((id, i) => {
-                  const g = gallery.find((x) => x.id === id);
-                  const on = id === currentId;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      disabled={!g?.url}
-                      onClick={() => g && showItem(g)}
-                      title={`第 ${i + 1} 张`}
-                      className={`h-12 w-12 overflow-hidden rounded-xl bg-[#f2f2f4] transition active:scale-[0.95] ${
-                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "opacity-80 hover:opacity-100"
-                      }`}
-                    >
-                      {g?.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={g.url} alt="" className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
-                          失败
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-        </section>
+        </div>
 
         <div
           role="separator"
