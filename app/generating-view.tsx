@@ -11,15 +11,15 @@ import { useEffect, useRef, useState } from "react";
 type Props = { aspect: number; progress: number; compact?: boolean };
 
 /** Fits an aspect-correct, rounded frame inside whatever space it is given. */
-function Frame({ aspect, children }: { aspect: number; children: React.ReactNode }) {
+function Frame({ aspect, children, tight }: { aspect: number; children: React.ReactNode; tight?: boolean }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const fit = () => {
-      const W = el.clientWidth - 24;
-      const H = el.clientHeight - 24;
+      const W = el.clientWidth - (tight ? 0 : 24);
+      const H = el.clientHeight - (tight ? 0 : 24);
       if (W <= 0 || H <= 0) return;
       const a = aspect > 0 ? aspect : 1;
       const w = Math.min(W, H * a);
@@ -29,12 +29,12 @@ function Frame({ aspect, children }: { aspect: number; children: React.ReactNode
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [aspect]);
+  }, [aspect, tight]);
   return (
     <div ref={wrapRef} className="flex h-full w-full items-center justify-center">
       {/* Always mounted so children (e.g. canvases) exist from the first render. */}
       <div
-        className="relative overflow-hidden rounded-[22px] bg-[#eef1f8] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)]"
+        className={`relative overflow-hidden bg-[#eef1f8] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)] ${tight ? "rounded-[18px]" : "rounded-[22px]"}`}
         style={box ? { width: box.w, height: box.h } : { width: 0, height: 0, visibility: "hidden" }}
       >
         {children}
@@ -200,7 +200,7 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
   }, []);
 
   return (
-    <Frame aspect={aspect}>
+    <Frame aspect={aspect} tight={compact}>
       <div ref={wrapRef} className="absolute inset-0 bg-[#f2f2f4]">
         <canvas ref={ref} className="absolute inset-0 h-full w-full" />
       </div>

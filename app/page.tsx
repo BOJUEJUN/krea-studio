@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
+import { BatchGrid } from "./batch-grid";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
@@ -1492,43 +1493,42 @@ export default function StudioPage() {
           >
             {loading && jobCount > 1 ? (
               // One cell per picture (2 side by side, 3 in a row, 4 as 2×2); each fills in as soon as it is ready.
-              <div className={`grid h-full w-full gap-2 p-1 ${jobCount === 3 ? "grid-cols-3" : "grid-cols-2"} ${jobCount === 4 ? "grid-rows-2" : ""}`}>
-                {Array.from({ length: jobCount }, (_, i) => {
+              <BatchGrid
+                count={jobCount}
+                aspect={jobVisual.aspect}
+                cell={(i) => {
                   const g = gallery.find((x) => x.id === batch[i]);
-                  return (
-                    <div key={i} className="relative min-h-0 min-w-0">
-                      {g?.url ? (
-                        <button type="button" onClick={() => showItem(g)} className="flex h-full w-full items-center justify-center">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="animate-image-reveal max-h-full max-w-full rounded-[14px] object-contain" />
-                        </button>
-                      ) : (
-                        <GeneratingView aspect={jobVisual.aspect} progress={progress} compact />
-                      )}
-                    </div>
+                  return g?.url ? (
+                    <button type="button" onClick={() => showItem(g)} className="h-full w-full">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="animate-image-reveal h-full w-full rounded-[18px] object-cover" />
+                    </button>
+                  ) : (
+                    <GeneratingView aspect={jobVisual.aspect} progress={progress} compact />
                   );
-                })}
-              </div>
+                }}
+              />
             ) : loading && !showingPartial ? (
               <GeneratingView aspect={jobVisual.aspect} progress={progress} />
             ) : batchGrid && batch.length > 1 ? (
-              <div className={`grid h-full w-full gap-2 p-1 ${batch.length === 3 ? "grid-cols-3" : "grid-cols-2"} ${batch.length === 4 ? "grid-rows-2" : ""}`}>
-                {batch.map((id, i) => {
-                  const g = gallery.find((x) => x.id === id);
-                  return (
-                    <div key={id} className="relative flex min-h-0 min-w-0 items-center justify-center">
-                      {g?.url ? (
-                        <button type="button" onClick={() => showItem(g)} className="flex h-full w-full items-center justify-center" aria-label={`看第 ${i + 1} 张大图`}>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="max-h-full max-w-full rounded-[14px] object-contain transition duration-300 hover:brightness-95" />
-                        </button>
-                      ) : (
-                        <span className="text-[12px] text-[#d70015]">第 {i + 1} 张没画成</span>
-                      )}
-                    </div>
+              <BatchGrid
+                count={batch.length}
+                aspect={(() => {
+                  const first = batch.map((id) => aspects[id]).find(Boolean);
+                  return first ? 1 / first : jobVisual.aspect;
+                })()}
+                cell={(i) => {
+                  const g = gallery.find((x) => x.id === batch[i]);
+                  return g?.url ? (
+                    <button type="button" onClick={() => showItem(g)} className="h-full w-full" aria-label={`看第 ${i + 1} 张大图`}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="h-full w-full rounded-[18px] object-cover transition duration-300 hover:brightness-95" />
+                    </button>
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-[#f2f2f4] text-[12px] text-[#d70015]">第 {i + 1} 张没画成</span>
                   );
-                })}
-              </div>
+                }}
+              />
             ) : resultUrl && compareRefs.length > 0 && compareOn && !loading ? (
               <div className="h-full w-full p-2">
                 <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={fullOf((compareRefs[compareIdx] ?? resultRef) as string)} after={fullOf(resultUrl)} mode={compareMode} />
@@ -1573,7 +1573,7 @@ export default function StudioPage() {
               const arrow = "absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-[#1d1d1f] shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur hover:bg-white";
               return (
                 <>
-                  <button type="button" onClick={() => setBatchGrid(true)} data-tip="回到全部" data-tip-start="" className="absolute left-3 top-3 z-20 flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[12px] tabular-nums text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur hover:bg-white">
+                  <button type="button" onClick={() => setBatchGrid(true)} data-tip="回到全部" data-tip-end="" className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[12px] tabular-nums text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur hover:bg-white">
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>
                     {at + 1}/{done.length}
                   </button>
