@@ -1,3 +1,4 @@
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildWorkflowNodes,
@@ -17,6 +18,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   try {
     const form = await req.formData();
     const prompt = String(form.get("prompt") || "").trim();
@@ -104,6 +107,7 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     for (const [i, t] of tasks.entries()) {
       await upsertHistory({
+        owner: user,
         id: t.taskId,
         taskId: t.taskId,
         mode: "i2i",

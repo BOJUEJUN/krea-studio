@@ -1,3 +1,4 @@
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkflowNodes, createCustomTask } from "@/lib/runninghub";
 import { GPT_IMAGE_MODELS, LEGACY_MODEL, findModel } from "@/lib/models";
@@ -12,6 +13,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const prompt = String(body.prompt || "").trim();
@@ -67,6 +70,7 @@ export async function POST(req: NextRequest) {
     const now = Date.now();
     for (const [i, t] of tasks.entries()) {
       await upsertHistory({
+        owner: user,
         id: t.taskId,
         taskId: t.taskId,
         mode: "t2i",

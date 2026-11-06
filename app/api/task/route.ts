@@ -1,3 +1,4 @@
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { queryCustomTask } from "@/lib/runninghub";
 
@@ -5,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   const { searchParams } = new URL(req.url);
   const taskId = searchParams.get("taskId");
   if (!taskId) {

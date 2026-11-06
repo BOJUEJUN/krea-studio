@@ -1,3 +1,4 @@
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { getAccountStatus } from "@/lib/runninghub";
 import { MODELS } from "@/lib/models";
@@ -6,7 +7,9 @@ import { availability } from "@/lib/model-workflows";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   const models = MODELS.map((m) => ({ id: m.id, ready: availability(m.id) }));
   try {
     const account = await getAccountStatus();

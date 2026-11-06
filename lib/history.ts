@@ -6,6 +6,8 @@ export type HistoryStatus = "pending" | "done" | "failed" | "expired";
 
 export type HistoryItem = {
   id: string;
+  /** Account that made it (missing on records from before accounts: those belong to the owner account). */
+  owner?: string;
   mode: "t2i" | "i2i";
   model?: string;
   /** Display name for models no longer offered (e.g. 即梦 4.6 from the first version). */
@@ -97,6 +99,7 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     cost: next.cost ?? prev.cost,
     seed: next.seed ?? prev.seed,
     durationMs: prev.durationMs ?? next.durationMs,
+    owner: prev.owner ?? next.owner,
     createdAt: prev.createdAt || next.createdAt,
   };
   if (merged.url) delete merged.error;

@@ -1,3 +1,4 @@
+import { ownerName, sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
@@ -74,11 +75,16 @@ async function backfillImages(items: HistoryItem[]): Promise<boolean> {
   return changed;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   try {
-    let items = await readHistory();
-    if (await settlePending(items)) items = await readHistory();
-    if (await backfillImages(items)) items = await readHistory();
+    // Each account sees only its own pictures; records from before accounts belong to the owner account.
+    const owner = await ownerName();
+    const mine = async () => (await readHistory()).filter((x) => (x.owner ?? owner) === user);
+    let items = await mine();
+    if (await settlePending(items)) items = await mine();
+    if (await backfillImages(items)) items = await mine();
     return NextResponse.json(
       {
         ok: true,
@@ -96,6 +102,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const user = sessionUser(req);
+  if (!user) return unauthorized();
   try {
     const body = (await req.json()) as Record<string, unknown>;
     const url = String(body.url || "");
@@ -108,6 +116,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "不支持的图片地址" }, { status: 400 });
     }
     const item: HistoryItem = {
+      owner: user,
       id: String(body.id || `${Date.now()}`),
       mode: body.mode === "i2i" ? "i2i" : "t2i",
       model: findModel(body.model)?.id,

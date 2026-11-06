@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
+import { LoginView } from "./login-view";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import {
   DEFAULT_MODEL,
@@ -66,6 +67,16 @@ function Choice({ options, value, onPick, note }: { options: [string, string][];
       ))}
     </div>
   );
+}
+
+/** 96 px model icon (the full cover is ~100 KB). */
+function iconOf(cover: string): string {
+  return cover.replace("/models/", "/models/icon/");
+}
+
+/** Small WebP for grids; originals stay for the big view and downloads. */
+function thumbOf(url: string, w: number): string {
+  return url.startsWith("/api/img/") ? `${url}?w=${w}` : url;
 }
 
 /** 24 秒 / 1 分 05 秒 */
@@ -291,6 +302,10 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
     throw new Error("网络连接失败，请检查网络后重试");
   }
   const text = await res.text();
+  if (res.status === 401) {
+    window.dispatchEvent(new Event("need-login"));
+    throw new Error("请先登录");
+  }
   if (res.status === 413) {
     throw new Error("参考图超过网站上传限制，请换一张较小的图片重试");
   }
@@ -304,6 +319,35 @@ async function fetchJson(url: string, init?: RequestInit): Promise<any> {
 }
 
 export default function StudioPage() {
+  // undefined = still checking, null = signed out.
+  const [user, setUser] = useState<string | null | undefined>(undefined);
+  const [userMenu, setUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  // The name menu closes when you click anywhere else.
+  useEffect(() => {
+    if (!userMenu) return;
+    const close = (e: MouseEvent) => {
+      if (!userMenuRef.current?.contains(e.target as Node)) setUserMenu(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [userMenu]);
+  // Model icons are tiny; load them up front so the model menu opens instantly.
+  useEffect(() => {
+    for (const m of MODELS) {
+      const img = new Image();
+      img.src = iconOf(m.cover);
+    }
+  }, []);
+  useEffect(() => {
+    fetch("/api/auth", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setUser(d?.user ?? null))
+      .catch(() => setUser(null));
+    const onNeed = () => setUser(null);
+    window.addEventListener("need-login", onNeed);
+    return () => window.removeEventListener("need-login", onNeed);
+  }, []);
   // 2026-11-05 (用户: 不分了，合成吧): one form — a reference image makes it 图生图, none makes it 文生图.
   const [mode, setMode] = useState<Mode>("t2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
@@ -342,8 +386,8 @@ export default function StudioPage() {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [openPanel]);
-  // History starts folded on every visit and opens when a picture is made (or when you open it).
-  const [histHidden, setHistHidden] = useState(true);
+  // History is open by default (用户 2026-11-05); fold it to a corner icon any time.
+  const [histHidden, setHistHidden] = useState(false);
   const toggleHistory = (hide: boolean) => setHistHidden(hide);
   const [histToolsOpen, setHistToolsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -1032,6 +1076,24 @@ export default function StudioPage() {
     }
   }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending]);
 
+  // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
+  // with the settings on screen at that moment.
+  const [queued, setQueued] = useState(0);
+  const startOrQueue = () => {
+    if (busyRef.current) {
+      setQueued((n) => Math.min(9, n + 1));
+      flash("已排队，这张画完就开始");
+      return;
+    }
+    generate();
+  };
+  useEffect(() => {
+    if (!loading && queued > 0 && !busyRef.current) {
+      setQueued((n) => n - 1);
+      generate();
+    }
+  }, [loading, queued, generate]);
+
   // Estimated price: median real cost of recent images from the same model
   // and mode (falls back to any recent image, then a default), times the count.
   const btnPrice = (() => {
@@ -1120,8 +1182,38 @@ export default function StudioPage() {
     localStorage.setItem(MODEL_KEY, id);
   };
 
+  if (user === null) return <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />;
+
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
+      {user && (
+        <div ref={userMenuRef} className="fixed left-4 top-4 z-50">
+          <button
+            type="button"
+            onClick={() => setUserMenu((v) => !v)}
+            title={user}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
+          >
+            {user.slice(0, 1).toUpperCase()}
+          </button>
+          {userMenu && (
+            <div className="animate-pop-in absolute left-0 top-11 min-w-[140px] rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
+              <div className="px-2.5 py-1.5 text-[12px] text-[#86868b]">{user}</div>
+              <button
+                type="button"
+                onClick={async () => {
+                  await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
+                  setUser(null);
+                  setUserMenu(false);
+                }}
+                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#d70015] hover:bg-black/[0.04]"
+              >
+                换个名字
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0"
@@ -1132,10 +1224,10 @@ export default function StudioPage() {
       />
 
       <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
-          className="apple-card stagger-2 flex min-h-[50vh] min-w-0 flex-1 flex-col overflow-hidden rounded-[22px] lg:min-h-0">
+          className="apple-card stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden rounded-[22px] lg:h-auto lg:min-h-0 lg:flex-1">
                     <div
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
 
@@ -1189,7 +1281,7 @@ export default function StudioPage() {
                     >
                       {g?.url ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={g.url} alt="" className="h-full w-full object-cover" />
+                        <img src={thumbOf(g.url, 160)} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <span className="flex h-full w-full items-center justify-center text-[10px] text-[#d70015]">
                           失败
@@ -1380,6 +1472,10 @@ export default function StudioPage() {
                     }}
                     onKeyDown={(e) => {
                       if (mentionOpen && e.key === "Escape") setMentionOpen(false);
+                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                        e.preventDefault();
+                        startOrQueue();
+                      }
                     }}
                     rows={2}
                     placeholder={
@@ -1427,7 +1523,7 @@ export default function StudioPage() {
                               className={`flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${on ? "bg-[#0071e3]/[0.08]" : "hover:bg-black/[0.04]"} disabled:opacity-40`}
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={m.cover} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                              <img src={iconOf(m.cover)} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-[13px] font-medium text-[#1d1d1f]">{m.name}</span>
                                 <span className="block truncate text-[11px] text-[#86868b]">{ready ? m.tagline : "待接入"}</span>
@@ -1510,7 +1606,7 @@ export default function StudioPage() {
                     >
                       {c.key === "model" && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={(findModel(model) ?? MODELS[0]).cover} alt="" className="h-5 w-5 rounded object-cover" />
+                        <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded object-cover" />
                       )}
                       {c.label}
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
@@ -1536,16 +1632,16 @@ export default function StudioPage() {
                   )}
                   <div className="ml-auto">
                     <button
-              onClick={generate}
+              onClick={startOrQueue}
               disabled={
-                loading || !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
+                !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
               }
               className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]"
             >
               {loading ? (
                 <>
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                  生成中 {Math.floor(progress)}%
+                  {Math.floor(progress)}%{queued ? ` · 排队 ${queued}` : " · 再点排队"}
                 </>
               ) : !modelReady ? (
                 <span>{findModel(model)?.name} 待接入</span>
@@ -1790,7 +1886,7 @@ export default function StudioPage() {
                       <span className="relative block aspect-square w-full bg-[#f2f2f4] transition duration-300 hover:scale-[1.02]">
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={g.url} alt="" loading="lazy" className="h-full w-full object-cover" />
+                          <img src={thumbOf(g.url, 320)} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
                             <span

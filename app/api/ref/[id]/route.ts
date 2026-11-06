@@ -1,3 +1,4 @@
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { imageMime, readReference } from "@/lib/refs";
 
@@ -5,6 +6,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const user = sessionUser(_req);
+  if (!user) return unauthorized();
   try {
     const { id } = await params;
     const bytes = await readReference(id);
