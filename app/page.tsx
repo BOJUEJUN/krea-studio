@@ -635,18 +635,6 @@ export default function StudioPage() {
   }, []);
 
   /** The first picture becomes the main reference; more go to the extra references (up to the model's limit). */
-  const addRefs = useCallback(
-    (files: File[]) => {
-      if (!files.length) return;
-      let rest = files;
-      if (!fileBlobRef.current) {
-        onPickFile(files[0]);
-        rest = files.slice(1);
-      }
-      if (rest.length) setExtraRefs((list) => [...list, ...rest.map((file) => ({ file, url: URL.createObjectURL(file) }))].slice(0, 7));
-    },
-    [onPickFile]
-  );
 
   const [mentionOpen, setMentionOpen] = useState(false);
   /** Inserts "@图N " at the caret in the description. */
@@ -683,8 +671,37 @@ export default function StudioPage() {
 
   const flash = useCallback((text: string) => {
     setNotice(text);
-    window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 1800);
+    window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 2600);
   }, []);
+
+  /**
+   * Adds pictures up to what the model takes (2026-11-05 用户: 第二张传不上去要有提示). A one-picture model
+   * swaps the picture; a full multi-picture model says how many it takes.
+   */
+  const refLimitRef = useRef(1);
+  const addRefs = useCallback(
+    (files: File[]) => {
+      if (!files.length) return;
+      const limit = refLimitRef.current;
+      if (limit <= 1) {
+        onPickFile(files[0]);
+        setExtraRefs([]);
+        flash(fileBlobRef.current && files.length >= 1 ? (files.length > 1 ? "这个模型只用 1 张参考图，已用第一张" : "已换成新的参考图") : "已放入参考图");
+        return;
+      }
+      let rest = files;
+      if (!fileBlobRef.current) {
+        onPickFile(files[0]);
+        rest = files.slice(1);
+      }
+      setExtraRefs((list) => {
+        const room = Math.max(0, limit - 1 - list.length);
+        if (rest.length > room) flash(`这个模型最多 ${limit} 张参考图，多出的 ${rest.length - room} 张没放进来`);
+        return [...list, ...rest.slice(0, room).map((file) => ({ file, url: URL.createObjectURL(file) }))];
+      });
+    },
+    [onPickFile, flash]
+  );
 
   const copyPrompt = useCallback(
     async (g: GalleryItem) => {
@@ -1127,6 +1144,7 @@ export default function StudioPage() {
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
   const modelParams = paramsOf(model);
+  refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
   const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : resultRef ? [resultRef] : [];
   const chips: { key: string; label: string }[] = [
@@ -1195,6 +1213,11 @@ export default function StudioPage() {
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
+      {notice && (
+        <div key={notice} className="animate-pop-in pointer-events-none fixed left-1/2 top-5 z-[95] -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-4 py-2 text-[13px] text-white shadow-[0_10px_30px_rgba(0,0,0,0.2)] backdrop-blur">
+          {notice}
+        </div>
+      )}
       {user && (
         <div ref={userMenuRef} className="fixed left-4 top-4 z-50">
           <button
@@ -1458,16 +1481,32 @@ export default function StudioPage() {
                         </button>
                       </span>
                     ))}
-                                      {(!preview || extraRefs.length + 1 < (modelParams.maxRefs ?? 1)) && (
-                      <button
-                        type="button"
-                        onClick={() => fileRef.current?.click()}
-                        title="添加参考图（也可拖入或粘贴）"
-                        className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-black/[0.15] text-[18px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
-                      >
-                        +
-                      </button>
-                    )}
+                                      {(() => {
+                      const limit = modelParams.maxRefs ?? 1;
+                      const used = (preview ? 1 : 0) + Math.min(extraRefs.length, limit - 1);
+                      const full = !!preview && used >= limit;
+                      return (
+                        <>
+                          {!(full && limit > 1) && (
+                            <button
+                              type="button"
+                              onClick={() => fileRef.current?.click()}
+                              title={limit === 1 && preview ? "这个模型只用 1 张参考图，点了会替换" : "添加参考图（也可拖入或粘贴）"}
+                              className="flex h-12 min-w-12 items-center justify-center gap-1 rounded-lg border border-dashed border-black/[0.15] px-2 text-[12px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
+                            >
+                              {limit === 1 && preview ? "换图" : <span className="text-[18px] leading-none">+</span>}
+                            </button>
+                          )}
+                          {preview && (
+                            <span className="self-end pb-0.5 text-[11px] text-[#aeaeb2]">
+                              {limit === 1 ? "这个模型只用 1 张" : `${used}/${limit}${full ? "，已满" : ""}`}
+                              {extraRefs.length > limit - 1 && limit > 1 ? `（多的 ${extraRefs.length - (limit - 1)} 张这个模型用不上）` : ""}
+                              {limit === 1 && extraRefs.length > 0 ? `，其余 ${extraRefs.length} 张不会用` : ""}
+                            </span>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
                 <div className="relative">
