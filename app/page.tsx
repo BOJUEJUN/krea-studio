@@ -597,6 +597,8 @@ export default function StudioPage() {
   const promptMirrorRef = useRef<HTMLDivElement>(null);
   const resultRef_ = useRef<HTMLElement>(null);
   const fileBlobRef = useRef<File | null>(null);
+  /** A reference still downloading after 重新编辑 (the picture already shows). */
+  const refLoadRef = useRef<Promise<File | null> | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const jobRef = useRef(0);
@@ -734,6 +736,7 @@ export default function StudioPage() {
   }, [heightText]);
 
   const onPickFile = useCallback((file: File | null) => {
+    refLoadRef.current = null;
     fileBlobRef.current = file;
     setPreview(file ? URL.createObjectURL(file) : null);
   }, []);
@@ -963,14 +966,31 @@ export default function StudioPage() {
       setReverse(false);
       // 2026-11-05 (用户: 点了图片也要返回回来): the reference picture comes back too; 文生图 records clear it.
       if (g.mode === "i2i" && g.refUrl) {
-        fetch(rawOf(g.refUrl))
+        // 2026-11-06 (用户: 图要等几秒): show the picture at once from Tencent, fetch the file behind it;
+        // 生成 waits for that file if it is clicked first.
+        const direct = DIRECT.get(g.refUrl)?.full;
+        setExtraRefs([]);
+        if (direct) {
+          fileBlobRef.current = null;
+          setPreview(direct);
+        }
+        const loading = fetch(rawOf(g.refUrl))
           .then((r) => (r.ok ? r.blob() : Promise.reject()))
           .then((b) => {
-            onPickFile(new File([b], "reference." + (b.type.split("/")[1] || "png"), { type: b.type || "image/png" }));
-            setExtraRefs([]);
-            flash("已放回参考图和描述");
+            const f = new File([b], "reference." + (b.type.split("/")[1] || "png"), { type: b.type || "image/png" });
+            if (refLoadRef.current === loading) onPickFile(f);
+            return f;
           })
-          .catch(() => flash("描述已放回，参考图找不到了"));
+          .catch(() => {
+            if (refLoadRef.current === loading && direct) onPickFile(null);
+            flash("描述已放回，参考图找不到了");
+            return null;
+          })
+          .finally(() => {
+            if (refLoadRef.current === loading) refLoadRef.current = null;
+          });
+        refLoadRef.current = loading;
+        flash("已放回参考图和描述");
       } else if (g.mode === "i2i") {
         // Made from a picture whose copy was not kept: leave the current pictures alone.
         flash("描述已放回；这张的参考图当时没保存上");
@@ -1252,6 +1272,12 @@ export default function StudioPage() {
     if (readiness && !readiness[model]?.[mode]) {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
+    }
+    if (!fileBlobRef.current && refLoadRef.current) {
+      const f = await refLoadRef.current;
+      if (f) {
+        fileBlobRef.current = f;
+      }
     }
     const imageFile = fileBlobRef.current;
     if (mode === "i2i" && !imageFile) {
