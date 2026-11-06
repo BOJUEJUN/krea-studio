@@ -611,8 +611,7 @@ export default function StudioPage() {
   }, []);
 
   useEffect(() => {
-    const saved = findModel(localStorage.getItem(MODEL_KEY));
-    if (saved) setModel(saved.id);
+    // 2026-11-06 (用户: 每次刷新默认 LOL 2.36MP V1.1): the last-used model is not restored.
     if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
     const savedCount = Number(localStorage.getItem(COUNT_KEY));
     if (savedCount >= 1 && savedCount <= 4) setCount(savedCount);
