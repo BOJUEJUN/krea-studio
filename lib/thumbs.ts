@@ -27,7 +27,8 @@ export function directLinks(url: string | undefined, refUrl?: string): { direct?
       // Saves as a file straight from storage (2026-11-06: downloads no longer pass through the site).
       download: storeDirectUrl(`img-${id}`, { "response-content-disposition": `attachment; filename="AI-Studio_${id}.png"` })!,
     };
-    for (const w of THUMB_WIDTHS) d[w] = storeDirectUrl(`thumb-${w}-${id}`)!;
+    // 160 is not shown anywhere with direct links; leaving it out keeps the history answer smaller.
+    for (const w of THUMB_WIDTHS) if (w !== 160) d[w] = storeDirectUrl(`thumb-${w}-${id}`)!;
     out.direct = d;
   }
   const rid = refUrl?.match(/^\/api\/ref\/([0-9A-Za-z_-]{1,64})$/)?.[1];

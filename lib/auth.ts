@@ -18,7 +18,17 @@ function secret(): string {
   return s;
 }
 
+// 2026-11-06 (性能): a warm server keeps the account list for 30 s instead of reading it on every request.
+let usersCache: { at: number; data: UserFile } | null = null;
+
 async function readUsers(): Promise<UserFile> {
+  if (usersCache && Date.now() - usersCache.at < 30_000) return structuredClone(usersCache.data);
+  const data = await readUsersFresh();
+  usersCache = { at: Date.now(), data };
+  return structuredClone(data);
+}
+
+async function readUsersFresh(): Promise<UserFile> {
   const bytes = await storeGet("users.json");
   if (!bytes) return { users: [] };
   try {
@@ -42,12 +52,13 @@ export async function registerUser(name: string, password: string, invite: strin
   if (!expected || invite.trim() !== expected) throw new Error("邀请码不对");
   if (!validName(name)) throw new Error("用户名 2–20 个字，只能用字母、数字、中文、_ . -");
   if (password.length < 6) throw new Error("密码至少 6 位");
-  const file = await readUsers();
+  const file = await readUsersFresh(); // writes start from the stored list
   if (file.users.some((u) => u.name.toLowerCase() === name.toLowerCase())) throw new Error("这个用户名已经有人用了");
   const salt = randomBytes(16).toString("hex");
   const user: UserRecord = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
   file.users.push(user);
   await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
   return user;
 }
 
@@ -62,7 +73,7 @@ export async function enterByName(name: string, invite?: string): Promise<UserRe
     const code = await inviteCode();
     if (!code || invite.trim().toUpperCase() !== code.toUpperCase()) throw new Error(invite.trim() ? "邀请码不对" : "请填邀请码");
   }
-  const file = await readUsers();
+  const file = await readUsersFresh(); // writes start from the stored list
   const disabled = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase())?.disabled;
   if (disabled) throw new Error("这个账号已被停用");
   const found = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
@@ -70,6 +81,7 @@ export async function enterByName(name: string, invite?: string): Promise<UserRe
   const user: UserRecord = { name, salt: "", hash: "", owner: file.users.length === 0, createdAt: Date.now() };
   file.users.push(user);
   await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
   return user;
 }
 
@@ -99,7 +111,7 @@ export async function signIn(rawName: string, password: string, invite = ""): Pr
   const name = /^1\d{10}$/.test(digits) ? digits : rawName.trim();
   if (!validName(name)) throw new Error("请填手机号，或 2–20 个字的账号（字母、数字、中文、_ . -）");
   if (password.length < 4) throw new Error("密码至少 4 位");
-  const file = await readUsers();
+  const file = await readUsersFresh(); // writes start from the stored list
   let user = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
   if (user && user.hash) {
     const a = Buffer.from(hashPassword(password, user.salt), "hex");
@@ -121,6 +133,7 @@ export async function signIn(rawName: string, password: string, invite = ""): Pr
     file.users.push(user);
   }
   await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
   return user;
 }
 
@@ -131,11 +144,12 @@ export async function listUsers(): Promise<{ name: string; owner: boolean; disab
 }
 
 export async function setDisabled(name: string, disabled: boolean): Promise<void> {
-  const file = await readUsers();
+  const file = await readUsersFresh(); // writes start from the stored list
   const u = file.users.find((x) => x.name === name);
   if (!u || u.owner) throw new Error("不能停用这个账号");
   u.disabled = disabled;
   await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
 }
 
 export async function isOwner(name: string): Promise<boolean> {

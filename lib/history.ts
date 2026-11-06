@@ -133,6 +133,7 @@ async function readIndex(): Promise<HistoryItem[]> {
 
 /** Insert or update one task; its own blob is written before the index. */
 export async function upsertHistory(item: HistoryItem): Promise<HistoryItem> {
+  historyCache = null;
   if (!onNetlify()) {
     const list = await readFileList();
     const merged = merge(list.find((x) => sameTask(x, item)), item);
@@ -169,14 +170,25 @@ export async function readDeleted(): Promise<Set<string>> {
 }
 
 export async function markDeleted(ids: string | string[]): Promise<void> {
+  historyCache = null;
   const set = await readDeleted();
   for (const id of Array.isArray(ids) ? ids : [ids]) set.add(id);
   await blobPut(DELETED_KEY, [...set]);
 }
 
 /** Index plus any per-item record the index lost to a concurrent write. */
+// 2026-11-06 (性能): a warm server reuses what it read in the last 10 s; its own writes refresh it.
+let historyCache: { at: number; items: HistoryItem[]; deleted: Set<string> } | null = null;
+export function forgetHistoryCache() {
+  historyCache = null;
+}
+
 export async function readHistory(): Promise<HistoryItem[]> {
-  const [items, deleted] = await Promise.all([readHistoryRaw(), readDeleted()]);
+  if (!historyCache || Date.now() - historyCache.at > 10_000) {
+    const [raw, del] = await Promise.all([readHistoryRaw(), readDeleted()]);
+    historyCache = { at: Date.now(), items: raw, deleted: del };
+  }
+  const { items, deleted } = historyCache;
   return deleted.size ? items.map((x) => (deleted.has(x.id) ? { ...x, deleted: true } : x)) : items;
 }
 

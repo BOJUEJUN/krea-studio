@@ -186,6 +186,7 @@ const MIN_RES = 256;
 const EST_COST = "0.07";
 const PENDING_KEY = "krea-studio.pending-job";
 const HIST_CACHE_KEY = "krea-studio.history-cache";
+const ME_KEY = "krea-studio.me";
 /** Drag type for a history picture dropped into the compose box (2026-11-05 用户: 拖历史图进来没反应). */
 const HIST_DRAG = "application/x-studio-item";
 // 2026-11-05 (用户: 刷新后进度从 22% 掉回 11%): the running job's timing, so a reload continues the same bar.
@@ -414,14 +415,31 @@ export default function StudioPage() {
     }
   }, []);
   useEffect(() => {
+    // 2026-11-06 (性能): a returning visitor is shown as signed in at once; the check below confirms it.
+    try {
+      const me = JSON.parse(localStorage.getItem(ME_KEY) || "null");
+      if (me?.user) {
+        setUser(me.user);
+        setIsOwnerUser(!!me.owner);
+      }
+    } catch {}
     fetch("/api/auth", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         setUser(d?.user ?? null);
         setIsOwnerUser(!!d?.owner);
+        try {
+          if (d?.user) localStorage.setItem(ME_KEY, JSON.stringify({ user: d.user, owner: !!d.owner }));
+          else localStorage.removeItem(ME_KEY);
+        } catch {}
       })
       .catch(() => setUser(null));
-    const onNeed = () => setUser(null);
+    const onNeed = () => {
+      setUser(null);
+      try {
+        localStorage.removeItem(ME_KEY);
+      } catch {}
+    };
     window.addEventListener("need-login", onNeed);
     return () => window.removeEventListener("need-login", onNeed);
   }, []);
@@ -699,7 +717,7 @@ export default function StudioPage() {
       timerRef.current = window.setInterval(() => {
         const next = progressFor(timingRef.current, Date.now());
         setProgress((p) => Math.max(p, next)); // never move backwards
-      }, 200);
+      }, 400); // 2026-11-06 (性能): the whole page re-renders on each tick; 2.5×/s is smooth enough for a number
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -1593,6 +1611,7 @@ export default function StudioPage() {
                   await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
                   try {
                     localStorage.removeItem(HIST_CACHE_KEY); // the next account must not see this one's pictures
+                    localStorage.removeItem(ME_KEY);
                   } catch {}
                   setUser(null);
                   setUserMenu(false);
