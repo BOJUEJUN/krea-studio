@@ -357,7 +357,9 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 不分了，合成吧): one form — a reference image makes it 图生图, none makes it 文生图.
   const [mode, setMode] = useState<Mode>("t2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
-  const [reverse, setReverse] = useState(true);
+  const [reverseOn, setReverse] = useState(true);
+  // AI 写描述 only for the RunningHub workflow models (用户 2026-11-05); GPT / Krea 3 / Banana read the picture themselves.
+  const reverse = reverseOn && !findModel(model)?.billing;
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [prompt, setPrompt] = useState("");
   const [width, setWidth] = useState(1536);
@@ -1633,7 +1635,7 @@ export default function StudioPage() {
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
-                  {mode === "i2i" && (
+                  {mode === "i2i" && !findModel(model)?.billing && (
                     <button
                       type="button"
                       role="switch"
