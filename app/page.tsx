@@ -1221,9 +1221,9 @@ export default function StudioPage() {
                   dragState !== "none" ? "border-[#0071e3] ring-4 ring-[#0071e3]/10" : "border-black/[0.08]"
                 }`}
               >
-                {preview && (
+                {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
-                    {[{ url: preview, file: null as File | null }, ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
+                    {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
                       <span key={r.url} className="relative h-12 w-12 overflow-hidden rounded-lg border border-black/[0.08]">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
@@ -1257,6 +1257,16 @@ export default function StudioPage() {
                         </button>
                       </span>
                     ))}
+                                      {(!preview || extraRefs.length + 1 < (modelParams.maxRefs ?? 1)) && (
+                      <button
+                        type="button"
+                        onClick={() => fileRef.current?.click()}
+                        title="添加参考图（也可拖入或粘贴）"
+                        className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-black/[0.15] text-[18px] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
+                      >
+                        +
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="relative">
@@ -1304,79 +1314,10 @@ export default function StudioPage() {
                     } as React.CSSProperties}
                   />
                 </div>
-                <div className="flex items-center justify-between px-2 pb-2">
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    disabled={!!preview && extraRefs.length + 1 >= (modelParams.maxRefs ?? 1)}
-                    title="添加参考图（也可拖入或粘贴）"
-                    className="flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#6e6e73] transition hover:bg-black/[0.05] disabled:opacity-40"
-                  >
-                    <span className="text-[16px] leading-none">+</span> 图片
-                  </button>
-                  {mode === "i2i" && (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={reverse}
-                      onClick={() => {
-                        const next = !reverse;
-                        setReverse(next);
-                        localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
-                      }}
-                      className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
-                    >
-                      自动看图写描述
-                      <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
-                        <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
-                      </span>
-                    </button>
-                  )}
-                </div>
-                <div className="border-t border-black/[0.06]">
-            <div className="px-2 pb-2 pt-2">
-              {(() => {
-                const cur = findModel(model) ?? MODELS[0];
-                const ready = isReady(cur.id);
-                return (
-                  <button
-                    type="button"
-                    aria-expanded={modelOpen}
-                    onClick={() => setModelOpen((v) => !v)}
-                    className="model-current flex w-full items-center gap-3 rounded-xl p-1.5 text-left transition hover:bg-black/[0.03] active:scale-[0.99]"
-                  >
-                    {/* Natural aspect ratio: fixed height, width follows the cover. */}
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={cur.cover}
-                      alt=""
-                      className="block h-14 w-auto max-w-[96px] shrink-0 rounded-xl object-cover"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">
-                        {cur.name}
-                      </span>
-                      <span className="block truncate text-[11px] text-[#86868b]">
-                        {ready ? cur.tagline : "待接入"}
-                      </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-[#0071e3]">
-                      {modelOpen ? "收起" : "更换"}
-                      <svg
-                        className={`h-3.5 w-3.5 transition-transform ${modelOpen ? "rotate-180" : ""}`}
-                        viewBox="0 0 16 16"
-                        fill="none"
-                      >
-                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                      </svg>
-                    </span>
-                  </button>
-                );
-              })()}
-              <div className={`collapse-grid ${modelOpen ? "is-open" : ""}`} inert={!modelOpen}>
-                <div className="min-h-0 overflow-hidden">
-                <div className="pt-2">
-              <div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
+
+                {modelOpen && (
+                  <div className="max-h-[40vh] overflow-y-auto border-t border-black/[0.06] p-2">
+<div className="columns-2 gap-2" role="radiogroup" aria-label="模型">
                     {MODELS.map((m) => {
                       const on = model === m.id;
                       const ready = isReady(m.id);
@@ -1425,28 +1366,9 @@ export default function StudioPage() {
                       );
                     })}
                   </div>
-                </div>
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setParamsOpen((v) => !v)}
-              aria-expanded={paramsOpen}
-              className="flex w-full items-center justify-between border-t border-black/[0.06] px-3.5 py-2.5 text-left"
-            >
-              <span className="text-[12px] text-[#6e6e73]">参数</span>
-              <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-[#1d1d1f]">
-                <span className="truncate">{paramSummary}</span>
-                <svg className={`h-3.5 w-3.5 shrink-0 text-[#86868b] transition-transform ${paramsOpen ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none">
-                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              </span>
-            </button>
-            {paramsOpen && (
-              <>
-            {mode === "t2i" && (
+                  </div>
+                )}
+                {paramsOpen && <div className="max-h-[40vh] overflow-y-auto">            {mode === "t2i" && (
               <div className="border-t border-black/[0.06] px-3.5 py-1">
                 <div className="relative">
                   <button
@@ -1762,15 +1684,49 @@ export default function StudioPage() {
                 )}
               </div>
             )}
-              </>
-            )}
-                </div>
-          <div className="flex flex-wrap items-center gap-3 border-t border-black/[0.06] p-2.5">
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-[0.06em] text-[#86868b]">
-                张数
-              </span>
-              <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
+</div>}
+                {/* Everything you can set sits in this one row (用户: 参数全在底部一排). */}
+                <div className="flex flex-wrap items-center gap-1.5 border-t border-black/[0.06] px-2 py-2">
+                  <button
+                    type="button"
+                    aria-expanded={modelOpen}
+                    onClick={() => { setModelOpen((v) => !v); setParamsOpen(false); }}
+                    className="flex h-8 items-center gap-1.5 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.08]"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={(findModel(model) ?? MODELS[0]).cover} alt="" className="h-5 w-5 rounded object-cover" />
+                    {(findModel(model) ?? MODELS[0]).name}
+                    <span className="text-[#86868b]">▾</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-expanded={paramsOpen}
+                    onClick={() => { setParamsOpen((v) => !v); setModelOpen(false); }}
+                    className="flex h-8 items-center gap-1.5 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.08]"
+                  >
+                    {paramSummary}
+                    <span className="text-[#86868b]">▾</span>
+                  </button>
+                  {mode === "i2i" && (
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={reverse}
+                      onClick={() => {
+                        const next = !reverse;
+                        setReverse(next);
+                        localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
+                      }}
+                      className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
+                    >
+                      自动看图写描述
+                      <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
+                        <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
+                      </span>
+                    </button>
+                  )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <div className="apple-seg flex" role="radiogroup" aria-label="出图数量">
                 {[1, 2, 3, 4].map((n) => (
                   <button
                     key={n}
@@ -1783,19 +1739,18 @@ export default function StudioPage() {
                       setCount(n);
                       localStorage.setItem(COUNT_KEY, String(n));
                     }}
-                    className="apple-seg-item w-9 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
+                    className="apple-seg-item w-7 py-1 text-[12px] font-medium tabular-nums text-[#6e6e73]"
                   >
                     {n}
                   </button>
                 ))}
               </div>
-            </div>
-            <button
+                    <button
               onClick={generate}
               disabled={
                 loading || !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
               }
-              className="apple-btn-primary flex flex-1 items-center justify-center gap-2 py-3 text-[15px]"
+              className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]"
             >
               {loading ? (
                 <>
@@ -1806,20 +1761,23 @@ export default function StudioPage() {
                 <span>{findModel(model)?.name} 待接入</span>
               ) : (
                 <>
-                  <span>开始生成</span>
+                  <span>生成</span>
                   <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
                     ¥{btnPrice}
                   </span>
                 </>
               )}
             </button>
-            {error && (
+                  </div>
+                </div>
+
+          
+              </div>
+              {error && (
               <div className="animate-chip-in mt-2 rounded-2xl bg-[#fff1f0] px-3.5 py-2.5 text-[12px] text-[#d70015]">
                 {error}
               </div>
             )}
-          </div>
-              </div>
               <input
                 ref={fileRef}
                 type="file"
