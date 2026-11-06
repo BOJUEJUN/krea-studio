@@ -11,17 +11,51 @@ export const COMPARE_MODES: { key: CompareMode; label: string }[] = [
   { key: "blend", label: "叠加" },
 ];
 
-function Tag({ children, side }: { children: string; side: "left" | "right" }) {
+function Tag({ children, style }: { children: string; style?: React.CSSProperties }) {
   return (
     <span
-      className={`pointer-events-none absolute top-2 z-10 rounded-full bg-black/55 px-2 py-0.5 text-[11px] font-medium text-white ${
-        // Clear of the account button in the card's top-left corner (2026-11-06 用户: 重叠).
-        side === "left" ? "left-14" : "right-2"
-      }`}
+      className="pointer-events-none absolute z-10 rounded-full bg-black/55 px-2.5 py-0.5 text-[11px] font-medium text-white backdrop-blur"
+      style={style}
     >
       {children}
     </span>
   );
+}
+
+/**
+ * 2026-11-06 (用户: 原图/结果没对称): where the picture really sits inside the box (object-contain), so labels and
+ * controls go on its own corners, mirrored left / right, and clear of the account button in the card corner.
+ */
+function usePictureRect(boxRef: React.RefObject<HTMLDivElement | null>, src: string) {
+  const [ratio, setRatio] = useState(0);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const im = new Image();
+    im.onload = () => im.naturalHeight && setRatio(im.naturalWidth / im.naturalHeight);
+    im.src = src;
+  }, [src]);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const fit = () => setBox({ w: el.clientWidth, h: el.clientHeight });
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [boxRef]);
+  const r = ratio || 1;
+  const w = Math.min(box.w, box.h * r);
+  const h = w / r;
+  const x = (box.w - w) / 2;
+  const y = (box.h - h) / 2;
+  // Keep 10px inside the picture, but never under the round account button (about 56px from the corner).
+  const inset = y < 50 ? Math.max(10, 56 - x) : 10;
+  return {
+    topLeft: { left: x + inset, top: y + 10 } as React.CSSProperties,
+    topRight: { right: x + inset, top: y + 10 } as React.CSSProperties,
+    bottomLeft: { left: x + 10, bottom: y + 10 } as React.CSSProperties,
+    bottomRight: { right: x + 10, bottom: y + 10 } as React.CSSProperties,
+  };
 }
 
 type View = { s: number; x: number; y: number };
@@ -108,7 +142,7 @@ export function useZoom() {
   return { view, setView, style, bind, down, move, up, moved, zoomAt };
 }
 
-function ZoomBar({ z, boxRef }: { z: ReturnType<typeof useZoom>; boxRef: React.RefObject<HTMLDivElement | null> }) {
+function ZoomBar({ z, boxRef, style }: { z: ReturnType<typeof useZoom>; boxRef: React.RefObject<HTMLDivElement | null>; style?: React.CSSProperties }) {
   const step = (k: number) => {
     const el = boxRef.current;
     if (!el) return;
@@ -118,7 +152,8 @@ function ZoomBar({ z, boxRef }: { z: ReturnType<typeof useZoom>; boxRef: React.R
   const btn = "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[13px] text-[#1d1d1f] hover:bg-black/[0.06]";
   return (
     <div
-      className="absolute bottom-2 right-2 z-20 flex items-center gap-0.5 rounded-full bg-white/85 p-0.5 shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur"
+      className="absolute z-20 flex items-center gap-0.5 rounded-full bg-white/85 p-0.5 shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur"
+      style={style ?? { right: 8, bottom: 8 }}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
@@ -153,6 +188,7 @@ export function CompareView({
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef<"divider" | "pan" | null>(null);
   const z = useZoom();
+  const at = usePictureRect(boxRef, after);
   // The wheel zooms the pictures instead of scrolling the page.
   useEffect(() => {
     const el = boxRef.current;
@@ -172,7 +208,7 @@ export function CompareView({
   const layer = "absolute inset-0 will-change-transform";
   const cursor = z.view.s > 1 ? "cursor-grab active:cursor-grabbing" : "cursor-zoom-in";
   const hint = z.view.s === 1 && (
-    <span className="pointer-events-none absolute bottom-2 left-2 z-10 rounded-full bg-black/45 px-2 py-0.5 text-[10px] text-white">
+    <span className="pointer-events-none absolute z-10 rounded-full bg-black/45 px-2.5 py-1 text-[10px] text-white backdrop-blur" style={at.bottomLeft}>
       滚轮 / 双击放大
     </span>
   );
@@ -202,7 +238,7 @@ export function CompareView({
           ["结果", after],
         ].map(([label, src]) => (
           <div key={label} className={`relative h-full min-h-0 touch-none overflow-hidden rounded-xl bg-black/[0.03] ${cursor}`} {...panProps}>
-            <Tag side="left">{label}</Tag>
+            <Tag style={{ left: "50%", top: 10, translate: "-50% 0" }}>{label}</Tag>
             <div className={layer} style={z.style}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={src} alt={label} draggable={false} className={img} />
@@ -224,7 +260,7 @@ export function CompareView({
         role="button"
         aria-label="点击切换原图与结果"
       >
-        <Tag side="left">{showBefore ? "原图" : "结果"}</Tag>
+        <Tag style={at.topLeft}>{showBefore ? "原图" : "结果"}</Tag>
         <span className="pointer-events-none absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full bg-black/55 px-2.5 py-1 text-[11px] text-white">
           点击切换
         </span>
@@ -239,7 +275,7 @@ export function CompareView({
             className={`${img} transition-opacity duration-200 ${showBefore ? "opacity-100" : "opacity-0"}`}
           />
         </div>
-        <ZoomBar z={z} boxRef={boxRef} />
+        <ZoomBar z={z} boxRef={boxRef} style={at.bottomRight} />
       </div>
     );
   }
@@ -255,7 +291,7 @@ export function CompareView({
             <img src={after} alt="结果" draggable={false} className={img} style={{ opacity: blend / 100 }} />
           </div>
           {hint}
-          <ZoomBar z={z} boxRef={boxRef} />
+          <ZoomBar z={z} boxRef={boxRef} style={at.bottomRight} />
         </div>
         <label className="flex shrink-0 items-center gap-2 px-2 text-[11px] text-[#6e6e73]">
           原图
@@ -305,8 +341,8 @@ export function CompareView({
         dragging.current = null;
       }}
     >
-      <Tag side="left">原图</Tag>
-      <Tag side="right">结果</Tag>
+      <Tag style={at.topLeft}>原图</Tag>
+      <Tag style={at.topRight}>结果</Tag>
       <div className={layer} style={z.style}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={after} alt="结果" draggable={false} className={img} />
@@ -324,7 +360,7 @@ export function CompareView({
         </div>
       </div>
       {hint}
-      <ZoomBar z={z} boxRef={boxRef} />
+      <ZoomBar z={z} boxRef={boxRef} style={at.bottomRight} />
     </div>
   );
 }

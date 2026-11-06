@@ -109,11 +109,19 @@ const smooth = (a: number, b: number, x: number) => {
  * ~10 s. Inside, a finer noise layer makes denser and sparser areas drift.
  * Parameters were tuned offline against rendered frame sequences.
  */
-function blobDensity(u: number, v: number, w: number, h: number, t: number) {
+/** Per-animation randomness (2026-11-06 用户: 生成动画不要一模一样，每次随机): where the noise starts, which way it
+ * drifts and the phase of the wandering blob. */
+type Seed = { ox: number; oy: number; oz: number; dx: number; dy: number; p1: number; p2: number; p3: number };
+export function randomSeed(): Seed {
+  const r = Math.random;
+  return { ox: r() * 200, oy: r() * 200, oz: r() * 200, dx: (r() - 0.5) * 0.05, dy: (r() - 0.5) * 0.04, p1: r() * 6.28, p2: r() * 6.28, p3: r() * 6.28 };
+}
+
+function blobDensity(u: number, v: number, w: number, h: number, t: number, sd: Seed) {
   const F = 1.2;
-  const z = t * 0.06; // slow: the shape morphs, it never twitches
-  const px = u * F + t * 0.02;
-  const py = v * F - t * 0.012;
+  const z = t * 0.06 + sd.oz; // slow: the shape morphs, it never twitches
+  const px = u * F + t * sd.dx + sd.ox;
+  const py = v * F + t * sd.dy + sd.oy;
   const qx = noise3(px, py, z);
   const qy = noise3(px + 5.2, py + 1.3, z + 2.7);
   const n =
@@ -121,9 +129,9 @@ function blobDensity(u: number, v: number, w: number, h: number, t: number) {
     0.35 * noise3(2.1 * px + 1.8 * qx, 2.1 * py + 1.8 * qy, z * 1.7 + 9.1);
 
   const ws = 0.6;
-  const cx = w * (0.5 + 0.18 * Math.sin(t * 0.21 * ws)) + 0.08 * Math.sin(t * 0.53 * ws);
-  const cy = h * (0.42 + 0.14 * Math.sin(t * 0.17 * ws + 1.1)) + 0.06 * Math.cos(t * 0.41 * ws);
-  const R = 0.38 + 0.05 * Math.sin(t * 0.33 * ws);
+  const cx = w * (0.5 + 0.18 * Math.sin(t * 0.21 * ws + sd.p1)) + 0.08 * Math.sin(t * 0.53 * ws + sd.p2);
+  const cy = h * (0.45 + 0.14 * Math.sin(t * 0.17 * ws + sd.p3)) + 0.06 * Math.cos(t * 0.41 * ws + sd.p1);
+  const R = 0.38 + 0.05 * Math.sin(t * 0.33 * ws + sd.p2);
   const d = Math.hypot(u - cx, (v - cy) * 1.1) / R + 1.4 * n;
   let blob = 1 - smooth(0.45, 1.15, d);
 
@@ -165,7 +173,8 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
     const BUCKETS = 10; // dots are batched by opacity: one fill per bucket
     let raf = 0;
     let last = 0;
-    const t0 = performance.now();
+    const t0 = performance.now() - Math.random() * 60_000; // each one starts somewhere else in its motion
+    const sd = randomSeed();
     const draw = (now: number) => {
       raf = reduce ? 0 : requestAnimationFrame(draw);
       if (now - last < 33 && !reduce) return; // ~30 fps is plenty for slow motion
@@ -179,7 +188,7 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
       const paths: Path2D[] = Array.from({ length: BUCKETS }, () => new Path2D());
       for (let y = GAP / 2; y < H; y += GAP) {
         for (let x = GAP / 2; x < W; x += GAP) {
-          const a = blobDensity(x / S, y / S, W / S, H / S, t);
+          const a = blobDensity(x / S, y / S, W / S, H / S, t, sd);
           if (a < 0.04) continue;
           const k = Math.min(BUCKETS - 1, Math.floor(a * BUCKETS));
           const r = 0.55 + a * 0.75;
