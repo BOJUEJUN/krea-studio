@@ -9,7 +9,7 @@ import { storeGet, storePut } from "./store";
 export const SESSION_COOKIE = "ais_session";
 const SESSION_DAYS = 30;
 
-type UserRecord = { name: string; salt: string; hash: string; owner?: boolean; createdAt: number };
+type UserRecord = { name: string; salt: string; hash: string; owner?: boolean; disabled?: boolean; createdAt: number };
 type UserFile = { users: UserRecord[] };
 
 function secret(): string {
@@ -70,7 +70,23 @@ export async function enterByName(name: string): Promise<UserRecord> {
  * 2026-11-05 (用户: 弄成假登录): looks like a normal sign-in. A new name is created with the password typed the
  * first time (a name made earlier without a password takes it now); after that the same password is needed.
  */
-export async function signIn(rawName: string, password: string): Promise<UserRecord> {
+/** Current invite code: the one set from the admin page, else env INVITE_CODE. */
+export async function inviteCode(): Promise<string> {
+  const bytes = await storeGet("settings.json").catch(() => null);
+  try {
+    const code = bytes ? JSON.parse(bytes.toString("utf8"))?.inviteCode : null;
+    if (typeof code === "string" && code) return code;
+  } catch {}
+  return process.env.INVITE_CODE || "";
+}
+
+export async function setInviteCode(code: string): Promise<void> {
+  await storePut("settings.json", JSON.stringify({ inviteCode: code }), "application/json");
+}
+
+export class NeedInvite extends Error {}
+
+export async function signIn(rawName: string, password: string, invite = ""): Promise<UserRecord> {
   // A phone number may be typed with spaces, dashes or +86.
   const digits = rawName.replace(/[\s-]/g, "").replace(/^\+?86(?=1\d{10}$)/, "");
   const name = /^1\d{10}$/.test(digits) ? digits : rawName.trim();
@@ -84,6 +100,11 @@ export async function signIn(rawName: string, password: string): Promise<UserRec
     if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error("密码不对");
     return user;
   }
+  // 2026-11-05 (用户: 防别人拿到网址就能用): a brand-new account needs the invite code.
+  if (!user) {
+    const code = await inviteCode();
+    if (!code || invite.trim().toUpperCase() !== code.toUpperCase()) throw new NeedInvite(invite ? "邀请码不对" : "新账号需要邀请码");
+  }
   const salt = randomBytes(16).toString("hex");
   if (user) {
     user.salt = salt;
@@ -94,6 +115,36 @@ export async function signIn(rawName: string, password: string): Promise<UserRec
   }
   await storePut("users.json", JSON.stringify(file), "application/json");
   return user;
+}
+
+/** Accounts (no password data) for the owner's admin page. */
+export async function listUsers(): Promise<{ name: string; owner: boolean; disabled: boolean; createdAt: number }[]> {
+  const file = await readUsers();
+  return file.users.map((u) => ({ name: u.name, owner: !!u.owner, disabled: !!u.disabled, createdAt: u.createdAt }));
+}
+
+export async function setDisabled(name: string, disabled: boolean): Promise<void> {
+  const file = await readUsers();
+  const u = file.users.find((x) => x.name === name);
+  if (!u || u.owner) throw new Error("不能停用这个账号");
+  u.disabled = disabled;
+  await storePut("users.json", JSON.stringify(file), "application/json");
+}
+
+export async function isOwner(name: string): Promise<boolean> {
+  const file = await readUsers();
+  return !!file.users.find((u) => u.name === name)?.owner;
+}
+
+/** Signed in and not stopped by the owner; otherwise a 401/403 response to return. */
+export async function activeUser(req: Request): Promise<{ user: string } | { res: Response }> {
+  const user = sessionUser(req);
+  if (!user) return { res: unauthorized() };
+  const file = await readUsers();
+  if (file.users.find((u) => u.name === user)?.disabled) {
+    return { res: Response.json({ ok: false, error: "这个账号已被停用" }, { status: 403 }) };
+  }
+  return { user };
 }
 
 export async function checkLogin(name: string, password: string): Promise<UserRecord | null> {

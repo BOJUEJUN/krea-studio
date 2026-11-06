@@ -6,6 +6,8 @@ import { useState } from "react";
 export function LoginView({ onDone }: { onDone: (user: string) => void }) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [invite, setInvite] = useState("");
+  const [needInvite, setNeedInvite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -17,9 +19,10 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "signin", name, password }),
+        body: JSON.stringify({ action: "signin", name, password, invite }),
       });
       const data = await res.json().catch(() => ({}));
+      if (data?.needInvite) setNeedInvite(true);
       if (!data?.ok) throw new Error(data?.error || "登录失败");
       onDone(data.user);
     } catch (err: any) {
@@ -55,7 +58,16 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <div className="mt-2 text-[11px] text-[#aeaeb2]">第一次登录会自动注册</div>
+        {needInvite && (
+          <input
+            autoFocus
+            className="mt-2.5 w-full rounded-xl border border-[#0071e3]/40 bg-white px-3.5 py-2.5 text-[14px] uppercase tracking-[0.2em] text-[#1d1d1f] outline-none focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+            placeholder="邀请码"
+            value={invite}
+            onChange={(e) => setInvite(e.target.value)}
+          />
+        )}
+        <div className="mt-2 text-[11px] text-[#aeaeb2]">{needInvite ? "新账号需要邀请码，向管理员要" : "第一次登录会自动注册"}</div>
         {error && <div className="mt-3 rounded-xl bg-[#fff1f0] px-3 py-2 text-[12px] text-[#d70015]">{error}</div>}
         <button type="submit" disabled={busy || !name.trim() || !password} className="apple-btn-primary mt-4 flex w-full items-center justify-center py-3 text-[15px]">
           {busy ? "请稍候…" : "登录"}

@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE, checkLogin, enterByName, makeSession, registerUser, sessionUser, signIn } from "@/lib/auth";
+import { NeedInvite, SESSION_COOKIE, checkLogin, enterByName, isOwner, makeSession, registerUser, sessionUser, signIn } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /** Who is signed in (null when nobody). */
 export async function GET(req: NextRequest) {
-  return NextResponse.json({ ok: true, user: sessionUser(req) }, { headers: { "Cache-Control": "no-store" } });
+  const user = sessionUser(req);
+  return NextResponse.json({ ok: true, user, owner: user ? await isOwner(user) : false }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /** { action: "login" | "register" | "logout", name, password, invite } */
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
     const password = String(body.password || "");
     const user =
       action === "signin"
-        ? await signIn(name, password)
+        ? await signIn(name, password, String(body.invite || ""))
         : action === "enter"
         ? await enterByName(name)
         : action === "register"
@@ -41,6 +42,6 @@ export async function POST(req: NextRequest) {
     });
     return res;
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "登录失败" }, { status: 400 });
+    return NextResponse.json({ ok: false, error: e?.message || "登录失败", needInvite: e instanceof NeedInvite }, { status: 400 });
   }
 }

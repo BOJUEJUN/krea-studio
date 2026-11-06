@@ -1,4 +1,4 @@
-import { sessionUser, unauthorized } from "@/lib/auth";
+import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildWorkflowNodes,
@@ -18,8 +18,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
-  const user = sessionUser(req);
-  if (!user) return unauthorized();
+  const who = await activeUser(req);
+  if ("res" in who) return who.res;
+  const user = who.user;
   try {
     const form = await req.formData();
     const prompt = String(form.get("prompt") || "").trim();

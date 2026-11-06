@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
 import { LoginView } from "./login-view";
+import { AdminPanel } from "./admin-panel";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import {
   DEFAULT_MODEL,
@@ -322,6 +323,8 @@ export default function StudioPage() {
   // undefined = still checking, null = signed out.
   const [user, setUser] = useState<string | null | undefined>(undefined);
   const [userMenu, setUserMenu] = useState(false);
+  const [isOwnerUser, setIsOwnerUser] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   // The name menu closes when you click anywhere else.
   useEffect(() => {
@@ -342,7 +345,10 @@ export default function StudioPage() {
   useEffect(() => {
     fetch("/api/auth", { cache: "no-store" })
       .then((r) => r.json())
-      .then((d) => setUser(d?.user ?? null))
+      .then((d) => {
+        setUser(d?.user ?? null);
+        setIsOwnerUser(!!d?.owner);
+      })
       .catch(() => setUser(null));
     const onNeed = () => setUser(null);
     window.addEventListener("need-login", onNeed);
@@ -1186,6 +1192,7 @@ export default function StudioPage() {
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
+      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
       {user && (
         <div ref={userMenuRef} className="fixed left-4 top-4 z-50">
           <button
@@ -1201,6 +1208,18 @@ export default function StudioPage() {
               <div className="px-2.5 py-1.5 text-[12px] text-[#86868b]">
                 {/^1\d{10}$/.test(user) ? `${user.slice(0, 3)}****${user.slice(-4)}` : user}
               </div>
+              {isOwnerUser && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminOpen(true);
+                    setUserMenu(false);
+                  }}
+                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]"
+                >
+                  管理
+                </button>
+              )}
               <button
                 type="button"
                 onClick={async () => {
