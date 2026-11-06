@@ -1588,21 +1588,29 @@ export default function StudioPage() {
         />
         )}
 
-        {histHidden && (
-          <button
-            type="button"
-            onClick={() => toggleHistory(false)}
-            title="展开历史"
-            className="apple-card stagger-3 ml-2 flex shrink-0 flex-row items-center justify-center gap-2 rounded-[22px] px-3 py-3 text-[13px] font-semibold text-[#1d1d1f] transition hover:bg-black/[0.03] lg:w-12 lg:flex-col lg:py-5"
-          >
-            <span className="text-[#86868b]">‹</span>
-            <span className="lg:[writing-mode:vertical-rl]">历史 {histStats.done}</span>
-          </button>
-        )}
         <aside
-          className={`apple-card stagger-3 min-h-[40vh] w-full shrink-0 flex-col overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "hidden" : "flex"}`}
-          style={isDesktop ? { width: rightPx } : undefined}
+          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 ${histHidden ? "min-h-[52px]" : "min-h-[40vh]"} ${histHidden && isDesktop ? "lg:ml-2" : ""}`}
+          style={
+            isDesktop
+              ? {
+                  width: histHidden ? 48 : rightPx,
+                  // Glides open / closed; follows the pointer instantly while being dragged.
+                  transition: draggingRef.current ? "none" : "width 420ms cubic-bezier(0.22, 1, 0.36, 1), margin 420ms cubic-bezier(0.22, 1, 0.36, 1)",
+                }
+              : undefined
+          }
         >
+          <div
+            className="flex h-full flex-col"
+            style={{
+              width: isDesktop ? rightPx : undefined,
+              opacity: histHidden ? 0 : 1,
+              transform: histHidden ? "translateX(24px)" : "none",
+              transition: "opacity 260ms ease, transform 420ms cubic-bezier(0.22, 1, 0.36, 1)",
+              pointerEvents: histHidden ? "none" : undefined,
+              display: !isDesktop && histHidden ? "none" : undefined,
+            }}
+          >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
             <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">历史</h2>
             <span className="ml-auto truncate text-[11px] tabular-nums text-[#86868b]">
@@ -1864,6 +1872,19 @@ export default function StudioPage() {
               </button>
             </div>
           )}
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleHistory(false)}
+            title="展开历史"
+            aria-hidden={!histHidden}
+            tabIndex={histHidden ? 0 : -1}
+            className="absolute inset-0 flex items-center justify-center gap-2 text-[13px] font-semibold text-[#1d1d1f] transition-colors hover:bg-black/[0.03] lg:flex-col"
+            style={{ opacity: histHidden ? 1 : 0, pointerEvents: histHidden ? undefined : "none", transition: "opacity 300ms ease 120ms" }}
+          >
+            <span className="text-[#86868b]">‹</span>
+            <span className="lg:[writing-mode:vertical-rl]">历史</span>
+          </button>
         </aside>
       </main>
 
