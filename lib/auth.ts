@@ -7,7 +7,7 @@ import { storeGet, storePut } from "./store";
  * existed. Sessions are signed cookies (env SESSION_SECRET), 30 days.
  */
 export const SESSION_COOKIE = "ais_session";
-const SESSION_DAYS = 30;
+const SESSION_DAYS = 365; // log in once a year per device (用户: 不想麻烦)
 
 type UserRecord = { name: string; salt: string; hash: string; owner?: boolean; disabled?: boolean; createdAt: number };
 type UserFile = { users: UserRecord[] };
