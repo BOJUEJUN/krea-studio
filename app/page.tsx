@@ -52,13 +52,13 @@ function withMentions(text: string) {
 function Choice({ options, value, onPick, note }: { options: [string, string][]; value: string; onPick: (v: string) => void; note?: string }) {
   return (
     <div className="flex flex-col">
-      {note && <div className="px-2.5 pb-1 text-[11px] text-[#86868b]">{note}</div>}
+      {note && <div className="max-w-[200px] px-2.5 pb-1 text-[11px] text-[#86868b]">{note}</div>}
       {options.map(([v, t]) => (
         <button
           key={v}
           type="button"
           onClick={() => onPick(v)}
-          className={`flex items-center justify-between rounded-xl px-2.5 py-2 text-left text-[13px] transition ${value === v ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}
+          className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-left text-[13px] transition ${value === v ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}
         >
           {t}
           {value === v && <span>✓</span>}
@@ -1406,10 +1406,10 @@ export default function StudioPage() {
                 <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
                   {openPanel && (
                     <div
-                      className="animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] w-[300px] overflow-y-auto rounded-2xl bg-white p-2 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]"
+                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "denoise", "lora"].includes(openPanel) ? "w-[300px]" : "w-max min-w-[112px]"}`}
                       style={{ left: panelLeft }}
                     >
-                      <div className="px-2.5 pb-1.5 pt-1 text-[13px] font-semibold text-[#1d1d1f]">
+                      <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
                         {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "只改局部", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
                       </div>
                     
@@ -1859,10 +1859,10 @@ export default function StudioPage() {
                         <div className="mt-2 flex flex-wrap items-center gap-1">
                           {(
                             [
-                              ["下载", () => downloadItem(currentItem)],
-                              ["复制", () => copyPrompt(currentItem)],
-                              ["复用", () => reuseItem(currentItem)],
-                              ["作参考", () => useAsReference(currentItem)],
+                              // 下载 / 对比 live under the big picture; here only what reuses this record.
+                              ["用这组设置", () => reuseItem(currentItem)],
+                              ["当参考图", () => useAsReference(currentItem)],
+                              ["复制描述", () => copyPrompt(currentItem)],
                             ] as const
                           ).map(([label, fn]) => (
                             <button
@@ -1870,9 +1870,7 @@ export default function StudioPage() {
                               type="button"
                               onClick={fn}
                               className={`item-action rounded-full px-2.5 py-1 text-[11px] font-medium transition active:scale-[0.96] ${
-                                label === "下载"
-                                  ? "bg-[#0071e3] text-white hover:bg-[#0077ed]"
-                                  : "bg-white text-[#1d1d1f] hover:text-[#0071e3]"
+                                "bg-white text-[#1d1d1f] hover:text-[#0071e3]"
                               }`}
                             >
                               {label}
