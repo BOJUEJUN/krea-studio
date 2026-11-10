@@ -60,6 +60,8 @@ function usePictureRect(boxRef: React.RefObject<HTMLDivElement | null>, src: str
 
 type View = { s: number; x: number; y: number };
 const MAX = 8;
+/** 2026-11-10 (用户: 对比要支持缩小): down to 25%, kept centred. */
+const MIN = 0.25;
 
 /**
  * 2026-11-05 (用户: 对比要支持放大查看细节): one zoom shared by both pictures. Wheel or pinch zooms at the
@@ -74,8 +76,8 @@ export function useZoom() {
   const moved = useRef(false);
 
   const clamp = (v: View, el: HTMLElement): View => {
-    const s = Math.min(MAX, Math.max(1, v.s));
-    if (s === 1) return { s: 1, x: 0, y: 0 };
+    const s = Math.min(MAX, Math.max(MIN, Math.abs(v.s - 1) < 0.01 ? 1 : v.s));
+    if (s <= 1) return { s, x: 0, y: 0 };
     const mx = (el.clientWidth * (s - 1)) / 2;
     const my = (el.clientHeight * (s - 1)) / 2;
     return { s, x: Math.min(mx, Math.max(-mx, v.x)), y: Math.min(my, Math.max(-my, v.y)) };
@@ -87,7 +89,7 @@ export function useZoom() {
     const px = cx - r.left - r.width / 2;
     const py = cy - r.top - r.height / 2;
     const v = viewRef.current;
-    const k = Math.min(MAX, Math.max(1, s)) / v.s;
+    const k = Math.min(MAX, Math.max(MIN, s)) / v.s;
     setView(clamp({ s: v.s * k, x: px - (px - v.x) * k, y: py - (py - v.y) * k }, el));
   }, []);
 
@@ -96,7 +98,7 @@ export function useZoom() {
       zoomAt(e.currentTarget, e.clientX, e.clientY, viewRef.current.s * Math.exp(-e.deltaY * 0.0025));
     },
     onDoubleClick: (e: React.MouseEvent<HTMLElement>) => {
-      zoomAt(e.currentTarget, e.clientX, e.clientY, viewRef.current.s > 1 ? 1 : 3);
+      zoomAt(e.currentTarget, e.clientX, e.clientY, viewRef.current.s !== 1 ? 1 : 3);
     },
   };
 
@@ -142,12 +144,18 @@ export function useZoom() {
   return { view, setView, style, bind, down, move, up, moved, zoomAt };
 }
 
+/** One button step; crossing 100% stops there, so the buttons always come back to it. */
+export function stepScale(s: number, k: number) {
+  const next = s * k;
+  return (s < 1 && next > 1) || (s > 1 && next < 1) ? 1 : next;
+}
+
 function ZoomBar({ z, boxRef, style }: { z: ReturnType<typeof useZoom>; boxRef: React.RefObject<HTMLDivElement | null>; style?: React.CSSProperties }) {
   const step = (k: number) => {
     const el = boxRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    z.zoomAt(el, r.left + r.width / 2, r.top + r.height / 2, z.view.s * k);
+    z.zoomAt(el, r.left + r.width / 2, r.top + r.height / 2, stepScale(z.view.s, k));
   };
   const btn = "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[13px] text-[#1d1d1f] hover:bg-black/[0.06]";
   return (
