@@ -2336,73 +2336,6 @@ ${link}`;
           {notice}
         </div>
       )}
-      {user && (
-        <div ref={userMenuRef} className="fixed left-5 top-5 z-50">
-          <button
-            type="button"
-            onClick={() => setUserMenu((v) => !v)}
-            data-tip={user} data-tip-start=""
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-panel/90 text-[14px] font-semibold text-ink shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl transition hover:scale-105"
-          >
-            {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
-          </button>
-          {userMenu && (
-            <div className="animate-pop-in absolute left-0 top-11 min-w-[140px] rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
-              <div className="px-2.5 py-1.5 text-[12px] text-muted">
-                {/^1\d{10}$/.test(user) ? `${user.slice(0, 3)}****${user.slice(-4)}` : user}
-              </div>
-              {isOwnerUser && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    // 2026-11-05 (用户: 管理要是正常的页面): its own page, not a pop-up.
-                    window.location.href = "/admin";
-                  }}
-                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
-                >
-                  管理
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={async () => {
-                  // 用户 2026-11-11 (账号密码，安全一些): change the password here.
-                  setUserMenu(false);
-                  const oldPassword = window.prompt("原密码（还没设过密码就留空）") ?? null;
-                  if (oldPassword === null) return;
-                  const newPassword = window.prompt("新密码（至少 6 位）") ?? "";
-                  if (!newPassword) return;
-                  if (window.prompt("再输一次新密码") !== newPassword) return flash("两次输入的新密码不一样");
-                  const d = await fetchJson("/api/auth", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action: "change", oldPassword, newPassword }),
-                  }).catch((e: any) => ({ ok: false, error: e?.message }));
-                  flash(d?.ok ? "密码已修改" : d?.error || "修改失败");
-                }}
-                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
-              >
-                修改密码
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
-                  try {
-                    localStorage.removeItem(HIST_CACHE_KEY); // the next account must not see this one's pictures
-                    localStorage.removeItem(ME_KEY);
-                  } catch {}
-                  setUser(null);
-                  setUserMenu(false);
-                }}
-                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-danger hover:bg-edge/[0.04]"
-              >
-                退出登录
-              </button>
-            </div>
-          )}
-        </div>
-      )}
       <div
         aria-hidden
         className="pointer-events-none fixed inset-0"
@@ -2412,9 +2345,76 @@ ${link}`;
         }}
       />
 
-      {user && !phone && (
-        // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar (not on phones).
-        <div className="fixed left-5 top-[68px] z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
+      {user && (
+        <nav aria-label="工作室工具" className="fixed left-5 top-5 z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
+          <div ref={userMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setUserMenu((v) => !v)}
+              aria-label="用户信息"
+              aria-expanded={userMenu}
+              data-tip={userMenu ? undefined : user} data-tip-start=""
+              className="flex h-8 w-8 items-center justify-center rounded-full text-[14px] font-semibold text-ink transition hover:bg-edge/[0.06] aria-expanded:bg-edge/[0.06]"
+            >
+              {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
+            </button>
+            {userMenu && (
+              <div className="animate-pop-in absolute left-0 top-11 md:left-11 md:top-0 min-w-[140px] rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+                <div className="px-2.5 py-1.5 text-[12px] text-muted">
+                  {/^1\d{10}$/.test(user) ? `${user.slice(0, 3)}****${user.slice(-4)}` : user}
+                </div>
+                {isOwnerUser && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // 2026-11-05 (用户: 管理要是正常的页面): its own page, not a pop-up.
+                      window.location.href = "/admin";
+                    }}
+                    className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
+                  >
+                    管理
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={async () => {
+                    // 用户 2026-11-11 (账号密码，安全一些): change the password here.
+                    setUserMenu(false);
+                    const oldPassword = window.prompt("原密码（还没设过密码就留空）") ?? null;
+                    if (oldPassword === null) return;
+                    const newPassword = window.prompt("新密码（至少 6 位）") ?? "";
+                    if (!newPassword) return;
+                    if (window.prompt("再输一次新密码") !== newPassword) return flash("两次输入的新密码不一样");
+                    const d = await fetchJson("/api/auth", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ action: "change", oldPassword, newPassword }),
+                    }).catch((e: any) => ({ ok: false, error: e?.message }));
+                    flash(d?.ok ? "密码已修改" : d?.error || "修改失败");
+                  }}
+                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
+                >
+                  修改密码
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
+                    try {
+                      localStorage.removeItem(HIST_CACHE_KEY); // the next account must not see this one's pictures
+                      localStorage.removeItem(ME_KEY);
+                    } catch {}
+                    setUser(null);
+                    setUserMenu(false);
+                  }}
+                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-danger hover:bg-edge/[0.04]"
+                >
+                  退出登录
+                </button>
+              </div>
+            )}
+          </div>
+          {!phone && <div className="flex flex-col items-center gap-1">
           {([
             ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
             ["canvas", "自由画布", <path key="p" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />],
@@ -2562,7 +2562,8 @@ ${link}`;
               </div>
             )}
           </div>
-        </div>
+          </div>}
+        </nav>
       )}
       <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
