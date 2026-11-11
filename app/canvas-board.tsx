@@ -28,6 +28,8 @@ export type BoardApi = {
   paste: (files: File[]) => void;
   /** The compose box edits the selected text node. */
   setText: (text: string) => void;
+  /** The board with every picture as a link (for 分享); null while a picture is still uploading. */
+  snapshot: () => { nodes: any[]; view: View } | null;
 };
 
 type Node = {
@@ -106,6 +108,7 @@ export function CanvasBoard({
   prefs,
   onSelectionText,
   summaryFor,
+  onShare,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
@@ -125,6 +128,7 @@ export function CanvasBoard({
   prefs?: { snap: boolean; grid: boolean; lines: boolean; map?: boolean };
   /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
   onSelectionText?: (text: string | null) => void;
+  onShare?: () => void;
   /** The settings chosen for a picture (model + short list), shown under it when it is not being edited. */
   summaryFor?: (url: string) => { model: string; cover?: string; detail: string } | null;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
@@ -159,6 +163,7 @@ export function CanvasBoard({
   const fileRef = useRef<HTMLInputElement>(null);
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
+  const urlOfRef = useRef<(n: Node) => string | null>(() => null);
   const prefsRef = useRef(prefs ?? { snap: true, grid: true, lines: true });
   prefsRef.current = prefs ?? { snap: true, grid: true, lines: true };
   useEffect(() => {
@@ -396,6 +401,7 @@ export function CanvasBoard({
       zoom: () => {},
       paste: () => {},
       setText: () => {},
+      snapshot: () => null,
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -435,6 +441,11 @@ export function CanvasBoard({
       }
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
+    };
+    api.snapshot = () => {
+      const list = nodesRef.current.map((n) => (n.kind === "text" ? n : { ...n, src: urlOfRef.current(n) ?? undefined, gid: undefined }));
+      if (list.some((n) => n.src?.startsWith("data:"))) return null;
+      return { nodes: list.filter((n) => n.kind === "text" || n.src), view: viewRef.current };
     };
     api.paste = (files) => {
       const r = boxRef.current?.getBoundingClientRect();
@@ -761,6 +772,7 @@ export function CanvasBoard({
   };
 
   const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
+  urlOfRef.current = urlOf;
   const selKey = nodes.filter((n) => sel.has(n.id)).map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
   onSelRef.current = onSelectionChange;
@@ -1128,6 +1140,7 @@ export function CanvasBoard({
                 <div className="my-1 h-px bg-black/[0.07]" />
                 <button type="button" className={item} onClick={go(() => setSel(new Set(nodesRef.current.map((m) => m.id))))}>全选</button>
                 <button type="button" className={item} onClick={go(() => fitAll())}>显示全部</button>
+                {onShare && <button type="button" className={item} onClick={go(onShare)}>分享这个画布…</button>}
               </>
             )}
           </div>,

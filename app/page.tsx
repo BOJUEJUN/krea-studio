@@ -1794,6 +1794,7 @@ export default function StudioPage() {
         if (!alive) return;
         const idx = d?.index;
         if (idx && Array.isArray(idx.boards) && idx.boards.length) {
+          importShare(idx.boards);
           setBoards(idx.boards);
           setBoardId(idx.current || idx.boards[0].id);
           try {
@@ -1809,6 +1810,7 @@ export default function StudioPage() {
             cur = localStorage.getItem(`ais-canvas-current:${user}`) || list[0].id;
           } catch {}
           pushBoardIndex(list, cur);
+          importShare(list);
         }
       })
       .catch(() => {});
@@ -1816,6 +1818,55 @@ export default function StudioPage() {
       alive = false;
     };
   }, [user]);
+  /** 用户 2026-11-11 (分享画布): a link to a copy of the board on screen. */
+  const shareBoard = async () => {
+    const snap = canvasApi.current?.snapshot();
+    if (!snap) return flash("还有图片在上传，稍等几秒再分享");
+    if (!snap.nodes.length) return flash("画布是空的");
+    try {
+      const d = await fetchJson("/api/canvas/share", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...snap, name: boards.find((b) => b.id === boardId)?.name ?? "画布" }),
+      });
+      if (!d?.ok || !d.token) throw new Error(d?.error || "分享失败");
+      const link = `${location.origin}/?share=${d.token}`;
+      try {
+        await navigator.clipboard.writeText(link);
+        flash("分享链接已复制。朋友打开后，会在他的画布里多一份，可以接着改");
+      } catch {
+        window.prompt("复制这个链接发给朋友", link);
+      }
+    } catch (e: any) {
+      flash(e?.message || "分享失败");
+    }
+  };
+  /** Opening ?share=… puts a copy of that board into this account's list and opens it. */
+  const importShare = async (list: { id: string; name: string }[]) => {
+    const t = new URLSearchParams(location.search).get("share");
+    if (!t) return;
+    history.replaceState(null, "", location.pathname);
+    try {
+      const d = await fetchJson(`/api/canvas/share?t=${encodeURIComponent(t)}`);
+      if (!d?.ok) throw new Error(d?.error || "打不开这个分享");
+      const id = Math.random().toString(36).slice(2, 8);
+      const name = `${String(d.name || "画布").slice(0, 10)}·${String(d.owner || "").slice(0, 8)}`.slice(0, 20);
+      const now = Date.now();
+      const board = { nodes: d.nodes ?? [], view: d.view ?? { x: 400, y: 300, s: 1 }, updatedAt: now };
+      try {
+        localStorage.setItem(id === "1" ? `ais-canvas-v1:${user}` : `ais-canvas-v1:${user}:${id}`, JSON.stringify(board));
+      } catch {}
+      await fetchJson(`/api/canvas/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(board) }).catch(() => {});
+      saveBoards([...list, { id, name }], id);
+      setCanvasOn(true);
+      try {
+        localStorage.setItem("ais-canvas-on", "1");
+      } catch {}
+      flash(phone ? `已放进你的画布「${name}」，在电脑上打开就能编辑` : `已放进你的画布「${name}」，可以接着改了`);
+    } catch (e: any) {
+      flash(e?.message || "打不开这个分享");
+    }
+  };
   const pushBoardIndex = (list: { id: string; name: string }[], current: string) => {
     fetchJson("/api/canvas", {
       method: "PUT",
@@ -2269,6 +2320,9 @@ export default function StudioPage() {
                   <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#0071e3] hover:bg-[#0071e3]/[0.08]">
                     ＋ 新建画布
                   </button>
+                  <button type="button" onClick={() => { setBoardMenu(false); shareBoard(); }} className="w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]">
+                    分享当前画布…
+                  </button>
                 </div>
               )}
             </div>
@@ -2414,6 +2468,7 @@ export default function StudioPage() {
                   onScale={setCanvasScale}
                   onCompose={() => setComposeOpen(true)}
                   onOpenHistory={() => toggleHistory(false)}
+                  onShare={shareBoard}
                   prefs={boardPrefs}
                   summaryFor={boardSummary}
                   onSelectionText={(t) => {
