@@ -1,5 +1,7 @@
 "use client";
 
+import { createPortal } from "react-dom";
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
 
@@ -86,6 +88,8 @@ export function CanvasBoard({
   onAgain,
   onUpscale,
   onScale,
+  onCompose,
+  onOpenHistory,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
@@ -96,6 +100,9 @@ export function CanvasBoard({
   onUpscale?: (gid: string) => void;
   /** When set the board hides its own zoom buttons; the page shows the level in its rail instead. */
   onScale?: (s: number) => void;
+  /** Right-click menu on empty space: open the compose box / the history list. */
+  onCompose?: () => void;
+  onOpenHistory?: () => void;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
@@ -120,6 +127,24 @@ export function CanvasBoard({
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
+  const [panning, setPanning] = useState(false);
+  /** Right-click menu: where it opens (board pixels), the world point, and the picture under it. */
+  const [ctx, setCtx] = useState<{ x: number; y: number; wx: number; wy: number; node: string | null } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const fileAt = useRef<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!ctx) return;
+    const down = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.("[data-canvas-menu]")) setCtx(null);
+    };
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setCtx(null);
+    window.addEventListener("pointerdown", down, true);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("keydown", key);
+    };
+  }, [ctx]);
   const [dropHover, setDropHover] = useState(false);
   // 2026-11-10 (用户: 自动对齐吸附，移动时有虚线): alignment guides while dragging.
   const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
@@ -204,6 +229,8 @@ export function CanvasBoard({
     const el = boxRef.current;
     if (!el) return;
     let settle: ReturnType<typeof setTimeout> | null = null;
+    let lastWheel = 0;
+    let wheelIsMouse = false;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (!moving.current) {
@@ -215,7 +242,16 @@ export function CanvasBoard({
         moving.current = false;
         setSettled((n) => n + 1);
       }, 180);
+      // A mouse wheel notch zooms at the pointer (用户: 滚轮是放大); a trackpad two-finger scroll still pans, a pinch zooms.
+      // Mouse wheels report whole 120-unit notches and no sideways part; a gesture keeps the kind it started with.
+      const now = performance.now();
+      if (now - lastWheel > 220) {
+        const wd = (e as any).wheelDeltaY as number | undefined;
+        wheelIsMouse = e.deltaMode !== 0 || (e.deltaX === 0 && !!wd && Math.abs(wd) % 120 === 0);
+      } else if (e.deltaX !== 0) wheelIsMouse = false;
+      lastWheel = now;
       if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-e.deltaY * 0.01));
+      else if (wheelIsMouse && !e.shiftKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY) * (e.deltaMode ? 33 : 1), 200) * 0.0015));
       else setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -328,19 +364,25 @@ export function CanvasBoard({
     | null
   >(null);
 
+  // 用户 2026-11-10: left drag on empty space = box select, wheel-button (middle) drag = pan, wheel = zoom,
+  // right click = menu. Space + left drag still pans (Figma habit).
   const onBgDown = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
+    setCtx(null);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    if (e.shiftKey && !spaceDown && e.button === 0) {
+    if (e.button === 0 && !spaceDown) {
       const w = toWorld(e.clientX, e.clientY);
-      drag.current = { kind: "marquee", x0: w.x, y0: w.y, add: new Set(sel) };
+      drag.current = { kind: "marquee", x0: w.x, y0: w.y, add: e.shiftKey ? new Set(sel) : new Set() };
       setMarquee({ x0: w.x, y0: w.y, x1: w.x, y1: w.y });
+      if (!e.shiftKey) setSel(new Set());
     } else {
       drag.current = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: viewRef.current.x, vy: viewRef.current.y, moved: false };
+      setPanning(true);
     }
   };
   const onNodeDown = (e: React.PointerEvent, n: Node) => {
     if (e.button !== 0) return;
+    setCtx(null);
     e.stopPropagation();
     if (spaceDown) return onBgDown(e);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -422,7 +464,8 @@ export function CanvasBoard({
       setSettled((n) => n + 1);
     }
     if (!d) return;
-    if (d.kind === "pan" && !d.moved) setSel(new Set());
+    if (d.kind === "pan") setPanning(false);
+    if (d.kind === "pan" && !d.moved && !spaceDown) setSel(new Set());
     if (d.kind === "marquee") setMarquee(null);
     setGuides({ v: [], h: [] });
     if ((d.kind === "move" && d.moved) || d.kind === "resize") {
@@ -511,7 +554,10 @@ export function CanvasBoard({
       setSel(new Set([n.id]));
       return;
     }
-    const files = Array.from(e.dataTransfer.files ?? []).filter((f) => f.type.startsWith("image/"));
+    await addFiles(Array.from(e.dataTransfer.files ?? []), at);
+  };
+  const addFiles = async (all: File[], at: { x: number; y: number }) => {
+    const files = all.filter((f) => f.type.startsWith("image/"));
     const added: Node[] = [];
     for (const [i, f] of files.entries()) {
       try {
@@ -586,13 +632,24 @@ export function CanvasBoard({
   return (
     <div
       ref={boxRef}
-      className={`relative h-full w-full touch-none select-none overflow-hidden rounded-[16px] bg-[#f6f6f8] ${drag.current?.kind === "pan" || spaceDown ? "cursor-grab active:cursor-grabbing" : ""}`}
+      className={`relative h-full w-full touch-none select-none overflow-hidden bg-[#f6f6f8] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
       style={{
         backgroundImage: "radial-gradient(circle, rgba(0,0,0,0.13) 1px, transparent 1.2px)",
         backgroundSize: `${grid}px ${grid}px`,
         backgroundPosition: `${view.x}px ${view.y}px`,
       }}
       onPointerDown={onBgDown}
+      onMouseDown={(e) => {
+        if (e.button === 1) e.preventDefault();
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const w = toWorld(e.clientX, e.clientY);
+        const hitEl = (e.target as Element).closest?.("[data-node-id]");
+        const node = hitEl?.getAttribute("data-node-id") ?? null;
+        if (node && !sel.has(node)) setSel(new Set([node]));
+        setCtx({ x: e.clientX, y: e.clientY, wx: w.x, wy: w.y, node });
+      }}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
@@ -637,6 +694,7 @@ export function CanvasBoard({
           return (
             <div
               key={n.id}
+              data-node-id={n.id}
               className={`absolute rounded-[10px] bg-white shadow-[0_6px_24px_rgba(0,0,0,0.12)] ${on ? "ring-[3px] ring-[#0071e3]" : "ring-1 ring-black/[0.06]"}`}
               style={{ left: n.x, top: n.y, width: n.w, height: n.h, outlineWidth: 0 }}
               onPointerDown={(e) => onNodeDown(e, n)}
@@ -756,6 +814,62 @@ export function CanvasBoard({
           </button>
         </div>
       )}
+
+      {/* Right-click menu (用户 2026-11-10: 右键是插入节点等功能). */}
+      {ctx && (() => {
+        const one = ctx.node ? nodesRef.current.find((m) => m.id === ctx.node) : undefined;
+        const url = one ? urlOf(one) : undefined;
+        const item = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.05]";
+        const go = (f: () => void) => () => { setCtx(null); f(); };
+        const W = window.innerWidth, H = window.innerHeight;
+        return createPortal(
+          <div
+            data-canvas-menu=""
+            className="animate-pop-in fixed z-[90] w-48 rounded-xl bg-white/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/[0.06] backdrop-blur"
+            style={{ left: Math.min(ctx.x, W - 200), top: Math.min(ctx.y, H - (one ? 300 : 190)) }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          >
+            {one ? (
+              <>
+                {url && <button type="button" className={`${item} text-[#0071e3]`} onClick={go(() => onUseAsRef(selected.map(urlOf).filter((u): u is string => !!u)))}>用作参考图</button>}
+                {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!))}>再来一张</button>}
+                {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
+                {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
+                {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
+                <div className="my-1 h-px bg-black/[0.07]" />
+                <button type="button" className={item} onClick={go(toFront)}>置顶</button>
+                <button type="button" className={item} onClick={go(duplicateSel)}>复制一份</button>
+                <button type="button" className={`${item} text-[#d70015]`} onClick={go(removeSel)}>移出画布</button>
+              </>
+            ) : (
+              <>
+                {onCompose && <button type="button" className={item} onClick={go(onCompose)}>生成新图</button>}
+                <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
+                {onOpenHistory && <button type="button" className={item} onClick={go(onOpenHistory)}>从历史添加</button>}
+                <div className="my-1 h-px bg-black/[0.07]" />
+                <button type="button" className={item} onClick={go(() => setSel(new Set(nodesRef.current.map((m) => m.id))))}>全选</button>
+                <button type="button" className={item} onClick={go(() => fitAll())}>显示全部</button>
+              </>
+            )}
+          </div>,
+          document.body
+        );
+      })()}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={async (e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          const at = fileAt.current ?? toWorld(0, 0);
+          fileAt.current = null;
+          await addFiles(files, { x: at.x + 160, y: at.y + 160 });
+        }}
+      />
 
       {/* Zoom controls (only when the page does not host them). */}
       {!onScale && <div

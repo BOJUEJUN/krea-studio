@@ -1941,12 +1941,12 @@ export default function StudioPage() {
         </div>
       )}
       {user && (
-        <div ref={userMenuRef} className="fixed left-4 top-4 z-50">
+        <div ref={userMenuRef} className="fixed left-5 top-5 z-50">
           <button
             type="button"
             onClick={() => setUserMenu((v) => !v)}
             data-tip={user} data-tip-start=""
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
           >
             {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
           </button>
@@ -1997,7 +1997,7 @@ export default function StudioPage() {
 
       {user && (
         // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar.
-        <div className="fixed left-5 top-[64px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
+        <div className="fixed left-5 top-[68px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
           {([
             ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
             ["canvas", "自由画布", <path key="p" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />],
@@ -2094,13 +2094,13 @@ export default function StudioPage() {
           </button>
         </div>
       )}
-      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
+      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
-          className="apple-card stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden rounded-[22px] lg:h-auto lg:min-h-0 lg:flex-1">
+          className={`stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden lg:h-auto lg:min-h-0 lg:flex-1 ${canvasOn ? "" : "apple-card rounded-[22px]"}`}>
                     <div
-            className={`result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3`}
+            className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden ${canvasOn ? "" : "result-box m-2 rounded-[16px] sm:m-3"}`}
 
           >
             {canvasOn && user && (
@@ -2138,6 +2138,8 @@ export default function StudioPage() {
                   flash={flash}
                   apiRef={canvasApi}
                   onScale={setCanvasScale}
+                  onCompose={() => setComposeOpen(true)}
+                  onOpenHistory={() => toggleHistory(false)}
                 />
               </div>
             )}
