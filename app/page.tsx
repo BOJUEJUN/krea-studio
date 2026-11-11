@@ -667,30 +667,31 @@ export default function StudioPage() {
     const box = row?.parentElement;
     if (!row || !box) return;
     let raf = 0;
-    let busy = false;
+    let lastWidth = -1;
     const fit = () => {
-      if (busy) return;
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        busy = true;
         const was = row.style.zoom;
         row.style.zoom = "1";
         const room = row.clientWidth;
-        const natural = row.scrollWidth;
+        const controls = [...row.children].filter((el): el is HTMLElement =>
+          el instanceof HTMLElement && getComputedStyle(el).position !== "absolute" && el.offsetWidth > 0);
+        const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+        const natural = controls.reduce((width, el) => width + Math.ceil(parseFloat(getComputedStyle(el).width)), 0) +
+          Math.max(0, controls.length - 1) * gap;
         if (!room) {
           row.style.zoom = was;
-          busy = false;
           return;
         }
-        const z = Math.max(0.6, Math.min(1, room / Math.max(1, natural)));
+        const z = Math.min(1, (room - 1) / Math.max(1, natural));
         row.style.zoom = z < 0.995 ? String(z) : "";
-        if (row.style.zoom !== was) {
-          // ignore the resize our own change causes
-          requestAnimationFrame(() => (busy = false));
-        } else busy = false;
       });
     };
-    const ro = new ResizeObserver(fit);
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === lastWidth) return;
+      lastWidth = entry.contentRect.width;
+      fit();
+    });
     ro.observe(box);
     const mo = new MutationObserver(fit);
     mo.observe(row, { childList: true, subtree: true, characterData: true });
@@ -3154,7 +3155,8 @@ ${link}`;
                     </div>
                   </div>
                 )}
-                <div ref={chipRowRef} className="compose-settings relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
+                <div className="px-2.5">
+                <div ref={chipRowRef} className="compose-settings relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap pb-2 pt-1">
                   {canvasOn && !editingNode && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-edge/[0.04] text-secondary hover:bg-edge/[0.08]">×</button>
                   )}
@@ -3406,6 +3408,7 @@ ${link}`;
               )}
             </button>
                   </div>
+                </div>
                 </div>
 
 
