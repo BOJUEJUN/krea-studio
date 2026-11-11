@@ -29,7 +29,7 @@ export type BoardApi = {
   /** The compose box edits the selected text node. */
   setText: (text: string) => void;
   /** The board with every picture as a link (for 分享); null while a picture is still uploading. */
-  snapshot: () => { nodes: any[]; view: View } | null;
+  snapshot: (onlySelected?: boolean) => { nodes: any[]; view: View } | null;
 };
 
 type Node = {
@@ -128,7 +128,7 @@ export function CanvasBoard({
   prefs?: { snap: boolean; grid: boolean; lines: boolean; map?: boolean };
   /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
   onSelectionText?: (text: string | null) => void;
-  onShare?: () => void;
+  onShare?: (onlySelected?: boolean) => void;
   /** The settings chosen for a picture (model + short list), shown under it when it is not being edited. */
   summaryFor?: (url: string) => { model: string; cover?: string; detail: string } | null;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
@@ -442,8 +442,10 @@ export function CanvasBoard({
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
     };
-    api.snapshot = () => {
-      const list = nodesRef.current.map((n) => (n.kind === "text" ? n : { ...n, src: urlOfRef.current(n) ?? undefined, gid: undefined }));
+    api.snapshot = (onlySelected) => {
+      const pick = onlySelected ? nodesRef.current.filter((n) => selRef.current.has(n.id)) : nodesRef.current;
+      const ids = new Set(pick.map((n) => n.id));
+      const list = pick.map((n) => ({ ...n, from: n.from?.filter((f) => ids.has(f)) })).map((n) => (n.kind === "text" ? n : { ...n, src: urlOfRef.current(n) ?? undefined, gid: undefined }));
       if (list.some((n) => n.src?.startsWith("data:"))) return null;
       return { nodes: list.filter((n) => n.kind === "text" || n.src), view: viewRef.current };
     };
@@ -1130,6 +1132,7 @@ export function CanvasBoard({
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
                 <div className="my-1 h-px bg-black/[0.07]" />
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制一份</button>
+                {onShare && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的{selected.length > 1 ? ` ${selected.length} 个` : "这张"}…</button>}
                 <button type="button" className={`${item} text-[#d70015]`} onClick={go(removeSel)}>移出画布</button>
               </>
             ) : (
@@ -1141,7 +1144,7 @@ export function CanvasBoard({
                 <div className="my-1 h-px bg-black/[0.07]" />
                 <button type="button" className={item} onClick={go(() => setSel(new Set(nodesRef.current.map((m) => m.id))))}>全选</button>
                 <button type="button" className={item} onClick={go(() => fitAll())}>显示全部</button>
-                {onShare && <button type="button" className={item} onClick={go(onShare)}>分享这个画布…</button>}
+                {onShare && <button type="button" className={item} onClick={go(() => onShare())}>分享整个画布…</button>}
               </>
             )}
           </div>,

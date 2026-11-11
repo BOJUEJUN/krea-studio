@@ -1819,15 +1819,15 @@ export default function StudioPage() {
     };
   }, [user]);
   /** 用户 2026-11-11 (分享画布): a link to a copy of the board on screen. */
-  const shareBoard = async () => {
-    const snap = canvasApi.current?.snapshot();
+  const shareBoard = async (onlySelected?: boolean) => {
+    const snap = canvasApi.current?.snapshot(onlySelected);
     if (!snap) return flash("还有图片在上传，稍等几秒再分享");
     if (!snap.nodes.length) return flash("画布是空的");
     try {
       const d = await fetchJson("/api/canvas/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...snap, name: boards.find((b) => b.id === boardId)?.name ?? "画布" }),
+        body: JSON.stringify({ ...snap, view: onlySelected ? null : snap.view, name: (boards.find((b) => b.id === boardId)?.name ?? "画布") + (onlySelected ? "（部分）" : "") }),
       });
       if (!d?.ok || !d.token) throw new Error(d?.error || "分享失败");
       const link = `${location.origin}/?share=${d.token}`;
@@ -1852,7 +1852,17 @@ export default function StudioPage() {
       const id = Math.random().toString(36).slice(2, 8);
       const name = `${String(d.name || "画布").slice(0, 10)}·${String(d.owner || "").slice(0, 8)}`.slice(0, 20);
       const now = Date.now();
-      const board = { nodes: d.nodes ?? [], view: d.view ?? { x: 400, y: 300, s: 1 }, updatedAt: now };
+      const ns: any[] = d.nodes ?? [];
+      let view = d.view;
+      if (!view && ns.length) {
+        // A shared part has no view of its own: frame its pictures.
+        const x0 = Math.min(...ns.map((n) => n.x)), y0 = Math.min(...ns.map((n) => n.y));
+        const x1 = Math.max(...ns.map((n) => n.x + n.w)), y1 = Math.max(...ns.map((n) => n.y + n.h));
+        const W = window.innerWidth, H = window.innerHeight;
+        const sc = Math.max(0.1, Math.min(1.5, (W - 200) / Math.max(1, x1 - x0), (H - 220) / Math.max(1, y1 - y0)));
+        view = { s: sc, x: W / 2 - ((x0 + x1) / 2) * sc, y: H / 2 - ((y0 + y1) / 2) * sc };
+      }
+      const board = { nodes: ns, view: view ?? { x: 400, y: 300, s: 1 }, updatedAt: now };
       try {
         localStorage.setItem(id === "1" ? `ais-canvas-v1:${user}` : `ais-canvas-v1:${user}:${id}`, JSON.stringify(board));
       } catch {}
