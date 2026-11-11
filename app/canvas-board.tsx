@@ -1603,7 +1603,7 @@ export function CanvasBoard({
                     const pics = picsForText(n.id);
                     return (
                       <div
-                        className="animate-pop-in absolute left-3 top-9 z-30 w-56 rounded-xl bg-panel p-1 shadow-[0_12px_36px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06]"
+                        className="absolute left-3 top-9 z-30 w-56 rounded-xl bg-panel p-1 shadow-[0_12px_36px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06]"
                         style={{ transform: `scale(${k})`, transformOrigin: "top left" }}
                         onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                       >
@@ -1774,7 +1774,7 @@ export function CanvasBoard({
       {/* Toolbar over the selection. */}
       {selBox && selected.length > 0 && (
         <div
-          className="animate-pop-in absolute z-20 flex items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur"
+          className="absolute z-20"
           // 用户 2026-11-11: shrinks with the board when zoomed out (never below 70%), sits just above the label row.
           style={{
             left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)),
@@ -1784,6 +1784,9 @@ export function CanvasBoard({
           }}
           onPointerDown={(e) => e.stopPropagation()}
         >
+          {/* The pop-in animation sets transform, so it lives on this inner box; the outer one keeps the centring
+              (用户 2026-11-11: 工具条没居中). */}
+          <div className="animate-pop-in flex items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur" style={{ transformOrigin: "bottom center" }}>
           {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
           {selected.length >= 2 && selectedGenerators.length > 0 && (
             <button type="button" aria-label="执行选中节点" data-tip={runnable.length ? `生成 ${runnable.length} 张` : "正在执行"}
@@ -1815,6 +1818,7 @@ export function CanvasBoard({
           <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-danger hover:bg-danger/[0.08]`} onClick={removeSel}>
             <svg viewBox="0 0 20 20" className={ico}><path d="M4 6h12" /><path d="M8 6V4.5h4V6" /><path d="M5.5 6l.8 10h7.4l.8-10" /></svg>
           </button>
+          </div>
         </div>
       )}
 
