@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });
-      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
+      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList, fast: form.get("speed") === "fast" }), seed: s });
     }
 
     // Keep the reference for the compare view, after answering so it never slows generation down.

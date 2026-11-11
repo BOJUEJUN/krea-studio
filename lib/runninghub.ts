@@ -44,6 +44,8 @@ async function parseJson(res: Response): Promise<any> {
 export async function createCustomTask(opts: {
   workflowId: string;
   nodeInfoList: NodeOverride[];
+  /** 高速: run on RunningHub's 48G "plus" machines (用户 2026-11-11). */
+  fast?: boolean;
 }): Promise<string> {
   const res = await fetch(`${RH_HOST}/task/openapi/create`, {
     method: "POST",
@@ -52,6 +54,7 @@ export async function createCustomTask(opts: {
       apiKey: apiKey(),
       workflowId: opts.workflowId,
       nodeInfoList: opts.nodeInfoList,
+      ...(opts.fast ? { instanceType: "plus" } : {}),
     }),
     cache: "no-store",
   });

@@ -1699,8 +1699,14 @@ export function CanvasBoard({
       {/* Toolbar over the selection. */}
       {selBox && selected.length > 0 && (
         <div
-          className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur"
-          style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(8, selBox.y - 48 - 24) }}
+          className="animate-pop-in absolute z-20 flex items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur"
+          // 用户 2026-11-11: shrinks with the board when zoomed out (never below 70%), sits just above the label row.
+          style={{
+            left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)),
+            top: Math.max(8 + 44 * Math.min(1, Math.max(0.7, view.s)), selBox.y - 28),
+            transform: `translate(-50%, -100%) scale(${Math.min(1, Math.max(0.7, view.s))})`,
+            transformOrigin: "bottom center",
+          }}
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
@@ -1724,7 +1730,7 @@ export function CanvasBoard({
               </button>
             </>
           )}
-          {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
+          {selected.length === 1 && urlOf(selected[0]) && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
           <button type="button" aria-label="复制" data-tip="复制到旁边" className={ibtn} onClick={duplicateSel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>

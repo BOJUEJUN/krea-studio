@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height, lora: body.lora != null && body.lora !== "" ? Number(body.lora) : undefined });
-      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList }), seed: s });
+      tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList, fast: body.speed === "fast" }), seed: s });
     }
 
     // Record the tasks right away so images reach history even if the page closes.

@@ -249,6 +249,9 @@ const RATIOS = [
 
 const MAX_RES = 2560;
 const MIN_RES = 256;
+/** 高速 (48G plus machine) vs 标准 on RunningHub, measured 2026-11-11 with LOL V1.1 1328×1776: same 13 s once warm,
+ *  ¥0.029 vs ¥0.023 a picture (a cold first run took 33 s and ¥0.074). */
+const SPEED_PRICE_X = 1.3;
 const EST_COST = "0.07";
 const PENDING_KEY = "krea-studio.pending-job";
 const HIST_CACHE_KEY = "krea-studio.history-cache";
@@ -535,6 +538,19 @@ export default function StudioPage() {
   const [seedText, setSeedText] = useState("");
   const [negative, setNegative] = useState("");
   const [lora, setLora] = useState(2);
+  // 用户 2026-11-11 (速度可以选，标准 / 高速): RunningHub workflow models can run on the 48G "plus" machines.
+  const [speed, setSpeed] = useState<"standard" | "fast">("standard");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("ais-speed") === "fast") setSpeed("fast");
+    } catch {}
+  }, []);
+  const chooseSpeed = (v: "standard" | "fast") => {
+    setSpeed(v);
+    try {
+      localStorage.setItem("ais-speed", v);
+    } catch {}
+  };
   const [background, setBackground] = useState<"auto" | "transparent" | "opaque">("auto");
   const [complexity, setComplexity] = useState<"auto" | "low" | "medium" | "high">("auto");
   // 2026-11-10 (用户: 提示词润色，默认低): rewrite the current prompt; 撤销 brings the old text back.
@@ -1858,6 +1874,7 @@ export default function StudioPage() {
             res,
             quality,
             thinking: thinking && !!paramsOf(model).thinking,
+            speed: paramsOf(model).denoise ? speed : undefined,
             ...advanced(editorDraft),
           }),
         });
@@ -1874,6 +1891,7 @@ export default function StudioPage() {
         fd.append("count", String(frameId ? 1 : count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
+        if (paramsOf(model).denoise && speed === "fast") fd.append("speed", "fast");
         fd.append("quality", quality);
         fd.append("res", res);
         if (paramsOf(model).editRatio) fd.append("editRatio", fixedEditAspect ? editRatio : "auto");
@@ -2003,7 +2021,7 @@ export default function StudioPage() {
     }
     let list = costs((g) => (g.model ?? "brown-dust") === model && g.mode === mode && !findModel(g.model)?.price);
     if (!list.length) list = costs((g) => !findModel(g.model)?.price);
-    const each = list.length ? list[Math.floor(list.length / 2)] : Number(EST_COST);
+    const each = (list.length ? list[Math.floor(list.length / 2)] : Number(EST_COST)) * (p.denoise && speed === "fast" ? SPEED_PRICE_X : 1);
     const total = each * count;
     return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
   })();
@@ -2315,6 +2333,7 @@ export default function StudioPage() {
     ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
+    ...(modelParams.denoise ? [{ key: "speed", label: speed === "fast" ? "高速" : "标准速度" }] : []),
     // 2026-11-05 (用户: 随机种子去掉吧，没什么人用): every picture gets a random seed.
     // 不想要 removed (用户 2026-11-06: 去掉).
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
@@ -3178,7 +3197,7 @@ export default function StudioPage() {
                       style={openPanel === "model" && modelAnchor ? modelAnchor : { left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-muted">
-                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推" } as Record<string, string>)[openPanel]}
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推", speed: "出图速度" } as Record<string, string>)[openPanel]}
                       </div>}
                     
                     {openPanel === "model" && (
@@ -3268,6 +3287,27 @@ export default function StudioPage() {
                           <span>更像原图</span>
                           <span>改得更多</span>
                         </div>
+                      </div>
+                    )}
+                    {openPanel === "speed" && (
+                      <div className="flex flex-col gap-1">
+                        {([
+                          ["standard", "标准", "24G 机器，平时用这个"],
+                          ["fast", "高速", `48G 机器，贵约 30%；实测出图速度差不多`],
+                        ] as const).map(([k, label, note]) => (
+                          <button
+                            key={k}
+                            type="button"
+                            onClick={() => { chooseSpeed(k); setOpenPanel(null); }}
+                            className={`flex items-center justify-between rounded-xl px-2.5 py-2 text-left transition ${speed === k ? "bg-accent/[0.08]" : "hover:bg-edge/[0.04]"}`}
+                          >
+                            <span>
+                              <span className="block text-[13px] font-medium text-ink">{label}</span>
+                              <span className="block text-[11px] text-secondary">{note}</span>
+                            </span>
+                            {speed === k && <span className="text-accent">✓</span>}
+                          </button>
+                        ))}
                       </div>
                     )}
                     {openPanel === "lora" && (
