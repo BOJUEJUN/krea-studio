@@ -793,11 +793,7 @@ export function CanvasBoard({
           style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(44, selBox.y - 48) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          {/* 用户 2026-11-10: icons only, the name shows on hover. */}
-          <button type="button" aria-label="用作参考图" data-tip={selected.length > 1 ? `用作参考图（${selected.length}）` : "用作参考图"} className={`${ibtn} text-[#0071e3]`} onClick={() => onUseAsRef(selected.map(urlOf).filter((u): u is string => !!u))}>
-            <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M3.5 13.5l4-4 3 3 2-2 4 4" /><circle cx="13" cy="7.8" r="1.2" /></svg>
-            {selected.length > 1 && <span className="ml-0.5 text-[11px] font-semibold tabular-nums">{selected.length}</span>}
-          </button>
+          {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
           {selected.length === 1 && selected[0].gid && onAgain && (
             <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!)}>
               <svg viewBox="0 0 20 20" className={ico}><path d="M15.5 8A6 6 0 1 0 16 11" /><path d="M16 4v4h-4" /></svg>
@@ -818,7 +814,7 @@ export function CanvasBoard({
               </button>
             </>
           )}
-          <span className="mx-0.5 h-4 w-px bg-black/10" />
+          {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-black/10" />}
           <button type="button" aria-label="置顶" data-tip="置顶" className={ibtn} onClick={toFront}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5V4a.5.5 0 0 0-.5-.5H4a.5.5 0 0 0-.5.5v8.5a.5.5 0 0 0 .5.5h.5" /></svg>
           </button>
@@ -848,7 +844,6 @@ export function CanvasBoard({
           >
             {one ? (
               <>
-                {url && <button type="button" className={`${item} text-[#0071e3]`} onClick={go(() => onUseAsRef(selected.map(urlOf).filter((u): u is string => !!u)))}>用作参考图</button>}
                 {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!))}>再来一张</button>}
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}

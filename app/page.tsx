@@ -1240,15 +1240,15 @@ export default function StudioPage() {
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragleave", onLeave);
     window.addEventListener("dragover", onOver);
-    window.addEventListener("drop", onEnd);
-    window.addEventListener("dragend", onEnd);
+    window.addEventListener("drop", onEnd, true);
+    window.addEventListener("dragend", onEnd, true);
     return () => {
       window.removeEventListener("paste", onPaste);
       window.removeEventListener("dragenter", onEnter);
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("dragover", onOver);
-      window.removeEventListener("drop", onEnd);
-      window.removeEventListener("dragend", onEnd);
+      window.removeEventListener("drop", onEnd, true);
+      window.removeEventListener("dragend", onEnd, true);
     };
   }, [addRefs]);
 
@@ -2372,13 +2372,14 @@ export default function StudioPage() {
                 className={`apple-card relative rounded-[22px] border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] ${
                   dragState === "zone"
                     ? "scale-[1.01] border-[#0071e3] ring-4 ring-[#0071e3]/20"
-                    : dragState === "page"
+                    : dragState === "page" && !canvasOn
                       ? "border-[#0071e3]/60 ring-4 ring-[#0071e3]/10"
                       : "border-black/[0.08]"
                 }`}
               >
                 {/* While a picture is dragged anywhere on the page, the card lights up to say where it goes. */}
-                {dragState !== "none" && (
+                {/* On the board a drop lands on the board, so the hint only shows right over the box (用户 2026-11-10). */}
+                {(canvasOn ? dragState === "zone" : dragState !== "none") && (
                   <div className="animate-pop-in pointer-events-none absolute inset-1.5 z-30 flex flex-col items-center justify-center gap-1.5 rounded-[18px] border-2 border-dashed border-[#0071e3] bg-[#eef6ff]/90 backdrop-blur-sm">
                     <span className={`flex h-10 w-10 items-center justify-center rounded-full bg-[#0071e3] text-[18px] text-white shadow-[0_8px_22px_rgba(0,113,227,0.35)] ${dragState === "zone" ? "" : "animate-bounce"}`}>
                       ↓
