@@ -15,7 +15,12 @@ import { GeneratingView } from "./generating-view";
  */
 
 export type BoardSource = { id: string; url: string; status?: string; prompt?: string };
-export type BoardApi = { add: (gid: string) => void; has: (gid: string) => boolean };
+export type BoardApi = {
+  add: (gid: string) => void;
+  has: (gid: string) => boolean;
+  /** References (data URLs) on the left, the result they made on the right, linked; the references end up selected. */
+  importSet: (refs: string[], resultGid: string | null) => void;
+};
 
 type Node = {
   id: string;
@@ -182,8 +187,18 @@ export function CanvasBoard({
   useEffect(() => {
     const el = boxRef.current;
     if (!el) return;
+    let settle: ReturnType<typeof setTimeout> | null = null;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (!moving.current) {
+        moving.current = true;
+        onBoxRef.current?.(null);
+      }
+      if (settle) clearTimeout(settle);
+      settle = setTimeout(() => {
+        moving.current = false;
+        setSettled((n) => n + 1);
+      }, 180);
       if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-e.deltaY * 0.01));
       else setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
     };
@@ -194,7 +209,8 @@ export function CanvasBoard({
   // History cards call in here: put a picture on the board, or jump to it when it is already there.
   useEffect(() => {
     if (!apiRef) return;
-    apiRef.current = {
+    const api: BoardApi = {
+      importSet: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -215,6 +231,27 @@ export function CanvasBoard({
         setSel(new Set([n.id]));
       },
     };
+    api.importSet = (refs, resultGid) => {
+      const list = nodesRef.current;
+      const r = boxRef.current?.getBoundingClientRect();
+      const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
+      const added: Node[] = [];
+      const refIds: string[] = [];
+      const w = 240;
+      refs.forEach((src, i) => {
+        const old = list.find((n) => n.src === src);
+        if (old) return void refIds.push(old.id);
+        const n: Node = { id: uid(), src, x: c.x - w - GAP * 2 - 140, y: c.y - 160 + i * (w + GAP), w, h: w, fit: true };
+        added.push(n);
+        refIds.push(n.id);
+      });
+      if (resultGid && !list.some((n) => n.gid === resultGid)) {
+        added.push({ id: uid(), gid: resultGid, x: c.x - 140, y: c.y - 160, w: 320, h: 320, from: refIds.length ? refIds : undefined, fit: true });
+      }
+      if (added.length) commit((l) => [...l, ...added]);
+      if (refIds.length) setSel(new Set(refIds));
+    };
+    apiRef.current = api;
     return () => {
       apiRef.current = null;
     };
@@ -297,6 +334,10 @@ export function CanvasBoard({
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    if (!moving.current) {
+      moving.current = true;
+      onBoxRef.current?.(null);
+    }
     const s = viewRef.current.s;
     if (d.kind === "pan") {
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
@@ -351,6 +392,10 @@ export function CanvasBoard({
   const onUp = () => {
     const d = drag.current;
     drag.current = null;
+    if (moving.current) {
+      moving.current = false;
+      setSettled((n) => n + 1);
+    }
     if (!d) return;
     if (d.kind === "pan" && !d.moved) setSel(new Set());
     if (d.kind === "marquee") setMarquee(null);
@@ -482,14 +527,19 @@ export function CanvasBoard({
         Math.max(...selected.map((n) => n.y + n.h)),
       ].join(",")
     : "";
+  // Performance (用户: 不要卡): the page is only told where the selection is when nothing is being dragged or panned,
+  // so moving pictures and the board never re-renders the whole page on every frame.
+  const [settled, setSettled] = useState(0);
+  const moving = useRef(false);
   useEffect(() => {
     const cb = onBoxRef.current;
     if (!cb) return;
+    if (moving.current) return;
     const r = boxRef.current?.getBoundingClientRect();
     if (!selRect || !r) return cb(null);
     const [x0, y0, x1, y1] = selRect.split(",").map(Number);
     cb({ left: r.left + view.x + x0 * view.s, top: r.top + view.y + y0 * view.s, right: r.left + view.x + x1 * view.s, bottom: r.top + view.y + y1 * view.s });
-  }, [selRect, view]);
+  }, [selRect, view, settled]);
   const grid = 24 * view.s;
 
   const btn = "flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.06]";
@@ -517,7 +567,7 @@ export function CanvasBoard({
       }}
       onDrop={onDrop}
     >
-      <div className="absolute left-0 top-0 origin-top-left" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}>
+      <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}>
         {/* Lines from each source picture to what was made from it. */}
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
           {nodes.flatMap((n) =>
@@ -558,6 +608,7 @@ export function CanvasBoard({
                   src={n.src ? n.src : thumb(url, n.w * view.s > 480 ? 1280 : 640)}
                   alt=""
                   draggable={false}
+                  decoding="async"
                   className="h-full w-full rounded-[10px] object-cover"
                   onLoad={(e) => {
                     if (!n.fit) return;

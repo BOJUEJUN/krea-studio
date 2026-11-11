@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
     if (!hasDeepSeek()) return NextResponse.json({ ok: false, error: "未配置提示词优化" }, { status: 400 });
     const body = await req.json().catch(() => ({}));
     const prompt = String(body?.prompt || "").trim().slice(0, 4000);
-    const level: PolishLevel = ["low", "medium", "high"].includes(body?.level) ? body.level : "low";
+    const level: PolishLevel = ["low", "medium", "high"].includes(body?.level) ? body.level : "medium";
     if (!prompt) return NextResponse.json({ ok: false, error: "先写点提示词再优化" }, { status: 400 });
     const polished = await polishPrompt(prompt, level);
     return NextResponse.json({ ok: true, prompt: polished });

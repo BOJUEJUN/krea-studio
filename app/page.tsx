@@ -72,6 +72,17 @@ function withMentions(text: string, thumbs: (string | null | undefined)[] = []) 
   });
 }
 
+/** A reference file shrunk to a data URL, so it can live on the canvas (kept in browser storage). */
+async function fileToDataUrl(file: File, max = 1024): Promise<string> {
+  const bmp = await createImageBitmap(file);
+  const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(bmp.width * k);
+  c.height = Math.round(bmp.height * k);
+  c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.86);
+}
+
 /** A row of choices for one setting (shown when its chip is opened). */
 function Choice({ options, value, onPick, note }: { options: ([string, string] | [string, string, string])[]; value: string; onPick: (v: string) => void; note?: string }) {
   return (
@@ -503,11 +514,12 @@ export default function StudioPage() {
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [chipsMore, setChipsMore] = useState(false);
   // 2026-11-10 (用户: 参数要紧贴素材): the compose box hugs the selected pictures.
   const [selBox, setSelBox] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
   const leftColRef = useRef<HTMLDivElement>(null);
   const composeRef = useRef<HTMLElement>(null);
-  const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
+  const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("medium"); // 用户 2026-11-10: 默认中
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
   const [regional, setRegional] = useState(false);
@@ -967,6 +979,17 @@ export default function StudioPage() {
 
   /** 2026-11-06 (用户: 历史加删除): tap the bin, tap again within 3 s to delete. */
   const [deleteArm, setDeleteArm] = useState<string | null>(null);
+  const [cardMenu, setCardMenu] = useState<string | null>(null);
+  const [cardMenuAt, setCardMenuAt] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  useEffect(() => {
+    if (!cardMenu) return;
+    const close = (e: MouseEvent) => {
+      if ((e.target as Element | null)?.closest?.("[data-card-menu]")) return;
+      setCardMenu(null);
+    };
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [cardMenu]);
   const deleteItem = useCallback(
     (g: GalleryItem) => {
       if (deleteArm !== g.id) {
@@ -1631,12 +1654,34 @@ export default function StudioPage() {
     saveBoards(rest, boardId === id ? rest[0].id : boardId);
     setBoardDelArm(null);
   };
-  const enterCanvas = (on: boolean) => {
+  // 2026-11-10 (用户: 点击画布后，已有的输入自动变成画布上的节点): the current references and result follow onto the board.
+  const pendingImport = useRef<{ refs: string[]; result: string | null } | null>(null);
+  const enterCanvas = async (on: boolean) => {
+    if (on) {
+      const files = [fileBlobRef.current, ...extraRefs.map((r) => r.file)].filter((f): f is File => !!f);
+      const refs = (await Promise.all(files.map((f) => fileToDataUrl(f).catch(() => null)))).filter((u): u is string => !!u);
+      const result = resultUrl && currentId ? currentId : null;
+      pendingImport.current = refs.length || result ? { refs, result } : null;
+    }
     setCanvasOn(on);
     try { localStorage.setItem("ais-canvas-on", on ? "1" : "0"); } catch {}
-    // 2026-11-10 (用户: 进入画布全屏，历史默认收起).
-    if (on) toggleHistory(true);
+    // 2026-11-10 (用户: 进入画布全屏，历史默认收起；回到单图历史也回来).
+    toggleHistory(on);
   };
+  useEffect(() => {
+    if (!canvasOn || !pendingImport.current) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      const api = canvasApi.current;
+      if (api || ++tries > 40) {
+        clearInterval(t);
+        const job = pendingImport.current;
+        pendingImport.current = null;
+        if (api && job) api.importSet(job.refs, job.result);
+      }
+    }, 50);
+    return () => clearInterval(t);
+  }, [canvasOn]);
   // Selected pictures become the references (in canvas mode only).
   const selTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onBoardSelection = useCallback(
@@ -1759,6 +1804,12 @@ export default function StudioPage() {
     // 不想要 removed (用户 2026-11-06: 去掉).
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
   ];
+  // 2026-11-10 (用户: 参数最多显示两个最重要的，多的收起来): model + one key setting; the rest behind 更多.
+  const primaryChips = [
+    "model",
+    mode === "t2i" ? "ratio" : (["denoise", "res", "quality"].find((k) => chips.some((c) => c.key === k)) ?? ""),
+  ];
+  const hiddenChipCount = chips.filter((c) => !primaryChips.includes(c.key)).length;
   /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
   const paramSummary = [
     mode === "t2i" ? RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` : "跟参考图",
@@ -2439,7 +2490,7 @@ export default function StudioPage() {
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
                     {openPanel === "reverse" && <Choice note="根据参考图自动写画面描述" options={[["direct", "直接生成（默认）", "反推完马上出图"], ["fill", "先填到提示词框", "反推结果放进框里，你改好再点生成"]]} value={reverseMode} onPick={(v) => { setReverseMode(v as "direct" | "fill"); try { localStorage.setItem("ais-reverse-mode", v); } catch {} setOpenPanel(null); }} />}
-                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低（推荐）", "只理顺语句、改错字，几乎不改内容"], ["medium", "中", "说得更清楚具体，不加新东西"], ["high", "高", "扩写成完整的专业提示词"]]} value={polishLevel} onPick={(v) => { setPolishLevel(v as typeof polishLevel); try { localStorage.setItem("ais-polish-level", v); } catch {} setOpenPanel(null); }} />}
+                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低", "只理顺语句、改错字，几乎不改内容（约 3 秒）"], ["medium", "中（默认）", "说得更清楚具体，不加新东西（约 4 秒）"], ["high", "高", "扩写成完整的专业提示词（约 9 秒）"]]} value={polishLevel} onPick={(v) => { setPolishLevel(v as typeof polishLevel); try { localStorage.setItem("ais-polish-level", v); } catch {} setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
@@ -2486,7 +2537,7 @@ export default function StudioPage() {
                   
                     </div>
                   )}
-                  {chips.map((c) => (
+                  {chips.filter((c) => chipsMore || primaryChips.includes(c.key)).map((c) => (
                     <button
                       key={c.key}
                       type="button"
@@ -2507,7 +2558,17 @@ export default function StudioPage() {
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
-                  {mode === "i2i" && !findModel(model)?.billing && (
+                  {(hiddenChipCount > 0 || mode === "i2i") && (
+                    <button
+                      type="button"
+                      onClick={() => { setChipsMore((v) => !v); setOpenPanel(null); }}
+                      className={`flex h-8 items-center gap-1 rounded-full px-3 text-[12px] transition ${chipsMore ? "bg-[#1d1d1f] text-white" : "bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]"}`}
+                    >
+                      {chipsMore ? "收起" : `更多${hiddenChipCount ? ` ${hiddenChipCount}` : ""}`}
+                      <svg className={`h-3 w-3 transition-transform ${chipsMore ? "" : "rotate-180"}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                    </button>
+                  )}
+                  {chipsMore && mode === "i2i" && !findModel(model)?.billing && (
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
@@ -2933,51 +2994,66 @@ export default function StudioPage() {
                       {g.url && (
                         <>
                           <span className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/70 transition-opacity duration-300 ${show}`} />
-                          {/* 2026-11-05 (用户: 四个按钮并排在左上角，不要底框). */}
-                          {/* 2026-11-10 (用户: 看不到看大图了): narrow cards wrap the buttons onto a second row instead of
-                              hiding 下载 / 看大图 under the 删除 button. */}
-                          <span className="absolute left-1 top-1 flex max-w-[calc(100%-2.5rem)] flex-wrap items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
-                          <button
-                            type="button"
-                            aria-label={g.fav ? "取消收藏" : "收藏"}
-                            data-tip={g.fav ? "取消收藏" : "收藏"}
-                            data-tip-start=""
-                            onClick={(e) => act(e, () => toggleFav(g))}
-                            className={`${iconBtn} text-[15px] leading-none transition-opacity duration-300 ${g.fav ? "!text-[#ffcc00] opacity-100" : show}`}
-                          >
-                            {g.fav ? "★" : "☆"}
-                          </button>
-                            <button type="button" data-tip="重新编辑" aria-label="重新编辑" onClick={(e) => act(e, () => reuseItem(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
-                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
-                            </button>
-                            <button type="button" data-tip="当参考图" aria-label="当参考图" onClick={(e) => act(e, () => useAsReference(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
-                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.6" /><path d="M21 15l-5-5L5 21" /></svg>
-                            </button>
-                            <button type="button" data-tip="复制描述" aria-label="复制描述" onClick={(e) => act(e, () => copyPrompt(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
-                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></svg>
+                          {/* 2026-11-10 (用户: 不要显示那么多，两个最重要的加一个收纳菜单): 看大图 and 下载 on the card,
+                              the rest in the ⋯ menu. A favourite keeps its gold star visible. */}
+                          {g.fav && (
+                            <span className="pointer-events-none absolute left-2 top-2 text-[15px] leading-none text-[#ffcc00] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">★</span>
+                          )}
+                          <span className="absolute right-1 top-1 flex items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                            <button type="button" data-tip="看大图" aria-label="看大图" onClick={(e) => act(e, () => setViewer(g.url))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
                             </button>
                             <button type="button" data-tip="下载" aria-label="下载" onClick={(e) => act(e, () => downloadItem(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
                               <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
                             </button>
-                            {canvasOn && (
-                              <button type="button" data-tip="放到画布" aria-label="放到画布" onClick={(e) => act(e, () => canvasApi.current?.add(g.id))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
-                                <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M12 8v8M8 12h8" /></svg>
-                              </button>
-                            )}
-                            <button type="button" data-tip="看大图" aria-label="看大图" onClick={(e) => act(e, () => setViewer(g.url))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
-                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
+                            <button
+                              type="button"
+                              data-tip="更多" data-tip-end=""
+                              aria-label="更多"
+                              aria-expanded={cardMenu === g.id}
+                              onClick={(e) => {
+                                const r = e.currentTarget.getBoundingClientRect();
+                                setCardMenuAt({ x: Math.min(r.right, window.innerWidth - 8), y: r.bottom + 4 });
+                                act(e, () => { setCardMenu((v) => (v === g.id ? null : g.id)); setDeleteArm(null); });
+                              }}
+                              className={`${iconBtn} transition-opacity duration-300 ${cardMenu === g.id ? "opacity-100" : show}`}
+                            >
+                              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
                             </button>
                           </span>
-                          <button
-                            type="button"
-                            aria-label="删除"
-                            data-tip={deleteArm === g.id ? "再点一次删除" : "删除"}
-                            data-tip-end=""
-                            onClick={(e) => act(e, () => deleteItem(g))}
-                            className={`${iconBtn.replace("relative ", "")} absolute right-1 top-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)] transition-opacity duration-300 ${deleteArm === g.id ? "!bg-[#ff3b30] opacity-100" : show}`}
-                          >
-                            <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3" /></svg>
-                          </button>
+                          {cardMenu === g.id && createPortal(
+                            <div
+                              data-card-menu=""
+                              className="animate-pop-in fixed z-[90] w-[132px] -translate-x-full rounded-xl bg-white p-1 text-[12px] text-[#1d1d1f] shadow-[0_12px_32px_rgba(0,0,0,0.22)] ring-1 ring-black/[0.06]"
+                              style={{ left: cardMenuAt.x, top: Math.min(cardMenuAt.y, window.innerHeight - 220) }}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {[
+                                [g.fav ? "取消收藏" : "收藏", () => toggleFav(g)],
+                                ["重新编辑", () => reuseItem(g)],
+                                ["当参考图", () => useAsReference(g)],
+                                ["复制描述", () => copyPrompt(g)],
+                                ...(canvasOn ? [["放到画布", () => canvasApi.current?.add(g.id)]] : []),
+                              ].map(([t, fn]) => (
+                                <button
+                                  key={t as string}
+                                  type="button"
+                                  onClick={() => { (fn as () => void)(); setCardMenu(null); }}
+                                  className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-black/[0.05]"
+                                >
+                                  {t as string}
+                                </button>
+                              ))}
+                              <button
+                                type="button"
+                                onClick={() => { deleteItem(g); if (deleteArm === g.id) setCardMenu(null); }}
+                                className={`block w-full rounded-lg px-2.5 py-1.5 text-left ${deleteArm === g.id ? "bg-[#ff3b30] text-white" : "text-[#d70015] hover:bg-[#ff3b30]/10"}`}
+                              >
+                                {deleteArm === g.id ? "再点一次删除" : "删除"}
+                              </button>
+                            </div>,
+                            document.body
+                          )}
                           <span
                             className={`absolute inset-x-0 bottom-0 px-2.5 pb-2 text-white transition-opacity duration-300 ${open ? "max-h-full overflow-y-auto bg-black/70 pt-2 opacity-100 backdrop-blur-sm" : show}`}
                             onClick={(e) => open && e.stopPropagation()}
