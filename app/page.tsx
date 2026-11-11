@@ -520,7 +520,7 @@ export default function StudioPage() {
     return () => window.removeEventListener("pointerdown", close, true);
   }, [moreMenu]);
   // 用户 2026-11-11 (深浅色调节): 浅色 / 深色 / 跟随系统, remembered in this browser.
-  const [theme, setTheme] = useState<"light" | "dark" | "auto">("light");
+  const [theme, setTheme] = useState<"light" | "dark" | "auto">("auto"); // 用户 2026-11-11: 默认跟随系统
   useEffect(() => {
     try {
       const t = localStorage.getItem("ais-theme");
