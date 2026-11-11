@@ -20,12 +20,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const nodes = (Array.isArray(body?.nodes) ? body.nodes : [])
       .slice(0, 400)
-      .filter((n: any) => n && typeof n.id === "string" && (n.kind === "text" || okSrc(n.src)))
+      .filter((n: any) => n && typeof n.id === "string" && (n.kind === "text" || n.kind === "gen" || okSrc(n.src)))
       .map((n: any) => ({
         id: String(n.id).slice(0, 40),
-        kind: n.kind === "text" ? "text" : undefined,
+        kind: ["text", "gen", "result", "image"].includes(n.kind) ? n.kind : undefined,
         text: n.kind === "text" ? String(n.text ?? "").slice(0, 2000) : undefined,
-        src: n.kind === "text" ? undefined : n.src,
+        src: n.kind === "text" || n.kind === "gen" ? undefined : n.src,
         x: Number(n.x) || 0,
         y: Number(n.y) || 0,
         w: Math.max(20, Number(n.w) || 320),

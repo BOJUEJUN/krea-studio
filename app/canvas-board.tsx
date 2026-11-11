@@ -4,6 +4,8 @@ import { createPortal } from "react-dom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
+import type { CanvasLayout, EditablePicture } from "@/lib/edit-recipe";
+import { captureLayout, isResult, inputsOf as upstreamOf, restoreWorkflow, selectionInputs, uid, type BoardNode as Node } from "@/lib/canvas-workflow";
 
 /**
  * 2026-11-10 (用户: 页面可以切换成自由画布). An infinite board, modelled on what makes Krea / Visual Electric /
@@ -19,6 +21,8 @@ import { GeneratingView } from "./generating-view";
 export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string };
 export type BoardApi = {
   add: (gid: string) => void;
+  reedit: (g: EditablePicture) => void;
+  layout: () => CanvasLayout | undefined;
   has: (gid: string) => boolean;
   /** References (data URLs) on the left, the result they made on the right, linked; the references end up selected. */
   importSet: (refs: string[], resultGid: string | null) => void;
@@ -34,31 +38,12 @@ export type BoardApi = {
   addFrame: () => void;
 };
 
-type Node = {
-  id: string;
-  gid?: string; // a history item
-  src?: string; // a picture dropped from the computer (data URL)
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  from?: string[]; // node ids this one was made from
-  fit?: boolean; // adopt the picture's real shape once it loads
-  /** 用户 2026-11-11: a text node; its words drive the pictures it is linked to. */
-  kind?: "text" | "gen"; // gen = an empty frame a picture will be made into, fed by its links
-  text?: string;
-  /** The original picture's pixel size, looked up once. */
-  nw?: number;
-  nh?: number;
-};
 type View = { x: number; y: number; s: number };
 type Saved = { nodes: Node[]; view: View; updatedAt?: number };
 
 const MIN_S = 0.1;
 const MAX_S = 4;
 const GAP = 40;
-
-const uid = () => Math.random().toString(36).slice(2, 10);
 
 function load(key: string): Saved | null {
   try {
@@ -102,6 +87,7 @@ export function CanvasBoard({
   onGidsChange,
   onRetry,
   onAgain,
+  onReedit,
   onUpscale,
   onScale,
   onCompose,
@@ -118,6 +104,7 @@ export function CanvasBoard({
   /** Failed placeholder → make it again; the placeholder is removed and its sources get selected. */
   onRetry?: (gid: string) => void;
   /** 再来一张 / 高清放大 for one picture from history (用户 2026-11-10). */
+  onReedit?: (gid: string) => void;
   onAgain?: (gid: string, text?: string, refs?: string[]) => void;
   onUpscale?: (gid: string) => void;
   /** When set the board hides its own zoom buttons; the page shows the level in its rail instead. */
@@ -140,7 +127,7 @@ export function CanvasBoard({
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
   /** The selected pictures' urls (in canvas mode they become the reference images). */
-  onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean) => void;
+  onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean) => void;
   storageKey: string;
   /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
   cloudId?: string;
@@ -411,11 +398,27 @@ export function CanvasBoard({
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
+  const deferred = useRef<(() => void)[]>([]);
+  const [editClick, setEditClick] = useState(0);
+  const explicitEdit = useRef<string | null>(null);
   // History cards call in here: put a picture on the board, or jump to it when it is already there.
   useEffect(() => {
     if (!apiRef) return;
     const api: BoardApi = {
       importSet: () => {},
+      layout: () => {
+        const list = nodesRef.current;
+        return captureLayout(list.filter((n) => selRef.current.has(n.id)), list, urlOfRef.current);
+      },
+      reedit: (g) => {
+        if (!remoteReady.current) { deferred.current.push(() => api.reedit(g)); return; }
+        const restored = restoreWorkflow(nodesRef.current, g, urlOfRef.current);
+        if (restored.list !== nodesRef.current) commit(restored.list);
+        explicitEdit.current = restored.frame.id;
+        setEditClick((n) => n + 1);
+        setSel(new Set([restored.frame.id]));
+        fitAll(restored.focus);
+      },
       zoom: () => {},
       paste: () => {},
       setText: () => {},
@@ -436,12 +439,13 @@ export function CanvasBoard({
         const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
         // Nudge each new one a little so several clicks do not stack exactly.
         const k = nodesRef.current.length % 6;
-        const n: Node = { id: uid(), gid, x: c.x - 160 + k * 24, y: c.y - 160 + k * 24, w: 320, h: 320, fit: true };
+        const n: Node = { id: uid(), kind: "image", gid, x: c.x - 160 + k * 24, y: c.y - 160 + k * 24, w: 320, h: 320, fit: true };
         commit((list) => [...list, n]);
         setSel(new Set([n.id]));
       },
     };
     api.importSet = (refs, resultGid) => {
+      if (!remoteReady.current) { deferred.current.push(() => api.importSet(refs, resultGid)); return; }
       const list = nodesRef.current;
       const r = boxRef.current?.getBoundingClientRect();
       const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
@@ -456,7 +460,7 @@ export function CanvasBoard({
         refIds.push(n.id);
       });
       if (resultGid && !list.some((n) => n.gid === resultGid)) {
-        added.push({ id: uid(), gid: resultGid, x: c.x - 140, y: c.y - 160, w: 320, h: 320, from: refIds.length ? refIds : undefined, fit: true });
+        added.push({ id: uid(), kind: "result", gid: resultGid, x: c.x - 140, y: c.y - 160, w: 320, h: 320, from: refIds.length ? refIds : undefined, fit: true });
       }
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
@@ -465,9 +469,9 @@ export function CanvasBoard({
     api.snapshot = (onlySelected) => {
       const pick = onlySelected ? nodesRef.current.filter((n) => selRef.current.has(n.id)) : nodesRef.current;
       const ids = new Set(pick.map((n) => n.id));
-      const list = pick.map((n) => ({ ...n, from: n.from?.filter((f) => ids.has(f)) })).map((n) => (n.kind === "text" ? n : { ...n, src: urlOfRef.current(n) ?? undefined, gid: undefined }));
+      const list = pick.map((n) => ({ ...n, from: n.from?.filter((f) => ids.has(f)) })).map((n) => (n.kind === "text" ? n : { ...n, kind: isResult(n) ? "result" : n.kind, src: urlOfRef.current(n) ?? undefined, gid: undefined, editOf: undefined }));
       if (list.some((n) => n.src?.startsWith("data:"))) return null;
-      return { nodes: list.filter((n) => n.kind === "text" || n.src), view: viewRef.current };
+      return { nodes: list.filter((n) => n.kind === "text" || n.kind === "gen" || n.src), view: viewRef.current };
     };
     api.paste = (files) => {
       const r = boxRef.current?.getBoundingClientRect();
@@ -500,13 +504,16 @@ export function CanvasBoard({
       apiRef.current = null;
     };
   }, [apiRef, toWorld, commit, zoomAt, fitAll]);
+  useEffect(() => {
+    if (remoteReady.current) deferred.current.splice(0).forEach((run) => run());
+  }, [syncTick]);
   // The page shows the zoom level in its tool rail (用户 2026-11-10).
   useEffect(() => {
     onScale?.(view.s);
   }, [view.s, onScale]);
 
   // ---- placeholders for pictures being made: next to the selection, else in the middle of the view
-  const anchor = useRef<{ x: number; y: number; from: string[]; into?: string } | null>(null);
+  const anchor = useRef<{ x: number; y: number; from: string[] } | null>(null);
   useEffect(() => {
     if (!loading) {
       anchor.current = null;
@@ -515,11 +522,11 @@ export function CanvasBoard({
     if (anchor.current) return;
     const picked = nodesRef.current.filter((n) => sel.has(n.id));
     if (picked.length === 1 && picked[0].kind === "gen" && !picked[0].gid) {
-      anchor.current = { x: picked[0].x, y: picked[0].y, from: picked[0].from ?? [], into: picked[0].id };
+      anchor.current = { x: picked[0].x + picked[0].w + GAP * 2, y: picked[0].y, from: [picked[0].id] };
     } else if (picked.length) {
       const x = Math.max(...picked.map((n) => n.x + n.w)) + GAP * 2;
       const y = Math.min(...picked.map((n) => n.y));
-      anchor.current = { x, y, from: picked.map((n) => n.id) };
+      anchor.current = { x, y, from: [...new Set(picked.flatMap((n) => isResult(n) ? n.from ?? [] : [n.id]))] };
     } else {
       const r = boxRef.current?.getBoundingClientRect();
       const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
@@ -533,14 +540,16 @@ export function CanvasBoard({
     const w = 320;
     const h = Math.round(w / Math.max(0.2, jobAspect || 1));
     const already = nodesRef.current.filter((n) => pendingIds.includes(n.gid ?? "")).length;
-    const into = a.into && !already ? a.into : null;
-    const added: Node[] = missing.slice(into ? 1 : 0).map((gid, i) => {
-      const k = already + i + (into ? 1 : 0);
-      return { id: uid(), gid, x: a.x + (k % 2) * (w + GAP), y: a.y + Math.floor(k / 2) * (h + GAP), w, h, from: a.from, fit: true };
+    const placed = new Set<number>();
+    const added: Node[] = missing.map((gid, i) => {
+      let k = already + i;
+      const at = () => ({ x: a.x + (k % 2) * (w + GAP), y: a.y + Math.floor(k / 2) * (h + GAP) });
+      while (nodesRef.current.some((m) => m.x < at().x + w && m.x + m.w > at().x && m.y < at().y + h && m.y + m.h > at().y) || placed.has(k)) k++;
+      placed.add(k);
+      return { id: uid(), kind: "result", gid, ...at(), w, h, from: a.from, fit: true };
     });
-    // The first picture goes into the empty frame it was made for; it keeps the frame's links.
-    commit((n) => [...n.map((m) => (into && m.id === into ? { ...m, kind: undefined, gid: missing[0], fit: true } : m)), ...added]);
-    setSel(new Set([...(into ? [into] : []), ...added.map((n) => n.id)]));
+    commit((list) => [...list, ...added]);
+    setSel(new Set(added.map((n) => n.id)));
   }, [pendingIds, jobAspect, commit]);
 
   // ---- pointer: pan, marquee, move, resize
@@ -695,13 +704,11 @@ export function CanvasBoard({
   // ---- keyboard
   /** Two pictures: left one is "before". One picture: the picture it was made from, else its saved reference. */
   /** Words of the text nodes a picture was made from: 再来一张 uses their current text (一个文本控制多个生图). */
-  const linkedText = (n: Node): string | undefined => {
-    const t = (n.from ?? []).map((id) => nodesRef.current.find((m) => m.id === id)).filter((m) => m?.kind === "text").map((m) => m!.text ?? "").filter(Boolean);
-    return t.length ? t.join("\n\n") : undefined;
-  };
-  const linkedRefs = (n: Node): string[] | undefined => {
-    const u = (n.from ?? []).map((id) => nodesRef.current.find((m) => m.id === id)).filter((m) => m && m.kind !== "text").map((m) => urlOf(m!)).filter((x): x is string => !!x);
-    return u.length ? u : undefined;
+  const sourceNodes = (n: Node) => upstreamOf(n, nodesRef.current).flatMap((p) => p.kind === "gen" ? upstreamOf(p, nodesRef.current) : [p]);
+  const linkedText = (n: Node) => sourceNodes(n).filter((m) => m.kind === "text").map((m) => m.text).filter(Boolean).join("\n\n") || undefined;
+  const linkedRefs = (n: Node) => {
+    const urls = sourceNodes(n).map((m) => urlOf(m)).filter((u): u is string => !!u);
+    return urls.length ? urls : undefined;
   };
   const compareSel = () => {
     if (!onCompare) return;
@@ -715,7 +722,7 @@ export function CanvasBoard({
     const n = list[0];
     const u = n && urlOf(n);
     if (!u) return;
-    const src = n.from?.map((id) => nodesRef.current.find((m) => m.id === id)).find((m) => m && urlOf(m));
+    const src = sourceNodes(n).find((m) => urlOf(m));
     onCompare(src ? urlOf(src)! : null, u, n.gid ?? null);
   };
   const removeSel = useCallback(() => {
@@ -789,7 +796,7 @@ export function CanvasBoard({
     if (gid) {
       const src = sources.get(gid);
       if (!src?.url) return;
-      const n: Node = { id: uid(), gid, x: at.x - 160, y: at.y - 160, w: 320, h: 320, fit: true };
+      const n: Node = { id: uid(), kind: "image", gid, x: at.x - 160, y: at.y - 160, w: 320, h: 320, fit: true };
       commit((list) => [...list, n]);
       setSel(new Set([n.id]));
       return;
@@ -845,14 +852,10 @@ export function CanvasBoard({
 
   const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
   urlOfRef.current = urlOf;
-  // A selected empty frame stands for what is linked into it: its pictures are the references, its text the description.
-  // 用户 2026-11-11 (连上了就要显示加上的内容): a picture brings what is linked into it — itself is 图1, linked
-  // pictures 图2, 图3…, linked text joins the description — all handed to the model together.
-  function inputsOf(n: Node): Node[] {
-    return (n.from ?? []).map((id) => nodes.find((m) => m.id === id)).filter((m): m is Node => !!m);
-  }
-  const expandSel = (n: Node): Node[] => (n.kind === "gen" && !n.gid ? inputsOf(n) : n.kind === "text" ? [n] : [n, ...inputsOf(n)]);
-  const selFlat = [...new Map(nodes.filter((n) => sel.has(n.id)).flatMap(expandSel).map((n) => [n.id, n])).values()];
+  // Previews carry lineage for display. Only an explicit outgoing connection uses a preview as input.
+  const inputsOf = (n: Node) => upstreamOf(n, nodes);
+  const selected = nodes.filter((n) => sel.has(n.id));
+  const selFlat = selectionInputs(selected, nodes);
   const selKey = selFlat.map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
   onSelRef.current = onSelectionChange;
@@ -860,17 +863,17 @@ export function CanvasBoard({
   const selIdKey = [...sel].sort().join("|");
   const selIdRef = useRef(selIdKey);
   selIdRef.current = selIdKey;
-  const selHasFrameRef = useRef(false);
-  selHasFrameRef.current = nodes.some((n) => sel.has(n.id) && n.kind === "gen" && !n.gid);
+  const frame = selected.find((n) => n.kind === "gen");
   useEffect(() => {
-    onSelRef.current?.(selKey ? selKey.split("|") : [], selIdRef.current, selHasFrameRef.current);
-  }, [selKey, selIdKey]);
-  const selected = nodes.filter((n) => sel.has(n.id));
+    const restore = !!frame && explicitEdit.current === frame.id;
+    explicitEdit.current = null;
+    onSelRef.current?.(selKey ? selKey.split("|") : [], selIdRef.current, !!frame, frame?.editOf, restore);
+  }, [selKey, selIdKey, frame?.id, frame?.editOf, editClick]);
   const selRef = useRef(sel);
   selRef.current = sel;
   const selTexts = selFlat.filter((n) => n.kind === "text");
   // 用户 2026-11-11: a text node on its own is just text (no compose box); with a picture or a 生成框 it is the description.
-  const withPicture = selected.some((n) => n.kind !== "text");
+  const withPicture = selected.some((n) => n.kind !== "text" && !isResult(n));
   const selTextKey = selTexts.length && withPicture ? selTexts.map((n) => n.text ?? "").join("\n\n") : null;
   const onSelTextRef = useRef(onSelectionText);
   onSelTextRef.current = onSelectionText;
@@ -881,7 +884,7 @@ export function CanvasBoard({
   /** 用户 2026-11-11 (文本里输入@要能@图片): the pictures a text node can name, numbered as the model will see them —
    *  the picture it is linked into is 图1 and that picture's other linked pictures follow; a 生成框 starts at its inputs. */
   const picsForText = (textId: string): { n: number; url: string }[] => {
-    const target = nodes.find((m) => m.from?.includes(textId) && m.kind !== "text");
+    const target = nodes.find((m) => m.from?.includes(textId) && m.kind !== "text" && !isResult(m));
     if (!target) return [];
     const list = [...(target.kind === "gen" && !target.gid ? [] : [target]), ...inputsOf(target).filter((m) => m.kind !== "text")];
     return list.map((m, i) => ({ n: i + 1, url: urlOf(m) ?? "" })).filter((x) => x.url);
@@ -943,6 +946,7 @@ export function CanvasBoard({
     const list = nodesRef.current;
     const src = list.find((n) => n.id === srcId), tgt = list.find((n) => n.id === tgtId);
     if (!src || !tgt || srcId === tgtId) return;
+    if (isResult(tgt)) return flash("这是效果图，请把参考图连到生成框");
     if (tgt.from?.includes(srcId)) return flash("已经连着了");
     if (isAncestor(tgtId, srcId, list)) return flash("不能连成一圈");
     if (src.kind === "text" && tgt.kind === "text") return flash("文本不能连文本");
@@ -1102,8 +1106,10 @@ export function CanvasBoard({
           return (n.from ?? []).map((fid) => {
             const f = byId.get(fid);
             if (!f) return null;
-            const label = n.kind === "text" ? "看图写描述" : f.kind === "text" ? "文本" : `图片${++pic}`;
+            const label = isResult(n) ? "效果图" : n.kind === "text" ? "看图写描述" : f.kind === "text" ? "文本" : `图片${++pic}`;
             const x = (f.x + f.w + n.x) / 2, y = (f.y + f.h / 2 + n.y + n.h / 2) / 2;
+            const style = { left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` };
+            if (isResult(n)) return <span key={"l" + fid + n.id} data-tip="这条线表示生成结果" className="pointer-events-none absolute whitespace-nowrap rounded-full bg-panel px-1.5 py-px text-[10px] text-secondary ring-1 ring-edge/10" style={style}>{label}</span>;
             return (
               <button
                 type="button"
@@ -1112,7 +1118,7 @@ export function CanvasBoard({
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => unlink(fid, n.id)}
                 className="group absolute flex items-center gap-0.5 whitespace-nowrap rounded-full bg-panel px-1.5 py-px text-[10px] font-medium text-secondary shadow-[0_1px_6px_rgba(0,0,0,0.1)] ring-1 ring-edge/[0.06] hover:text-danger hover:ring-danger/30"
-                style={{ left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` }}
+                style={style}
               >
                 {label}
                 <span className="hidden group-hover:inline">×</span>
@@ -1133,6 +1139,7 @@ export function CanvasBoard({
             <div
               key={n.id}
               data-node-id={n.id}
+              data-node-kind={isResult(n) ? "result" : n.kind ?? "image"}
               className={`group/node absolute rounded-[10px] ${isGen ? "border-2 border-dashed border-accent/40 bg-accent/[0.03]" : "bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on ? "ring-[3px] ring-accent" : linkHover === n.id ? "ring-[3px] ring-[#34c759]" : isGen ? "" : "ring-1 ring-edge/[0.06]"}`}
               style={{ left: n.x, top: n.y, width: n.w, height: n.h, outlineWidth: 0 }}
               onPointerDown={(e) => onNodeDown(e, n)}
@@ -1149,7 +1156,7 @@ export function CanvasBoard({
                   ) : (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2.5 11l3.5-3.5 2.5 2.5 2-2 3 3" /></svg>
                   )}
-                  {isText ? "文本" : isGen ? "生成框" : n.gid ? "图片生成" : "图片资源"}
+                  {isText ? "文本" : isGen ? "生成框" : isResult(n) ? "效果图" : "图片资源"}
                 </span>
                 {!isText && n.nw ? <span className="tabular-nums">{n.nw}×{n.nh}</span> : null}
               </div>
@@ -1435,6 +1442,7 @@ export function CanvasBoard({
             {one ? (
               <>
                 {onCompare && (selected.length === 2 || one.from?.length || one.gid) && <button type="button" className={item} onClick={go(compareSel)}>{selected.length === 2 ? "对比这两张" : "和原图对比"}</button>}
+                {one.gid && onReedit && url && <button type="button" className={item} onClick={go(() => onReedit(one.gid!))}>重新编辑</button>}
                 {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!, linkedText(one), linkedRefs(one)))}>再来一张</button>}
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}

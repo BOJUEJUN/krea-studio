@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { readCanvasLayout } from "@/lib/edit-recipe";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -100,14 +102,24 @@ export async function POST(req: NextRequest) {
     }
 
     // Keep the reference for the compare view, after answering so it never slows generation down.
-    const refUrl: string | undefined = refUrlFor(tasks[0].taskId);
-    const refBytes = Buffer.from(await file.arrayBuffer());
-    after(() => saveReference(tasks[0].taskId, refBytes).catch((e: any) => console.error("[refs] save failed:", e?.message || e)));
+    const references = [gptImage?.bytes ?? Buffer.from(await file.arrayBuffer()), ...extras.map((r) => r.bytes)];
+    const refIds = references.map((_, i) => i === 0 ? tasks[0].taskId : randomUUID());
+    const refUrls = refIds.map(refUrlFor);
+    const refUrl = refUrls[0];
+    after(async () => {
+      await Promise.all(references.map((bytes, i) => saveReference(refIds[i], bytes)
+        .catch((e) => console.error("[refs] save failed:", e?.message || e))));
+    });
 
     // Record the tasks right away so images reach history even if the page closes.
     const settings = settingsOf(model.id, "i2i", (k) =>
-      k === "refs" ? String(1 + form.getAll("ref").length) : k === "denoise" ? String(denoise) : String(form.get(k) ?? "")
+      k === "refs" ? String(references.length) : k === "denoise" ? String(denoise) : String(form.get(k) ?? "")
     );
+    const encodedLayout = form.get("canvasLayout");
+    let canvasLayout;
+    if (typeof encodedLayout === "string" && encodedLayout.length < 100_000) {
+      try { canvasLayout = readCanvasLayout(JSON.parse(encodedLayout)); } catch {}
+    }
     const userPrompt = String(form.get("userPrompt") || "").slice(0, 2000) || undefined;
     const now = Date.now();
     for (const [i, t] of tasks.entries()) {
@@ -119,7 +131,7 @@ export async function POST(req: NextRequest) {
         model: model.id,
         prompt: prompt.slice(0, 2000),
         url: "",
-        refUrl,
+        refUrl, refUrls, canvasLayout,
         seed: t.seed,
         settings,
         userPrompt,
@@ -137,7 +149,7 @@ export async function POST(req: NextRequest) {
         mode: "i2i",
         model: model.id,
         prompt,
-        refUrl,
+        refUrl, refUrls, settings, canvasLayout,
       },
       { status: 202 }
     );

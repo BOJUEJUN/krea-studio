@@ -22,9 +22,11 @@ import {
   type Quality,
 } from "@/lib/models";
 
+import { pictureParams, pictureRefs, type EditMetadata } from "@/lib/edit-recipe";
+
 type Readiness = Record<string, Record<Mode, boolean>>;
 
-type GalleryItem = {
+type GalleryItem = EditMetadata & {
   id: string;
   mode: Mode;
   model?: string;
@@ -183,7 +185,7 @@ function formatDuration(ms?: number): string | null {
   return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
 }
 
-type PendingJob = {
+type PendingJob = EditMetadata & {
   /** When 生成 was clicked (2026-11-06 用户: 用时比体感短 — it now includes 提示词优化 and the upload). */
   startedAt?: number;
   taskId: string;
@@ -802,7 +804,8 @@ export default function StudioPage() {
   const resultRef_ = useRef<HTMLElement>(null);
   const fileBlobRef = useRef<File | null>(null);
   /** A reference still downloading after 重新编辑 (the picture already shows). */
-  const refLoadRef = useRef<Promise<File | null> | null>(null);
+  const refVersion = useRef(0);
+  const refLoadRef = useRef<Promise<File[] | null> | null>(null);
   const timerRef = useRef<number | null>(null);
 
   const jobRef = useRef(0);
@@ -950,7 +953,7 @@ export default function StudioPage() {
   // A model with a fixed ratio list snaps the size to its first ratio when the current one is not offered.
   useEffect(() => {
     const allowed = paramsOf(model).ratios;
-    if (!allowed) return;
+    if (!allowed || paramsOf(model).customSize) return;
     const cur = RATIOS.find((r) => r.w === width && r.h === height);
     if (cur && allowed.includes(cur.label)) return;
     const next = RATIOS.find((r) => r.label === allowed[0]);
@@ -981,6 +984,7 @@ export default function StudioPage() {
   }, [heightText]);
 
   const onPickFile = useCallback((file: File | null) => {
+    refVersion.current++;
     refLoadRef.current = null;
     fileBlobRef.current = file;
     setPreview(file ? URL.createObjectURL(file) : null);
@@ -1208,57 +1212,76 @@ export default function StudioPage() {
     [flash]
   );
 
-  /** Load a history item's settings back into the form. */
-  const reuseItem = useCallback(
-    (g: GalleryItem) => {
-      setMode(g.mode);
-      const m = findModel(g.model);
-      if (m) {
-        setModel(m.id);
-        localStorage.setItem(MODEL_KEY, m.id);
-      }
-      setPrompt(g.prompt);
-      // 2026-11-05 (用户): the description is already the optimised one, so 提示词优化 is off for this edit
-      // (not saved; a new reference picture turns the saved choice back on).
-      setReverse(false);
-      // 2026-11-05 (用户: 点了图片也要返回回来): the reference picture comes back too; 文生图 records clear it.
-      if (g.mode === "i2i" && g.refUrl) {
-        // 2026-11-06 (用户: 图要等几秒): show the picture at once from Tencent, fetch the file behind it;
-        // 生成 waits for that file if it is clicked first.
-        const direct = DIRECT.get(g.refUrl)?.full;
-        setExtraRefs([]);
-        if (direct) {
-          fileBlobRef.current = null;
-          setPreview(direct);
-        }
-        const loading = fetch(rawOf(g.refUrl))
-          .then((r) => (r.ok ? r.blob() : Promise.reject()))
-          .then((b) => {
-            const f = new File([b], "reference." + (b.type.split("/")[1] || "png"), { type: b.type || "image/png" });
-            if (refLoadRef.current === loading) onPickFile(f);
-            return f;
-          })
-          .catch(() => {
-            if (refLoadRef.current === loading && direct) onPickFile(null);
-            flash("描述已放回，参考图找不到了");
-            return null;
-          })
-          .finally(() => {
-            if (refLoadRef.current === loading) refLoadRef.current = null;
-          });
-        refLoadRef.current = loading;
-        flash("已放回参考图和描述");
-      } else if (g.mode === "i2i") {
-        // Made from a picture whose copy was not kept: leave the current pictures alone.
-        flash("描述已放回；这张的参考图当时没保存上");
-      } else {
-        onPickFile(null);
-        setExtraRefs([]);
-        flash("已放回模型和描述");
-      }
-    },
-    [flash, onPickFile]
-  );
+  const restorePictureParams = useCallback((g: GalleryItem) => {
+    const v = pictureParams(g);
+    setModel(v.model);
+    setPrompt(v.prompt);
+    setDenoise(v.denoise);
+    setQuality(v.quality);
+    setRes(v.res);
+    setThinking(v.thinking);
+    setRegional(v.regional);
+    setBackground(v.background);
+    setComplexity(v.complexity);
+    setNegative(v.negative);
+    setSeedText(v.seedText);
+    setLora(v.lora);
+    // Older hosted records kept output pixels only; recover the matching editor aspect ratio.
+    const p = paramsOf(v.model);
+    const ratios = p.customSize ? [] : RATIOS.filter((r) => p.ratios?.includes(r.label));
+    const nearest = ratios.sort((a, b) => Math.abs(Math.log((a.w / a.h) / (v.width / v.height))) - Math.abs(Math.log((b.w / b.h) / (v.width / v.height))))[0];
+    applyRatio(nearest?.w ?? v.width, nearest?.h ?? v.height);
+    setReverse(false); // The saved prompt already includes any reverse description.
+    setPolishUndo(null);
+    setError(null);
+  }, [applyRatio]);
+
+  // A selection can change before its files arrive. Only the current selection may fill the form.
+  const replaceReferenceUrls = useCallback((urls: string[]) => {
+    refVersion.current++;
+    refLoadRef.current = null;
+    fileBlobRef.current = null;
+    setExtraRefs([]);
+    setPreview(urls.length ? fullOf(urls[0]) : null);
+    setMode(urls.length ? "i2i" : "t2i");
+    if (!urls.length) return;
+    const loading: Promise<File[] | null> = Promise.all(urls.map(async (url, i) => {
+      const r = await fetch(rawOf(url));
+      if (!r.ok) throw new Error();
+      const blob = await r.blob();
+      return new File([blob], `ref-${i + 1}.${blob.type.split("/")[1] || "png"}`, { type: blob.type || "image/png" });
+    })).then((files) => {
+      if (refLoadRef.current !== loading) return null;
+      refLoadRef.current = null;
+      fileBlobRef.current = files[0];
+      setExtraRefs(files.slice(1).map((file, i) => ({ file, url: fullOf(urls[i + 1]) })));
+      return files;
+    }).catch(() => {
+      if (refLoadRef.current === loading) flash("参考图读取失败，请重新打开或替换参考图");
+      return null;
+    });
+    refLoadRef.current = loading;
+    return loading;
+  }, [flash]);
+
+  const reuseItem = useCallback((g: GalleryItem, refs = pictureRefs(g)) => {
+    restorePictureParams(g);
+    replaceReferenceUrls(refs);
+  }, [restorePictureParams, replaceReferenceUrls]);
+
+  const editHistoryItem = (g: GalleryItem) => {
+    if (canvasOnRef.current && canvasApi.current) {
+      canvasApi.current.reedit(g);
+    } else {
+      reuseItem(g);
+      if (g.url) showItem(g);
+      setCompareOn(false);
+    }
+    const refs = pictureRefs(g);
+    if (g.mode === "i2i" && refs.length < Number(g.settings?.["参考图"]?.match(/\d+/)?.[0] || 1)) {
+      flash("已还原已保存的参数和参考图；旧记录缺少部分参考图");
+    }
+  };
 
   /** Save an image with a readable name (works for our copies and remote links). */
   const downloadItem = useCallback(
@@ -1415,7 +1438,7 @@ export default function StudioPage() {
         model: pending.model,
         prompt: pending.prompt,
         url,
-        refUrl: pending.refUrl,
+        refUrl: pending.refUrl, refUrls: pending.refUrls, settings: pending.settings, canvasLayout: pending.canvasLayout,
         cost: done.cost || null,
         createdAt: pending.createdAt,
         durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
@@ -1441,8 +1464,8 @@ export default function StudioPage() {
           if (saved?.item) rememberDirect([saved.item]);
           // The server keeps a permanent copy; point history at it.
           const kept = saved?.item?.url;
-          if (typeof kept === "string" && kept !== url) {
-            setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, url: kept } : x)));
+          if (typeof kept === "string" && kept) {
+            setGallery((g) => g.map((x) => (x.id === item.id ? { ...x, ...saved.item, url: kept } : x)));
           }
         })
         .catch(() => {});
@@ -1568,13 +1591,13 @@ export default function StudioPage() {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
     }
-    if (!fileBlobRef.current && refLoadRef.current) {
-      const f = await refLoadRef.current;
-      if (f) {
-        fileBlobRef.current = f;
-      }
-    }
-    const imageFile = fileBlobRef.current;
+    const refAtClick = refVersion.current;
+    const loadingRefs = refLoadRef.current;
+    const restored = loadingRefs ? await loadingRefs : undefined;
+    if (busyRef.current || restored === null || refVersion.current !== refAtClick) return;
+    const imageFile = restored?.[0] ?? fileBlobRef.current;
+    const supplemental = restored ? restored.slice(1) : extraRefs.map((r) => r.file);
+    const canvasLayout = canvasOnRef.current ? canvasApi.current?.layout() : undefined;
     if (mode === "i2i" && !imageFile) {
       setError("请先上传参考图");
       return;
@@ -1635,7 +1658,8 @@ export default function StudioPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: finalPrompt,
+            prompt: finalPrompt, canvasLayout,
+            editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
             count,
             ...sizeFor(clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
@@ -1651,6 +1675,7 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
+        if (canvasLayout) fd.append("canvasLayout", JSON.stringify(canvasLayout));
         if (finalPrompt !== userPrompt) {
           fd.append("optimized", "1");
           if (userPrompt) fd.append("userPrompt", userPrompt);
@@ -1669,7 +1694,7 @@ export default function StudioPage() {
         if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
         for (const [k, v] of Object.entries(advanced())) fd.append(k, String(v));
         if (regional && paramsOf(model).regional) fd.append("regional", "1");
-        for (const r of extraRefs.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(r.file), "ref.jpg");
+        for (const f of supplemental.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(f), "ref.jpg");
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }
       if (jobRef.current !== job) return;
@@ -1689,6 +1714,7 @@ export default function StudioPage() {
         model,
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
+        refUrls: data.refUrls, settings: data.settings, canvasLayout: data.canvasLayout,
         createdAt: now + i,
         startedAt: clickedAt,
       }));
@@ -1782,7 +1808,7 @@ export default function StudioPage() {
   const modelParams = paramsOf(model);
   refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
-  const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : resultRef ? [resultRef] : [];
+  const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : currentItem ? pictureRefs(currentItem) : resultRef ? [resultRef] : [];
   useEffect(() => {
     if (!user) return;
     try {
@@ -1950,19 +1976,20 @@ export default function StudioPage() {
     return () => clearInterval(t);
   }, [canvasOn]);
   // Selected pictures become the references (in canvas mode only).
-  const selTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, summary: "" };
+  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
   const composeKey = useRef("");
   const liveSummaryRef = useRef("");
-  const switchCompose = (key: string) => {
-    if (key === composeKey.current) return;
+  const switchCompose = (key: string, editOf?: string, restore = false) => {
+    if (key === composeKey.current && !restore) return;
     composeMem.current.set(composeKey.current, { ...composeSnapRef.current, summary: liveSummaryRef.current });
     composeKey.current = key;
+    const original = editOf && (restore || !composeMem.current.has(key)) ? gallery.find((g) => g.id === editOf) : undefined;
+    if (original) return restorePictureParams(original);
     const cur = composeSnapRef.current;
     const v = composeMem.current.get(key) ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
     setPrompt(v.prompt);
@@ -1979,42 +2006,20 @@ export default function StudioPage() {
     setWidthText(v.widthText);
     setHeightText(v.heightText);
     setPolishLevel(v.polishLevel);
+    setThinking(v.thinking); setRegional(v.regional); setBackground(v.background); setComplexity(v.complexity); setReverse(v.reverseOn);
   };
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
-    (urls: string[], nodeKey?: string, frame?: boolean) => {
-      switchComposeRef.current(nodeKey ?? urls.join("|"));
+    (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean) => {
+      if (!canvasOnRef.current) return;
+      switchComposeRef.current(nodeKey ?? urls.join("|"), editOf, restore);
       setCanvasSel(urls);
       setCanvasFrameSel(!!frame);
-      setComposeOpen(false); // clicking a picture (or empty space) closes the free-standing box
-      if (selTimer.current) clearTimeout(selTimer.current);
-      selTimer.current = setTimeout(async () => {
-        if (!urls.length) {
-          onPickFile(null);
-          setExtraRefs([]);
-          setMode("t2i");
-          return;
-        }
-        try {
-          const files = await Promise.all(
-            urls.map(async (u, i) => {
-              const r = await fetch(u.startsWith("data:") ? u : rawOf(u));
-              if (!r.ok) throw new Error();
-              const b = await r.blob();
-              return new File([b], `canvas-${i + 1}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/jpeg" });
-            })
-          );
-          onPickFile(null);
-          setExtraRefs([]);
-          addRefs(files, true);
-          setMode("i2i");
-        } catch {
-          flash("图片读取失败，请稍后重试");
-        }
-      }, 250);
+      setComposeOpen(false);
+      replaceReferenceUrls(urls);
     },
-    [onPickFile, addRefs, flash]
+    [replaceReferenceUrls]
   );
 
   const boardSources = useMemo(
@@ -2454,6 +2459,7 @@ export default function StudioPage() {
                   onSelectionChange={onBoardSelection}
                   onSelectionBox={onSelectionBox}
                   onGidsChange={(ids) => setOnBoard(new Set(ids))}
+                  onReedit={(gid) => { const g = gallery.find((v) => v.id === gid); if (g) editHistoryItem(g); }}
                   onRetry={(gid) => {
                     // Same prompt, model and references as the failed one, made again (用户: 失败的格子加重试).
                     const g = gallery.find((x) => x.id === gid);
@@ -2474,29 +2480,9 @@ export default function StudioPage() {
                   onAgain={(gid, text, refs) => {
                     const g = gallery.find((x) => x.id === gid);
                     if (!g) return;
-                    reuseItem(g);
+                    reuseItem(g, refs?.length ? refs : pictureRefs(g));
                     if (text) setPrompt(text);
-                    // Pictures linked into it are the references this time (用户 2026-11-11: 连线).
-                    if (refs?.length) {
-                      Promise.all(
-                        refs.map(async (u, i) => {
-                          const r = await fetch(u.startsWith("data:") ? u : rawOf(u));
-                          const b = await r.blob();
-                          return new File([b], `link-${i + 1}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/jpeg" });
-                        })
-                      )
-                        .then((files) => {
-                          refLoadRef.current = null; // the history record's own reference must not land on top
-                          onPickFile(null);
-                          setExtraRefs([]);
-                          addRefs(files, true);
-                          setMode("i2i");
-                          setTimeout(() => startOrQueueRef.current(), 400);
-                        })
-                        .catch(() => flash("连着的图片读取失败"));
-                      return;
-                    }
-                    setTimeout(() => startOrQueueRef.current(), 600);
+                    setTimeout(() => startOrQueueRef.current(), 0);
                   }}
                   onUpscale={(gid) => upscaleItem(gid)}
                   sources={boardSources}
@@ -3227,7 +3213,7 @@ export default function StudioPage() {
                 {error}
               </div>
             )}
-              {boardCompare && (
+              {boardCompare && createPortal(
                 // 用户 2026-11-11: 对比 on the board, full screen, same four ways as the single-picture view.
                 <div className="animate-pop-in fixed inset-0 z-[96] flex flex-col bg-black/80 backdrop-blur-sm" onClick={() => setBoardCompare(null)}>
                   <div className="flex shrink-0 items-center justify-center gap-2 p-3" onClick={(e) => e.stopPropagation()}>
@@ -3243,7 +3229,7 @@ export default function StudioPage() {
                   <div className="min-h-0 flex-1 p-4 pt-0" onClick={(e) => e.stopPropagation()}>
                     <CompareView key={`${boardCompare.before}-${boardCompare.after}-${compareMode}`} before={fullOf(boardCompare.before)} after={fullOf(boardCompare.after)} mode={compareMode} />
                   </div>
-                </div>
+                </div>, document.body
               )}
               {viewer && (() => {
                 // Several pictures from this run: ← → move between them.
@@ -3602,7 +3588,7 @@ export default function StudioPage() {
                             >
                               {[
                                 [g.fav ? "取消收藏" : "收藏", () => toggleFav(g)],
-                                ["重新编辑", () => reuseItem(g)],
+                                ["重新编辑", () => editHistoryItem(g)],
                                 ["当参考图", () => useAsReference(g)],
                                 ["复制描述", () => copyPrompt(g)],
                                 ...(canvasOn ? [["放到画布", () => canvasApi.current?.add(g.id)]] : []),
