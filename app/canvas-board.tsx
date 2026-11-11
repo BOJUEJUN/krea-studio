@@ -30,6 +30,8 @@ export type BoardApi = {
   setText: (text: string) => void;
   /** The board with every picture as a link (for 分享); null while a picture is still uploading. */
   snapshot: (onlySelected?: boolean) => { nodes: any[]; view: View } | null;
+  /** 生成新图: an empty 生成框 in the middle of the view, selected. */
+  addFrame: () => void;
 };
 
 type Node = {
@@ -138,7 +140,7 @@ export function CanvasBoard({
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
   /** The selected pictures' urls (in canvas mode they become the reference images). */
-  onSelectionChange?: (urls: string[], nodeKey?: string) => void;
+  onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean) => void;
   storageKey: string;
   /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
   cloudId?: string;
@@ -167,6 +169,7 @@ export function CanvasBoard({
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   const urlOfRef = useRef<(n: Node) => string | null>(() => null);
+  const addGenRef = useRef<() => void>(() => {});
   const prefsRef = useRef(prefs ?? { snap: true, grid: true, lines: true });
   prefsRef.current = prefs ?? { snap: true, grid: true, lines: true };
   useEffect(() => {
@@ -405,6 +408,7 @@ export function CanvasBoard({
       paste: () => {},
       setText: () => {},
       snapshot: () => null,
+      addFrame: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -445,6 +449,7 @@ export function CanvasBoard({
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
     };
+    api.addFrame = () => addGenRef.current();
     api.snapshot = (onlySelected) => {
       const pick = onlySelected ? nodesRef.current.filter((n) => selRef.current.has(n.id)) : nodesRef.current;
       const ids = new Set(pick.map((n) => n.id));
@@ -776,22 +781,36 @@ export function CanvasBoard({
       setSel(new Set([n.id]));
       return;
     }
+    const frameId = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest?.("[data-node-id]")?.getAttribute("data-node-id");
+    const frame = frameId ? nodesRef.current.find((m) => m.id === frameId && m.kind === "gen" && !m.gid) : undefined;
+    if (frame) {
+      const made = await addFiles(Array.from(e.dataTransfer.files ?? []), { x: frame.x - 400 + 160, y: frame.y + 160 }, true);
+      if (made.length) {
+        commit((l) => l.map((m) => (m.id === frame.id ? { ...m, from: [...(m.from ?? []), ...made] } : m)));
+        setSel(new Set([frame.id]));
+      }
+      return;
+    }
     await addFiles(Array.from(e.dataTransfer.files ?? []), at);
   };
-  const addFiles = async (all: File[], at: { x: number; y: number }) => {
+  const addFiles = async (all: File[], at: { x: number; y: number }, stack = false): Promise<string[]> => {
     const files = all.filter((f) => f.type.startsWith("image/"));
     const added: Node[] = [];
+    let y = at.y - 160;
     for (const [i, f] of files.entries()) {
       try {
         const d = await fileToDataUrl(f);
         const w = 320;
-        added.push({ id: uid(), src: d.url, x: at.x - 160 + i * (w + GAP), y: at.y - 160, w, h: (w * d.h) / d.w });
+        const h = (w * d.h) / d.w;
+        added.push({ id: uid(), src: d.url, x: stack ? at.x - 160 : at.x - 160 + i * (w + GAP), y: stack ? y : at.y - 160, w, h });
+        y += h + GAP;
       } catch {}
     }
     if (added.length) {
       commit((list) => [...list, ...added]);
       setSel(new Set(added.map((n) => n.id)));
     }
+    return added.map((n) => n.id);
   };
 
   const addFilesRef = useRef(addFiles);
@@ -823,8 +842,10 @@ export function CanvasBoard({
   const selIdKey = [...sel].sort().join("|");
   const selIdRef = useRef(selIdKey);
   selIdRef.current = selIdKey;
+  const selHasFrameRef = useRef(false);
+  selHasFrameRef.current = nodes.some((n) => sel.has(n.id) && n.kind === "gen" && !n.gid);
   useEffect(() => {
-    onSelRef.current?.(selKey ? selKey.split("|") : [], selIdRef.current);
+    onSelRef.current?.(selKey ? selKey.split("|") : [], selIdRef.current, selHasFrameRef.current);
   }, [selKey, selIdKey]);
   const selected = nodes.filter((n) => sel.has(n.id));
   const selRef = useRef(sel);
@@ -895,6 +916,15 @@ export function CanvasBoard({
     commit((l) => [...l, n]);
     setSel(new Set([n.id]));
     return n;
+  };
+  addGenRef.current = () => {
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const c = toWorld(r.left + r.width / 2, r.top + r.height * 0.4);
+    // Step aside if something already sits there.
+    let x = c.x - 160, y = c.y - 160;
+    while (nodesRef.current.some((m) => m.x < x + 320 && m.x + m.w > x && m.y < y + 320 && m.y + m.h > y)) x += 360;
+    addGen({ x, y }, []);
   };
   const startLink = (e: React.PointerEvent, n: Node) => {
     e.stopPropagation();
@@ -1312,9 +1342,8 @@ export function CanvasBoard({
               </>
             ) : (
               <>
-                {onCompose && <button type="button" className={item} onClick={go(onCompose)}>生成新图</button>}
+                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx - 160, y: ctx.wy - 160 }, []))}>生成新图</button>
                 <button type="button" className={item} onClick={go(() => addText({ x: ctx.wx, y: ctx.wy }))}>添加文本</button>
-                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx, y: ctx.wy }, []))}>添加生成框</button>
                 <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
                 {onOpenHistory && <button type="button" className={item} onClick={go(onOpenHistory)}>从历史添加</button>}
                 <div className="my-1 h-px bg-black/[0.07]" />

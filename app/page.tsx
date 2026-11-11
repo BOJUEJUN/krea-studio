@@ -588,6 +588,7 @@ export default function StudioPage() {
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
   const [canvasTextSel, setCanvasTextSel] = useState(false);
+  const [canvasFrameSel, setCanvasFrameSel] = useState(false); // an empty 生成框 is picked
   const textSelRef = useRef(false);
   useEffect(() => {
     if (textSelRef.current) canvasApi.current?.setText(prompt);
@@ -1978,9 +1979,10 @@ export default function StudioPage() {
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
-    (urls: string[], nodeKey?: string) => {
+    (urls: string[], nodeKey?: string, frame?: boolean) => {
       switchComposeRef.current(nodeKey ?? urls.join("|"));
       setCanvasSel(urls);
+      setCanvasFrameSel(!!frame);
       setComposeOpen(false); // clicking a picture (or empty space) closes the free-standing box
       if (selTimer.current) clearTimeout(selTimer.current);
       selTimer.current = setTimeout(async () => {
@@ -2069,7 +2071,7 @@ export default function StudioPage() {
   };
   const hugForRef = useRef(hugFor);
   hugForRef.current = hugFor;
-  const hugStyle = hugOn && (canvasSel.length || canvasTextSel) ? hugFor(selBoxRef.current) : null;
+  const hugStyle = hugOn && (canvasSel.length || canvasTextSel || canvasFrameSel) ? hugFor(selBoxRef.current) : null;
   const onSelectionBox = useCallback((r: Box | null) => {
     selBoxRef.current = r;
     setHugOn(!!r);
@@ -2685,11 +2687,11 @@ export default function StudioPage() {
           )}
 
         </section>
-        {canvasOn && !canvasSel.length && !canvasTextSel && !composeOpen && (
-          // 用户 2026-11-10: on the board the box only appears next to a clicked picture; this opens it for a new one.
+        {canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && !composeOpen && (
+          // 用户 2026-11-11: 生成新图 puts an empty 生成框 on the board (upload into it or link pictures / text to it).
           <button
             type="button"
-            onClick={() => setComposeOpen(true)}
+            onClick={() => (canvasApi.current ? canvasApi.current.addFrame() : setComposeOpen(true))}
             className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-4 py-2.5 text-[13px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
@@ -2699,7 +2701,7 @@ export default function StudioPage() {
         <section
           ref={composeRef}
           className={
-            canvasOn && !canvasSel.length && !canvasTextSel && !composeOpen
+            canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && !composeOpen
               ? "hidden"
               : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
@@ -2954,7 +2956,7 @@ export default function StudioPage() {
                   </div>
                 )}
                 <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
-                  {canvasOn && !canvasSel.length && !canvasTextSel && composeOpen && (
+                  {canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]">×</button>
                   )}
                   {openPanel && (
