@@ -505,6 +505,8 @@ export default function StudioPage() {
   const [reversing, setReversing] = useState(false);
   const reversedForRef = useRef<string | null>(null);
   const [canvasOn, setCanvasOn] = useState(false);
+  const canvasOnRef = useRef(false);
+  canvasOnRef.current = canvasOn;
   const canvasApi = useRef<BoardApi | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [zoomMenu, setZoomMenu] = useState(false);
@@ -1200,8 +1202,15 @@ export default function StudioPage() {
     const onPaste = (e: ClipboardEvent) => {
       const files = e.clipboardData?.files;
       if (!files || !files.length) return;
-      const file = Array.from(files).find((f) => f.type.startsWith("image/"));
-      if (file) addRefs([file]);
+      const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
+      if (!images.length) return;
+      // On the board a pasted picture becomes a new picture there (用户 2026-11-10), not the reference.
+      if (canvasOnRef.current && canvasApi.current) {
+        e.preventDefault();
+        canvasApi.current.paste(images);
+        return;
+      }
+      addRefs([images[0]]);
     };
     window.addEventListener("paste", onPaste);
     let depth = 0;

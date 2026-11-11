@@ -24,6 +24,8 @@ export type BoardApi = {
   importSet: (refs: string[], resultGid: string | null) => void;
   /** Zoom around the middle of the board: in / out a step, fit everything, or an exact scale (1 = 100%). */
   zoom: (to: "in" | "out" | "fit" | number) => void;
+  /** Pasted pictures: placed under the mouse when it is over the board, else in the middle. */
+  paste: (files: File[]) => void;
 };
 
 type Node = {
@@ -132,6 +134,7 @@ export function CanvasBoard({
   const [ctx, setCtx] = useState<{ x: number; y: number; wx: number; wy: number; node: string | null } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const fileAt = useRef<{ x: number; y: number } | null>(null);
+  const lastPointer = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     if (!ctx) return;
     const down = (e: PointerEvent) => {
@@ -264,6 +267,7 @@ export function CanvasBoard({
     const api: BoardApi = {
       importSet: () => {},
       zoom: () => {},
+      paste: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -303,6 +307,14 @@ export function CanvasBoard({
       }
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
+    };
+    api.paste = (files) => {
+      const r = boxRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const p = lastPointer.current;
+      const inside = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
+      const at = inside ? toWorld(p.x, p.y) : toWorld(r.left + r.width / 2, r.top + r.height / 2);
+      addFilesRef.current(files, at);
     };
     api.zoom = (to) => {
       if (to === "fit") return fitAll();
@@ -402,6 +414,7 @@ export function CanvasBoard({
     drag.current = { kind: "resize", id: n.id, sx: e.clientX, w: n.w, h: n.h, before: nodesRef.current };
   };
   const onMove = (e: React.PointerEvent) => {
+    lastPointer.current = { x: e.clientX, y: e.clientY };
     const d = drag.current;
     if (!d) return;
     moving.current = true;
@@ -571,6 +584,9 @@ export function CanvasBoard({
       setSel(new Set(added.map((n) => n.id)));
     }
   };
+
+  const addFilesRef = useRef(addFiles);
+  addFilesRef.current = addFiles;
 
   const gidKey = nodes.map((n) => n.gid ?? "").filter(Boolean).sort().join(",");
   const onGidsRef = useRef(onGidsChange);
