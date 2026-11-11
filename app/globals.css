@@ -130,9 +130,10 @@ input[type="range"] {
 @keyframes apple-stagger-2 { from { opacity:0; transform:translate3d(0,20px,0);} to {opacity:1;transform:none;} }
 @keyframes apple-stagger-3 { from { opacity:0; transform:translate3d(0,24px,0);} to {opacity:1;transform:none;} }
 
-.stagger-1 { animation: apple-stagger-1 0.75s var(--ease-out-expo) 0.05s both; }
-.stagger-2 { animation: apple-stagger-2 0.8s var(--ease-out-expo) 0.14s both; }
-.stagger-3 { animation: apple-stagger-3 0.85s var(--ease-out-expo) 0.24s both; }
+/* 用户 2026-11-11 (刷新后白屏太长): the entrance is short so the page shows almost at once. */
+.stagger-1 { animation: apple-stagger-1 0.32s var(--ease-out-expo) 0s both; }
+.stagger-2 { animation: apple-stagger-2 0.34s var(--ease-out-expo) 0.03s both; }
+.stagger-3 { animation: apple-stagger-3 0.36s var(--ease-out-expo) 0.06s both; }
 
 @keyframes apple-image-reveal {
   0% {
