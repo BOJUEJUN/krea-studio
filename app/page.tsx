@@ -2808,7 +2808,6 @@ export default function StudioPage() {
                     if (text) setPrompt(text);
                     setTimeout(() => startOrQueueRef.current(), 0);
                   }}
-                  onUpscale={(gid) => upscaleItem(gid)}
                   sources={boardSources}
                   frameProgress={frameProgress}
                   pendingIds={loading ? batch : []}
