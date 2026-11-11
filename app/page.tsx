@@ -3000,11 +3000,11 @@ ${link}`;
                             <button
                               type="button"
                               onClick={(e) => { anchorModel(chipRowRef.current?.querySelector<HTMLElement>('[data-setting="model"]') ?? e.currentTarget); setMultiOnly(true); setOpenPanel("model"); }}
-                              aria-label={`${limit === 1 ? "仅用图1" : `仅用前 ${limit} 张`}，切换模型`}
+                              aria-label={`${limit === 1 ? "模型仅支持单图" : `模型最多支持 ${limit} 张`}，切换模型`}
                               title={`已连接 ${canvasSel.length} 张，当前模型支持 ${limit} 张`}
                               className="inline-flex items-center gap-2 self-center whitespace-nowrap rounded-md px-1.5 py-1 text-[11px] text-secondary hover:bg-edge/[0.05]"
                             >
-                              <span>{limit === 1 ? "仅用图1" : `仅用前 ${limit} 张`}</span>
+                              <span>{limit === 1 ? "模型仅支持单图" : `模型最多支持 ${limit} 张`}</span>
                               <span className="font-medium text-accent">换模型</span>
                             </button>
                           )}
