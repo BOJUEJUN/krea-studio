@@ -1154,6 +1154,39 @@ export default function StudioPage() {
     setNotice(text);
     window.setTimeout(() => setNotice((n) => (n === text ? null : n)), ms);
   }, []);
+  // 用户 2026-11-11 (prompt() is not supported): some browsers (the Claude app's own pane, some in-app browsers) block
+  // window.prompt and background clipboard writes, so questions and "copy this" use the page's own dialog.
+  type DlgField = { key: string; label: string; type?: "text" | "password"; value?: string };
+  const [dlg, setDlg] = useState<{ title: string; note?: string; fields: DlgField[]; copy?: string; ok?: string; resolve: (v: Record<string, string> | null) => void } | null>(null);
+  const [dlgVals, setDlgVals] = useState<Record<string, string>>({});
+  const [dlgCopied, setDlgCopied] = useState(false);
+  const ask = (title: string, fields: DlgField[], opts: { note?: string; ok?: string; copy?: string } = {}) =>
+    new Promise<Record<string, string> | null>((resolve) => {
+      setDlgVals(Object.fromEntries(fields.map((f) => [f.key, f.value ?? ""])));
+      setDlgCopied(false);
+      setDlg({ title, fields, resolve, ...opts });
+    });
+  const closeDlg = (v: Record<string, string> | null) => {
+    dlg?.resolve(v);
+    setDlg(null);
+  };
+  /** Copy inside a click (a fresh user gesture); falls back to the old select + copy command. */
+  const copyNow = async (text: string, input?: HTMLInputElement | null) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+    try {
+      const el = input ?? Object.assign(document.createElement("textarea"), { value: text });
+      if (!input) document.body.appendChild(el);
+      el.select();
+      const ok = document.execCommand("copy");
+      if (!input) el.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  };
 
   /**
    * Adds pictures up to what the model takes (2026-11-05 用户: 第二张传不上去要有提示). A one-picture model
@@ -2086,7 +2119,7 @@ export default function StudioPage() {
         flash(`✓ 已复制分享口令 ${d.token}，发给朋友在画布里粘贴就行（7 天有效）`, 5000);
       } catch {
         setNotice(null);
-        window.prompt("没能自动复制，请手动复制这个口令（7 天有效）", d.token);
+        await ask("分享口令", [], { copy: d.token, note: "发给朋友，在画布里粘贴就能打开（7 天有效）", ok: "好" });
       }
     } catch (e: any) {
       flash(e?.message || "分享失败");
@@ -2152,9 +2185,9 @@ export default function StudioPage() {
     saveBoards([...boards, b], b.id);
     setBoardMenu(false);
   };
-  const renameBoard = (id: string) => {
+  const renameBoard = async (id: string) => {
     const b = boards.find((x) => x.id === id);
-    const name = window.prompt("画布名字", b?.name ?? "")?.trim();
+    const name = (await ask("画布名字", [{ key: "name", label: "名字", value: b?.name ?? "" }], { ok: "保存" }))?.name?.trim();
     if (!name) return;
     saveBoards(boards.map((x) => (x.id === id ? { ...x, name: name.slice(0, 20) } : x)), boardId);
   };
@@ -2427,6 +2460,48 @@ export default function StudioPage() {
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
+      {dlg && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 px-4 backdrop-blur-[2px]" onPointerDown={(e) => e.target === e.currentTarget && closeDlg(null)}>
+          <form
+            className="animate-pop-in w-full max-w-[360px] rounded-[22px] bg-panel p-5 shadow-[0_24px_70px_rgba(0,0,0,0.25)] ring-1 ring-edge/[0.06]"
+            onSubmit={(e) => { e.preventDefault(); closeDlg(dlgVals); }}
+            onKeyDown={(e) => e.key === "Escape" && closeDlg(null)}
+          >
+            <div className="text-[16px] font-semibold text-ink">{dlg.title}</div>
+            {dlg.note && <div className="mt-1 text-[12px] leading-[18px] text-secondary">{dlg.note}</div>}
+            {dlg.copy && (
+              <div className="mt-3 flex items-center gap-2">
+                <input readOnly value={dlg.copy} id="dlg-copy" onFocus={(e) => e.currentTarget.select()} className="min-w-0 flex-1 rounded-xl bg-page px-3 py-2.5 text-center font-mono text-[18px] tracking-[0.2em] text-ink outline-none" />
+                <button
+                  type="button"
+                  onClick={async () => setDlgCopied(await copyNow(dlg.copy!, document.getElementById("dlg-copy") as HTMLInputElement))}
+                  className={`shrink-0 rounded-xl px-4 py-2.5 text-[13px] font-medium ${dlgCopied ? "bg-[#34c759] text-white" : "bg-accent text-white"}`}
+                >
+                  {dlgCopied ? "已复制 ✓" : "复制"}
+                </button>
+              </div>
+            )}
+            {dlg.fields.map((f, i) => (
+              <label key={f.key} className="mt-3 block">
+                <span className="mb-1 block text-[12px] text-secondary">{f.label}</span>
+                <input
+                  autoFocus={i === 0}
+                  type={f.type ?? "text"}
+                  value={dlgVals[f.key] ?? ""}
+                  onChange={(e) => setDlgVals((v) => ({ ...v, [f.key]: e.target.value }))}
+                  className="w-full rounded-xl border border-edge/[0.08] bg-page px-3 py-2.5 text-[14px] text-ink outline-none focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+                />
+              </label>
+            ))}
+            <div className="mt-4 flex justify-end gap-2">
+              {dlg.fields.length > 0 && (
+                <button type="button" onClick={() => closeDlg(null)} className="rounded-full px-4 py-2 text-[13px] text-secondary hover:bg-edge/[0.05]">取消</button>
+              )}
+              <button type="submit" className="rounded-full bg-accent px-5 py-2 text-[13px] font-medium text-white">{dlg.ok ?? "好"}</button>
+            </div>
+          </form>
+        </div>
+      )}
       {notice && (
         <div key={notice} className="animate-pop-in pointer-events-none fixed left-1/2 top-5 z-[95] -translate-x-1/2 rounded-full bg-ink/85 px-4 py-2 text-[13px] text-panel shadow-[0_10px_30px_rgba(0,0,0,0.2)] backdrop-blur">
           {notice}
@@ -2476,11 +2551,16 @@ export default function StudioPage() {
                   onClick={async () => {
                     // 用户 2026-11-11 (账号密码，安全一些): change the password here.
                     setUserMenu(false);
-                    const oldPassword = window.prompt("原密码（还没设过密码就留空）") ?? null;
-                    if (oldPassword === null) return;
-                    const newPassword = window.prompt("新密码（至少 6 位）") ?? "";
+                    const v = await ask("修改密码", [
+                      { key: "old", label: "原密码（还没设过就留空）", type: "password" },
+                      { key: "new", label: "新密码（至少 6 位）", type: "password" },
+                      { key: "again", label: "再输一次新密码", type: "password" },
+                    ], { ok: "修改" });
+                    if (!v) return;
+                    const oldPassword = v.old;
+                    const newPassword = v.new;
                     if (!newPassword) return;
-                    if (window.prompt("再输一次新密码") !== newPassword) return flash("两次输入的新密码不一样");
+                    if (v.again !== newPassword) return flash("两次输入的新密码不一样");
                     const d = await fetchJson("/api/auth", {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
