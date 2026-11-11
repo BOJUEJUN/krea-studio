@@ -16,8 +16,8 @@ export const isGeneration = (n: BoardNode) => n.kind === "gen" || isResult(n);
 export const inputsOf = (n: BoardNode, list: BoardNode[]) =>
   (n.from ?? []).map((id) => list.find((m) => m.id === id)).filter((m): m is BoardNode => !!m);
 /** Older boards put an empty generation frame between the inputs and the result. Its pictures keep their order. */
-export function generationInputs(n: BoardNode, list: BoardNode[]) {
-  const incoming = inputsOf(n, list).flatMap((m) => m.kind === "gen" ? inputsOf(m, list) : [m]);
+export function generationInputs(n: BoardNode, list: BoardNode[], selectedFrames?: ReadonlySet<string>) {
+  const incoming = inputsOf(n, list).flatMap((m) => m.kind === "gen" && !selectedFrames?.has(m.id) ? inputsOf(m, list) : [m]);
   return [...new Map(incoming.filter((m) => m.id !== n.id).map((m) => [m.id, m])).values()];
 }
 export function selectedGeneration(picked: BoardNode[]) {
@@ -25,12 +25,12 @@ export function selectedGeneration(picked: BoardNode[]) {
 }
 const box = ({ x, y, w, h }: Pick<BoardNode, "x" | "y" | "w" | "h">) => ({ x, y, w, h });
 
-export function captureLayout(picked: BoardNode[], list: BoardNode[], urlOf: (n: BoardNode) => string | null): CanvasLayout | undefined {
+export function captureLayout(picked: BoardNode[], list: BoardNode[], urlOf: (n: BoardNode) => string | null, branch?: BoardNode[]): CanvasLayout | undefined {
   const frame = selectedGeneration(picked);
   if (!frame) return;
   const inputs: CanvasLayout["inputs"] = [];
   let ref = 0;
-  const branch = generationInputs(frame, list);
+  branch ??= generationInputs(frame, list);
   const ids = new Set(branch.map((n) => n.id));
   for (const n of branch) {
     const from = isResult(n) ? undefined : n.from?.filter((id) => ids.has(id));

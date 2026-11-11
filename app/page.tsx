@@ -24,6 +24,7 @@ import {
   type Quality,
 } from "@/lib/models";
 
+import type { RunFrame } from "@/lib/canvas-execution";
 import type { BoardNode, CanvasDraft } from "@/lib/canvas-workflow";
 import { pictureParams, pictureRefs, restoredPolishLevel, type EditMetadata } from "@/lib/edit-recipe";
 
@@ -131,6 +132,35 @@ function caretXY(el: HTMLTextAreaElement, pos: number): { x: number; y: number }
 /** Same picture as bytes on this site (for fetch(): download, 当参考图, 重新编辑); <img> loads go straight to COS. */
 function rawOf(url: string): string {
   return url.startsWith("/api/") ? `${url}${url.includes("?") ? "&" : "?"}raw=1` : url;
+}
+
+/** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
+const sizeFor = (model: ModelId, res: Res, ratio: number, fallback?: { width: number; height: number }) => {
+  if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
+  const px = RES_PIXELS[res];
+  const w = Math.round(Math.sqrt(px * ratio) / 16) * 16;
+  return { width: w, height: Math.round(w / ratio / 16) * 16 };
+};
+
+/** Extra request fields for the selected model (only what it supports). */
+const advanced = ({ model, seedText, negative, lora, background, complexity }: CanvasDraft): Record<string, string | number> => {
+  const p = paramsOf(model);
+  const out: Record<string, string | number> = {};
+  if (p.seed && seedText.trim() && Number.isFinite(Number(seedText))) out.seed = Math.floor(Number(seedText));
+  if (p.negative && negative.trim()) out.negative = negative.trim();
+  if (p.lora) out.lora = lora;
+  if (p.background && background !== "auto") out.background = background;
+  if (p.complexity && complexity !== "auto") out.complexity = complexity;
+  return out;
+};
+
+function referenceFiles(urls: string[]) {
+  return Promise.all(urls.map(async (url, i) => {
+    const response = await fetch(rawOf(url));
+    if (!response.ok) throw new Error("参考图读取失败");
+    const blob = await response.blob();
+    return new File([blob], `ref-${i + 1}.${blob.type.split("/")[1] || "png"}`, { type: blob.type || "image/png" });
+  }));
 }
 
 /**
@@ -727,25 +757,6 @@ export default function StudioPage() {
   const toggleHistory = (hide: boolean) => setHistHidden(hide);
   const [histToolsOpen, setHistToolsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
-  /** GPT takes a free size: the ratio scaled to the 清晰度 tier's pixel count; other models keep their own size. */
-  const sizeFor = (ratio: number, fallback?: { width: number; height: number }) => {
-    if (!paramsOf(model).pricePerMegapixel && fallback) return fallback;
-    const px = RES_PIXELS[res];
-    const w = Math.round(Math.sqrt(px * ratio) / 16) * 16;
-    return { width: w, height: Math.round(w / ratio / 16) * 16 };
-  };
-
-  /** Extra request fields for the selected model (only what it supports). */
-  const advanced = (): Record<string, string | number> => {
-    const p = paramsOf(model);
-    const out: Record<string, string | number> = {};
-    if (p.seed && seedText.trim() && Number.isFinite(Number(seedText))) out.seed = Math.floor(Number(seedText));
-    if (p.negative && negative.trim()) out.negative = negative.trim();
-    if (p.lora) out.lora = lora;
-    if (p.background && background !== "auto") out.background = background;
-    if (p.complexity && complexity !== "auto") out.complexity = complexity;
-    return out;
-  };
   // Text being typed into the 重绘幅度 number; null while not editing.
   const [denoiseText, setDenoiseText] = useState<string | null>(null);
   const commitDenoise = useCallback((raw: string) => {
@@ -1371,12 +1382,7 @@ export default function StudioPage() {
     setPreview(urls.length ? fullOf(urls[0]) : null);
     setMode(urls.length ? "i2i" : "t2i");
     if (!urls.length) return;
-    const loading: Promise<File[] | null> = Promise.all(urls.map(async (url, i) => {
-      const r = await fetch(rawOf(url));
-      if (!r.ok) throw new Error();
-      const blob = await r.blob();
-      return new File([blob], `ref-${i + 1}.${blob.type.split("/")[1] || "png"}`, { type: blob.type || "image/png" });
-    })).then((files) => {
+    const loading: Promise<File[] | null> = referenceFiles(urls).then((files) => {
       if (refLoadRef.current !== loading) return files;
       refLoadRef.current = null;
       fileBlobRef.current = files[0];
@@ -1748,32 +1754,36 @@ export default function StudioPage() {
   const resumePendingRef = useRef(resumePending);
   resumePendingRef.current = resumePending;
 
-  const generate = useCallback(async () => {
-    const canvasBoard = canvasOnRef.current ? boardId : undefined;
-    const hasFrame = !!(canvasBoard && canvasApi.current?.layout()?.frame.node);
+  const editorMode = mode;
+  const generate = useCallback(async (target?: RunFrame, urls: string[] = []) => {
+    const editorDraft = target?.draft ?? { ...composeSnapRef.current, summary: liveSummaryRef.current };
+    const { model, prompt, res, quality, thinking, widthText, heightText, width, height, denoise, regional } = editorDraft;
+    const mode = target ? (urls.length ? "i2i" : "t2i") : editorMode;
+    const reverse = editorDraft.reverseOn && !findModel(model)?.billing;
+    const editRatio = editorDraft.editRatio ?? "auto";
+    const fixedEditAspect = editAspectOf(model, editRatio);
+    const canvasBoard = target || canvasOnRef.current ? boardId : undefined;
+    const hasFrame = !!target || !!(canvasBoard && canvasApi.current?.layout()?.frame.node);
     if (!hasFrame && busyRef.current) return;
     const leftover = hasFrame ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
     if (leftover.length) { resumePending(leftover); return; }
     setError(null);
-    if ((mode === "t2i" || !reverse) && !prompt.trim()) {
-      setError("请先输入描述");
-      return;
-    }
+    if ((mode === "t2i" || !reverse) && !prompt.trim()) { setError("请先输入描述"); return; }
     if (readiness && !readiness[model]?.[mode]) {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
     }
-    const refAtClick = refVersion.current, loadingRefs = refLoadRef.current;
-    const firstFile = fileBlobRef.current, extraFiles = extraRefs.map((r) => r.file);
-    if (mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
-    const editorDraft = { ...composeSnapRef.current, summary: liveSummaryRef.current };
-    const canvasLayout = hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
-      editorDraft, preview ? previewAspect : undefined) : undefined;
+    const refAtClick = refVersion.current, loadingRefs = target ? null : refLoadRef.current;
+    const firstFile = target ? null : fileBlobRef.current, extraFiles = target ? [] : extraRefs.map((r) => r.file);
+    if (!target && mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
+    if (target && frameTimes.current.has(target.id)) return;
+    const canvasLayout = target?.layout ?? (hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
+      editorDraft, preview ? previewAspect : undefined) : undefined);
     const frameId = canvasLayout?.frame.node;
     const job = frameId ? null : ++jobRef.current;
     if (!frameId) busyRef.current = true;
     const clickedAt = Date.now();
-    const useReverse = mode === "i2i" && reverse && reversedForRef.current !== preview;
+    const useReverse = mode === "i2i" && reverse && (!!target || reversedForRef.current !== preview);
     const renderKey = `${model}:${mode}`;
     let timing: Timing = {
       step: useReverse ? "describe" : "submit", stepStart: clickedAt,
@@ -1806,7 +1816,7 @@ export default function StudioPage() {
       setResultSize(null);
     }
     try {
-      const restored = loadingRefs ? await loadingRefs : undefined;
+      const restored = target ? await referenceFiles(urls.slice(0, paramsOf(model).maxRefs ?? 1)) : loadingRefs ? await loadingRefs : undefined;
       if (restored === null || (!frameId && refVersion.current !== refAtClick)) {
         if (frameId) throw new Error("参考图读取失败，请重新选择");
         return;
@@ -1841,14 +1851,14 @@ export default function StudioPage() {
             editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
             count: frameId ? 1 : count,
-            ...sizeFor(clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
+            ...sizeFor(model, res, clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
               width: clampRes(Number(widthText) || width),
               height: clampRes(Number(heightText) || height),
             }),
             res,
             quality,
             thinking: thinking && !!paramsOf(model).thinking,
-            ...advanced(),
+            ...advanced(editorDraft),
           }),
         });
       } else {
@@ -1868,12 +1878,12 @@ export default function StudioPage() {
         fd.append("res", res);
         if (paramsOf(model).editRatio) fd.append("editRatio", fixedEditAspect ? editRatio : "auto");
         if (paramsOf(model).pricePerMegapixel) {
-          const sz = sizeFor(fixedEditAspect ?? (previewAspect || 1));
+          const sz = sizeFor(model, res, fixedEditAspect ?? (target ? target.aspect || 1 : previewAspect || 1));
           fd.append("width", String(sz.width));
           fd.append("height", String(sz.height));
         }
         if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
-        for (const [k, v] of Object.entries(advanced())) fd.append(k, String(v));
+        for (const [k, v] of Object.entries(advanced(editorDraft))) fd.append(k, String(v));
         if (regional && paramsOf(model).regional) fd.append("regional", "1");
         for (const f of supplemental.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(f), "ref.jpg");
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
@@ -1905,11 +1915,11 @@ export default function StudioPage() {
         for (const p of pendings) watchedCanvasTasks.current.add(p.taskId);
         placeJobs(pendings);
         try {
-          await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
+          const [item] = await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
           recordSeconds(renderKey, (Date.now() - timing.stepStart) / 1000);
           void fetchJson("/api/status").then((d) => { if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney)); }).catch(() => {});
+          return item?.url;
         } catch (error) { placeJobs(pendings, true); throw error; }
-        return;
       }
       try {
         localStorage.setItem(TIMING_KEY, JSON.stringify({ ids: pendings.map((p) => p.taskId), t: timingRef.current, aspect: mode === "i2i" && preview ? previewAspect : width / height }));
@@ -1926,7 +1936,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending, editRatio, fixedEditAspect]);
+  }, [editorMode, readiness, preview, previewAspect, startStep, count, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
@@ -2644,6 +2654,7 @@ export default function StudioPage() {
                   key={boardId}
                   storageKey={boardKey(boardId)}
                   cloudId={boardId}
+                  onRunFrame={generate}
                   onSelectionChange={onBoardSelection}
                   onSelectionBox={onSelectionBox}
                   onGidsChange={(ids) => setOnBoard(new Set(ids))}

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
+import { planSelection, executePlan, type RunFrame } from "@/lib/canvas-execution";
 import { equalSpacing, type GapGuide } from "@/lib/canvas-spacing";
 import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
 import { editAspectOf } from "@/lib/models";
@@ -136,7 +137,7 @@ export function CanvasBoard({
   prefs,
   onSelectionText,
   summaryFor,
-  onShare,
+  onShare, onRunFrame,
   onDescribe,
   polishLevel, onPolishLevel, onPolish,
 }: {
@@ -158,6 +159,7 @@ export function CanvasBoard({
   /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
   onSelectionText?: (text: string | null) => void;
   onShare?: (onlySelected?: boolean) => void;
+  onRunFrame: (frame: RunFrame, urls: string[]) => Promise<string | undefined>;
   /** 图片连到文本: the page writes a description of the picture (提示词反推). */
   onDescribe?: (url: string) => Promise<string>;
   polishLevel: CanvasDraft["polishLevel"];
@@ -1155,6 +1157,32 @@ export function CanvasBoard({
   urlOfRef.current = urlOf;
   // The generated picture itself only becomes input through an explicit outgoing wire.
   const selected = nodes.filter((n) => sel.has(n.id));
+  const batchLocks = useRef(new Set<string>());
+  const [lockedFrames, setLockedFrames] = useState<ReadonlySet<string>>(new Set());
+  const selectedGenerators = selected.filter(isGeneration);
+  const runnable = selectedGenerators.filter((n) => !n.pendingGid && !frameProgress.has(n.id) && !lockedFrames.has(n.id));
+  const runSelected = async () => {
+    const frames = runnable.filter((n) => !batchLocks.current.has(n.id));
+    if (!frames.length) return;
+    const unavailable = new Set(selectedGenerators.filter((n) => !frames.includes(n)).map((n) => n.id));
+    const plans = planSelection(frames, nodes, urlOf, (id) => sources.get(id)?.recipe);
+    for (const n of frames) batchLocks.current.add(n.id);
+    setLockedFrames(new Set(batchLocks.current));
+    try {
+      const finished = await executePlan(plans, unavailable, async (plan, urls) => {
+        const n = nodesRef.current.find((node) => node.id === plan.id);
+        if (!n || n.pendingGid) return;
+        const h = n.w / plan.aspect;
+        const frame = { node: n.id, x: n.x, y: n.y + (n.h - h) / 2, w: n.w, h };
+        setNodesRaw((list) => list.map((node) => node.id === n.id ? { ...node, h, y: frame.y, draft: plan.draft } : node));
+        return onRunFrame({ ...plan, layout: { ...plan.layout, frame } }, urls);
+      });
+      flash(finished === plans.length ? `已完成 ${finished} 个生成节点` : `已完成 ${finished}/${plans.length} 个生成节点`);
+    } finally {
+      for (const n of frames) batchLocks.current.delete(n.id);
+      setLockedFrames(new Set(batchLocks.current));
+    }
+  };
   const frame = selectedGeneration(selected);
   const selFlat = frame ? generationInputs(frame, nodes) : [];
   const selKey = selFlat.map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
@@ -1676,6 +1704,14 @@ export function CanvasBoard({
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
+          {selected.length >= 2 && selectedGenerators.length > 0 && (
+            <button type="button" aria-label="执行选中节点" data-tip={runnable.length ? `生成 ${runnable.length} 张` : "正在执行"}
+              disabled={!runnable.length} onClick={runSelected}
+              className="flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] font-semibold text-accent hover:bg-accent/10 disabled:opacity-45">
+              <svg aria-hidden="true" viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M4 2.8a.7.7 0 0 1 1-.6l8 5.2a.7.7 0 0 1 0 1.2l-8 5.2a.7.7 0 0 1-1-.6z" /></svg>
+              执行
+            </button>
+          )}
           {onCompare && (selected.length === 2 || (selected.length === 1 && (selected[0].from?.length || selected[0].gid))) && (
             <button type="button" aria-label="对比" data-tip={selected.length === 2 ? "对比这两张" : "和原图对比"} className={ibtn} onClick={compareSel}>
               <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M10 2.5v15" /><path d="M5.5 10h2M12.5 10h2" /></svg>
