@@ -1,5 +1,5 @@
-import { dailyLimit, isOwner, ownerName } from "./auth";
-import { readHistory } from "./history";
+import { dailyLimit, isOwner } from "./auth";
+import { readUserHistory } from "./history";
 
 /** Start of today in Beijing time (ms). */
 export function beijingDayStart(now = Date.now()): number {
@@ -11,9 +11,9 @@ export function beijingDayStart(now = Date.now()): number {
  * give pictures back); failed and expired ones do not (they cost nothing).
  */
 export async function usedToday(user: string): Promise<number> {
-  const [owner, items] = await Promise.all([ownerName(), readHistory()]);
+  const items = await readUserHistory(user);
   const start = beijingDayStart();
-  return items.filter((x) => (x.owner ?? owner) === user && x.createdAt >= start && x.status !== "failed" && x.status !== "expired").length;
+  return items.filter((x) => x.createdAt >= start && x.status !== "failed" && x.status !== "expired").length;
 }
 
 /** null when `count` more pictures are allowed today; otherwise the message to show. */

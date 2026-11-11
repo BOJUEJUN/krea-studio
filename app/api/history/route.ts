@@ -1,9 +1,9 @@
-import { ownerName, sessionUser, unauthorized } from "@/lib/auth";
+import { sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import { readEditMetadata } from "@/lib/edit-recipe";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
-import { markDeleted, readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
+import { markDeleted, readUserHistory, upsertHistory, type HistoryItem } from "@/lib/history";
 import { isRemoteImage, withBackup } from "@/lib/images";
 import { directLinks } from "@/lib/thumbs";
 
@@ -89,8 +89,7 @@ export async function GET(req: Request) {
   if (!user) return unauthorized();
   try {
     // Each account sees only its own pictures; records from before accounts belong to the owner account.
-    const [owner, all] = await Promise.all([ownerName(), readHistory()]);
-    const items = all.filter((x) => (x.owner ?? owner) === user && !x.deleted);
+    const items = (await readUserHistory(user)).filter((x) => !x.deleted);
     // Finished-but-unsaved pictures are settled after answering (2026-11-06: it made history wait seconds);
     // the page polls its own running tasks anyway.
     const pendingNow = items;
@@ -172,9 +171,8 @@ export async function PATCH(req: NextRequest) {
   if (!user) return unauthorized();
   try {
     const body = (await req.json()) as { id?: string; fav?: boolean };
-    const owner = await ownerName();
-    const item = (await readHistory()).find((x) => x.id === String(body.id || ""));
-    if (!item || (item.owner ?? owner) !== user) {
+    const item = (await readUserHistory(user)).find((x) => x.id === String(body.id || ""));
+    if (!item) {
       return NextResponse.json({ ok: false, error: "找不到这张图" }, { status: 404 });
     }
     const saved = await upsertHistory({ ...item, fav: !!body.fav });
@@ -192,11 +190,9 @@ export async function DELETE(req: NextRequest) {
     const one = new URL(req.url).searchParams.get("id");
     const body = one ? null : ((await req.json().catch(() => null)) as { ids?: unknown } | null);
     const ids = one ? [one] : Array.isArray(body?.ids) ? body!.ids.map(String).slice(0, 200) : [];
-    const owner = await ownerName();
-    const all = await readHistory();
-    const mine = all.filter((x) => ids.includes(x.id) && (x.owner ?? owner) === user);
+    const mine = (await readUserHistory(user)).filter((x) => ids.includes(x.id));
     if (!mine.length) return NextResponse.json({ ok: false, error: "找不到这些图" }, { status: 404 });
-    await markDeleted(mine.map((x) => x.id));
+    await markDeleted(user, mine.map((x) => x.id));
     return NextResponse.json({ ok: true, deleted: mine.length });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "删除失败" }, { status: 500 });
