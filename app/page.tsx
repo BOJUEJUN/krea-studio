@@ -803,6 +803,7 @@ export default function StudioPage() {
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
   const frameTimes = useRef(new Map<string, Timing>());
+  const resumedFrames = useRef(new Set<string>());
   const [frameProgress, setFrameProgress] = useState(new Map<string, number>());
   const paintProgress = useCallback(() => {
     setFrameProgress(new Map([...frameTimes.current].map(([id, t]) => [id, progressFor(t, Date.now())])));
@@ -1596,6 +1597,7 @@ export default function StudioPage() {
 
   const resumePending = useCallback((pendings: PendingJob[]) => {
     if (busyRef.current || !pendings.length) return;
+    resumedFrames.current = new Set(pendings.flatMap((p) => p.canvasLayout?.frame.node ?? []));
     busyRef.current = true;
     const job = ++jobRef.current;
     const first = pendings[0];
@@ -1626,6 +1628,7 @@ export default function StudioPage() {
       })
       .finally(() => {
         if (jobRef.current === job) {
+          resumedFrames.current.clear();
           busyRef.current = false;
           setLoading(false);
         }
@@ -3317,9 +3320,9 @@ ${link}`;
               }
               className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
-              {canvasOn && frameProgress.has(editingNode) ? (
-                <><span>{Math.floor(frameProgress.get(editingNode)!)}% · 再生成一张</span><span className="generate-price">¥{btnPrice}</span></>
-              ) : loading ? (
+              {canvasOn && (frameProgress.has(editingNode) || resumedFrames.current.has(editingNode)) ? (
+                <><span>继续生成</span><span className="generate-price">¥{btnPrice}</span></>
+              ) : loading && !(canvasOn && editingNode) ? (
                 <>
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
                   {batchTotal > 1 ? `${batchDone}/${batchTotal} 张` : `${Math.floor(progress)}%`}{queued ? ` · 排队 ${queued}` : " · 再点排队"}
