@@ -1014,7 +1014,8 @@ export function CanvasBoard({
                 </div>
               )}
               {!isText && url && !on && (() => {
-                const sm = summaryFor?.(url) ?? (src?.model ? { model: src.model, cover: src.cover, detail: src.mode ?? "" } : null);
+                // Only the settings someone chose for this picture (用户 2026-11-11: 生成记录那条不用显示).
+                const sm = summaryFor?.(url) ?? null;
                 if (!sm?.model) return null;
                 return (
                 <div
