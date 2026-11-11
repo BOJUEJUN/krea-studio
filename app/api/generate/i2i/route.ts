@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readCanvasLayout } from "@/lib/edit-recipe";
+import { readCanvasLayout, readDraft } from "@/lib/edit-recipe";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -115,6 +115,11 @@ export async function POST(req: NextRequest) {
     const settings = settingsOf(model.id, "i2i", (k) =>
       k === "refs" ? String(references.length) : k === "denoise" ? String(denoise) : String(form.get(k) ?? "")
     );
+    let editorDraft;
+    const draft = form.get("editorDraft");
+    if (typeof draft === "string" && draft.length < 40_000) {
+      try { editorDraft = readDraft(JSON.parse(draft)); } catch {}
+    }
     const encodedLayout = form.get("canvasLayout");
     let canvasLayout;
     if (typeof encodedLayout === "string" && encodedLayout.length < 100_000) {
@@ -131,7 +136,7 @@ export async function POST(req: NextRequest) {
         model: model.id,
         prompt: prompt.slice(0, 2000),
         url: "",
-        refUrl, refUrls, canvasLayout,
+        refUrl, refUrls, canvasLayout, editorDraft,
         seed: t.seed,
         settings,
         userPrompt,
@@ -149,7 +154,7 @@ export async function POST(req: NextRequest) {
         mode: "i2i",
         model: model.id,
         prompt,
-        refUrl, refUrls, settings, canvasLayout,
+        refUrl, refUrls, settings, canvasLayout, editorDraft,
       },
       { status: 202 }
     );

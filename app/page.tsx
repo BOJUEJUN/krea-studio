@@ -1307,7 +1307,32 @@ export default function StudioPage() {
     [flash]
   );
 
+  const applyEditorDraft = useCallback((v: CanvasDraft) => {
+    setModel(v.model);
+    setPrompt(v.prompt);
+    setDenoise(v.denoise);
+    setQuality(v.quality);
+    setRes(v.res);
+    setSeedText(v.seedText);
+    setNegative(v.negative);
+    setLora(v.lora);
+    setWidth(v.width);
+    setHeight(v.height);
+    setWidthText(v.widthText);
+    setHeightText(v.heightText);
+    setPolishLevel(v.polishLevel);
+    setThinking(v.thinking);
+    setRegional(v.regional);
+    setBackground(v.background);
+    setComplexity(v.complexity);
+    setReverse(v.reverseOn);
+    if (v.reverseMode) setReverseMode(v.reverseMode);
+    setPolishUndo(null);
+    setError(null);
+  }, []);
+
   const restorePictureParams = useCallback((g: GalleryItem) => {
+    if (g.editorDraft) return applyEditorDraft(g.editorDraft);
     const v = pictureParams(g);
     setModel(v.model);
     setPrompt(v.prompt);
@@ -1329,7 +1354,7 @@ export default function StudioPage() {
     setReverse(false); // The saved prompt already includes any reverse description.
     setPolishUndo(null);
     setError(null);
-  }, [applyRatio]);
+  }, [applyRatio, applyEditorDraft]);
 
   // A selection can change before its files arrive. Only the current selection may fill the form.
   const replaceReferenceUrls = useCallback((urls: string[]) => {
@@ -1364,13 +1389,26 @@ export default function StudioPage() {
     replaceReferenceUrls(refs);
   }, [restorePictureParams, replaceReferenceUrls]);
 
+  const [requestedEdit, setRequestedEdit] = useState<{ board: string; item: GalleryItem } | null>(null);
+  useEffect(() => {
+    if (!requestedEdit) return;
+    if (!canvasOn || requestedEdit.board !== boardId) { setRequestedEdit(null); return; }
+    const board = canvasApi.current;
+    if (!board) return;
+    board.reedit(requestedEdit.item);
+    setRequestedEdit(null);
+  }, [requestedEdit, canvasOn, boardId, user]);
+
   const editHistoryItem = (g: GalleryItem) => {
-    if (canvasOnRef.current && canvasApi.current) {
-      canvasApi.current.reedit(g);
+    setOpenPanel(null);
+    setMentionOpen(false);
+    if (canvasOnRef.current) {
+      setRequestedEdit({ board: boardId, item: g });
     } else {
       reuseItem(g);
       if (g.url) showItem(g);
       setCompareOn(false);
+      requestAnimationFrame(() => composeRef.current?.scrollIntoView({ block: "nearest" }));
     }
     const refs = pictureRefs(g);
     if (g.mode === "i2i" && refs.length < Number(g.settings?.["参考图"]?.match(/\d+/)?.[0] || 1)) {
@@ -1543,7 +1581,7 @@ export default function StudioPage() {
         model: pending.model,
         prompt: pending.prompt,
         url,
-        refUrl: pending.refUrl, refUrls: pending.refUrls, settings: pending.settings, canvasLayout: pending.canvasLayout,
+        refUrl: pending.refUrl, refUrls: pending.refUrls, settings: pending.settings, canvasLayout: pending.canvasLayout, editorDraft: pending.editorDraft,
         cost: done.cost || null,
         createdAt: pending.createdAt,
         durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
@@ -1722,8 +1760,9 @@ export default function StudioPage() {
     const refAtClick = refVersion.current, loadingRefs = refLoadRef.current;
     const firstFile = fileBlobRef.current, extraFiles = extraRefs.map((r) => r.file);
     if (mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
+    const editorDraft = { ...composeSnapRef.current, summary: liveSummaryRef.current };
     const canvasLayout = hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
-      { ...composeSnapRef.current, summary: liveSummaryRef.current }, preview ? previewAspect : undefined) : undefined;
+      editorDraft, preview ? previewAspect : undefined) : undefined;
     const frameId = canvasLayout?.frame.node;
     const job = frameId ? null : ++jobRef.current;
     if (!frameId) busyRef.current = true;
@@ -1792,7 +1831,7 @@ export default function StudioPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: finalPrompt, canvasLayout,
+            prompt: finalPrompt, canvasLayout, editorDraft,
             editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
             count: frameId ? 1 : count,
@@ -1809,6 +1848,7 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
+        fd.append("editorDraft", JSON.stringify(editorDraft));
         if (canvasLayout) fd.append("canvasLayout", JSON.stringify(canvasLayout));
         if (finalPrompt !== userPrompt) {
           fd.append("optimized", "1");
@@ -1848,7 +1888,7 @@ export default function StudioPage() {
         model,
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
-        refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard,
+        refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft,
         createdAt: now + i,
         startedAt: clickedAt,
         renderTiming: frameId ? timing : undefined,
@@ -2131,7 +2171,7 @@ ${link}`;
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, summary: "" };
+  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2146,21 +2186,7 @@ ${link}`;
     if (original) return restorePictureParams(original);
     const cur = composeSnapRef.current;
     const v = remembered ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
-    setPrompt(v.prompt);
-    setPolishUndo(null);
-    if (v.model !== cur.model && findModel(v.model)) setModel(v.model);
-    setDenoise(v.denoise);
-    setQuality(v.quality);
-    setRes(v.res);
-    setSeedText(v.seedText);
-    setNegative(v.negative);
-    setLora(v.lora);
-    setWidth(v.width);
-    setHeight(v.height);
-    setWidthText(v.widthText);
-    setHeightText(v.heightText);
-    setPolishLevel(v.polishLevel);
-    setThinking(v.thinking); setRegional(v.regional); setBackground(v.background); setComplexity(v.complexity); setReverse(v.reverseOn);
+    applyEditorDraft(v);
   };
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
@@ -2289,7 +2315,7 @@ ${link}`;
   useEffect(() => {
     if (canvasOn && editingNode && editingNode === composeKey.current)
       canvasApi.current?.saveDraft(editingNode, { ...composeSnapRef.current, summary: liveSummary });
-  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn]);
+  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode]);
   const boardSummary = (n: BoardNode, hasPictures: boolean) => {
     if (n.id === editingNode) return null;
     const saved = composeMem.current.get(n.id) ?? n.draft;

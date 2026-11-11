@@ -1,5 +1,6 @@
 import { ownerName, sessionUser, unauthorized } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
+import { readEditMetadata } from "@/lib/edit-recipe";
 import { findModel } from "@/lib/models";
 import { queryCustomTask } from "@/lib/runninghub";
 import { markDeleted, readHistory, upsertHistory, type HistoryItem } from "@/lib/history";
@@ -107,7 +108,7 @@ export async function GET(req: Request) {
         // 2026-11-05 (用户: 刷新后生成进度没了): tasks still running, so a reloaded page picks them up again.
         running: items
           .filter((x) => !x.url && x.status === "pending" && x.taskId && Date.now() - x.createdAt < 30 * 60_000)
-          .map((x) => ({ taskId: x.taskId, seed: x.seed, mode: x.mode, model: x.model, prompt: x.prompt, refUrl: x.refUrl, refUrls: x.refUrls, settings: x.settings, canvasLayout: x.canvasLayout, createdAt: x.createdAt })),
+          .map((x) => ({ taskId: x.taskId, seed: x.seed, mode: x.mode, model: x.model, prompt: x.prompt, refUrl: x.refUrl, refUrls: x.refUrls, settings: x.settings, canvasLayout: x.canvasLayout, editorDraft: x.editorDraft, createdAt: x.createdAt })),
       },
       { headers: { "Cache-Control": "no-store" } }
     );
@@ -134,6 +135,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: "不支持的图片地址" }, { status: 400 });
     }
     const item: HistoryItem = {
+      ...readEditMetadata(body),
       owner: user,
       id: String(body.id || `${Date.now()}`),
       mode: body.mode === "i2i" ? "i2i" : "t2i",

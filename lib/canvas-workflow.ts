@@ -1,25 +1,6 @@
-import { pictureParams, pictureRefs, type CanvasLayout, type EditablePicture } from "./edit-recipe";
+import { pictureRefs, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
+export { pictureDraft, readDraft, type CanvasDraft } from "./edit-recipe";
 
-export type CanvasDraft = ReturnType<typeof pictureParams> & {
-  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; reverseOn: boolean; summary: string;
-};
-export function pictureDraft(g: EditablePicture): CanvasDraft {
-  const p = pictureParams(g);
-  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "medium", reverseOn: false, summary: "" };
-}
-/** Share only editor fields, never account or task metadata. */
-export function readDraft(v: unknown): CanvasDraft | undefined {
-  if (!v || typeof v !== "object") return;
-  const data = v as Record<string, unknown>;
-  const base = pictureDraft({ id: "", mode: "t2i", prompt: "", model: typeof data.model === "string" ? data.model : undefined });
-  const out: Record<string, unknown> = { ...base };
-  for (const [k, fallback] of Object.entries(base)) {
-    const x = data[k];
-    if (k !== "model" && typeof x === typeof fallback && (typeof x !== "number" || Number.isFinite(x)))
-      out[k] = typeof x === "string" ? x.slice(0, 8000) : x;
-  }
-  return out as CanvasDraft;
-}
 export type BoardNode = {
   id: string; gid?: string; src?: string; pendingGid?: string;
   x: number; y: number; w: number; h: number;
@@ -61,11 +42,11 @@ export function captureLayout(picked: BoardNode[], list: BoardNode[], urlOf: (n:
 
 /** Restore this result's input branch, keeping other work on this board. Reopening focuses the same branch. */
 export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n: BoardNode) => string | null) {
-  const result = list.find((n) => isResult(n) && n.gid === g.id);
+  const results = list.filter((n) => isResult(n) && n.gid === g.id);
+  const result = results.find((n) => n.id === g.canvasLayout?.frame.node) ?? results.find((n) => n.editOf === g.id) ?? results[0];
   const upstream = result ? generationInputs(result, list) : [];
   const urls = pictureRefs(g);
   const texts = g.canvasLayout?.inputs.filter((i) => "text" in i) ?? [];
-  if (result?.editOf === g.id) return { list, frame: result, focus: [...upstream, result] };
 
   const layout = g.canvasLayout;
   const left = list.length ? Math.max(...list.map((n) => n.x + n.w)) + 80 : -400;
@@ -85,7 +66,9 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   for (const [i, src] of urls.entries()) {
     const slot = layout?.inputs.find((v) => "ref" in v && v.ref === i);
     const pos = position(slot);
-    const old = upstreamImages.find((n) => n.id === slot?.node || urlOf(n) === src) ?? (!layout ? upstreamImages[i] : undefined);
+    const old = upstreamImages.find((n) => urlOf(n) === src && !inputs.includes(n)) ??
+      list.find((n) => n !== result && n.id === slot?.node && n.kind !== "text" && !!urlOf(n) && !inputs.includes(n)) ??
+      list.find((n) => !isGeneration(n) && urlOf(n) === src && !inputs.includes(n));
     const input: BoardNode = old ?? { id: uid(), kind: "image", src, ...pos, fit: !slot };
     inputs.push(input);
     if (slot) slotted.set(slot, input);
@@ -96,7 +79,8 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   const promptTexts = texts.length ? texts : !layout && g.prompt ? [{ text: g.prompt }] : [];
   for (const t of promptTexts) {
     const pos = position("x" in t ? t : undefined, true);
-    const old = upstream.find((n) => n.kind === "text" && n.text === t.text && !inputs.includes(n));
+    const old = upstream.find((n) => n.kind === "text" && n.text === t.text && !inputs.includes(n)) ??
+      list.find((n) => "node" in t && n.id === t.node && n.kind === "text" && n.text === t.text && !inputs.includes(n));
     const input: BoardNode = old ?? { id: uid(), kind: "text", text: t.text, ...pos };
     inputs.push(input);
     if ("x" in t) slotted.set(t, input);
@@ -108,6 +92,9 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   }
   const ordered = layout ? layout.inputs.flatMap((slot) => slotted.get(slot) ?? []) : [];
   const from = [...new Set([...ordered, ...inputs].map((n) => n.id))];
+  if (result?.editOf === g.id && result.from?.length === from.length && result.from.every((id, i) => id === from[i])) {
+    return { list, frame: result, focus: [...inputs, result] };
+  }
   const frame: BoardNode = { ...(result ?? { id: uid(), gid: g.id, ...box(frameBox), fit: true }), kind: "result", from, editOf: g.id };
   const focus = [...inputs, frame];
   const replacements = new Map(focus.map((n) => [n.id, n]));

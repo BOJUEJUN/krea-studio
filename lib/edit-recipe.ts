@@ -3,6 +3,7 @@ import { LEGACY_MODEL, QUALITY_LABELS, findModel, paramsOf, type Mode, type Qual
 type Box = { node?: string; x: number; y: number; w: number; h: number };
 export type CanvasLayout = { frame: Box; inputs: (Box & { from?: string[] } & ({ ref: number } | { text: string }))[] };
 export type EditMetadata = {
+  editorDraft?: CanvasDraft;
   settings?: Record<string, string>;
   refUrls?: string[];
   canvasLayout?: CanvasLayout;
@@ -53,4 +54,37 @@ export function pictureParams(g: EditablePicture) {
     denoise: Number.isFinite(denoise) ? Math.max(0.01, Math.min(1, denoise)) : 0.5,
     lora: Number.isFinite(lora) ? lora : 2,
   } as const;
+}
+
+export type CanvasDraft = ReturnType<typeof pictureParams> & {
+  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
+};
+export function pictureDraft(g: EditablePicture): CanvasDraft {
+  const p = pictureParams(g);
+  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "medium", reverseOn: false, reverseMode: "direct", summary: "" };
+}
+/** Share only editor fields, never account or task metadata. */
+export function readDraft(v: unknown): CanvasDraft | undefined {
+  if (!v || typeof v !== "object") return;
+  const data = v as Record<string, unknown>;
+  if (typeof data.model !== "string" || typeof data.prompt !== "string") return;
+  const base = pictureDraft({ id: "", mode: "t2i", prompt: "", model: typeof data.model === "string" ? data.model : undefined });
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, fallback] of Object.entries(base)) {
+    const x = data[k];
+    if (k !== "model" && typeof x === typeof fallback && (typeof x !== "number" || Number.isFinite(x)))
+      out[k] = typeof x === "string" ? x.slice(0, 8000) : x;
+  }
+  if (out.reverseMode !== "fill") out.reverseMode = "direct";
+  return out as CanvasDraft;
+}
+/** A completion may arrive before the original pending history entry has been saved. */
+export function readEditMetadata(body: Record<string, unknown>): EditMetadata {
+  const refs = body.refUrls;
+  const refUrls = Array.isArray(refs) && refs.length > 0 && refs.length <= 8 &&
+    refs.every((u) => typeof u === "string" && /^\/api\/ref\/[\w-]{1,64}$/.test(u)) ? refs as string[] : undefined;
+  const settings = body.settings && typeof body.settings === "object" && !Array.isArray(body.settings)
+    ? Object.fromEntries(Object.entries(body.settings).filter(([key, v]) => key.length <= 30 && typeof v === "string").slice(0, 32)
+      .map(([key, v]) => [key, String(v).slice(0, 300)])) : undefined;
+  return { refUrls, settings, editorDraft: readDraft(body.editorDraft), canvasLayout: readCanvasLayout(body.canvasLayout) };
 }
