@@ -121,7 +121,7 @@ export function CanvasBoard({
   /** 对比 (用户 2026-11-11): before may be null, then the page uses the picture's saved reference (gid). */
   onCompare?: (before: string | null, after: string, gid: string | null) => void;
   /** 更多设置: snapping, the dot grid and the source lines can be turned off. */
-  prefs?: { snap: boolean; grid: boolean; lines: boolean };
+  prefs?: { snap: boolean; grid: boolean; lines: boolean; map?: boolean };
   /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
   onSelectionText?: (text: string | null) => void;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
@@ -1141,6 +1141,47 @@ export function CanvasBoard({
           await addFiles(files, { x: at.x + 160, y: at.y + 160 });
         }}
       />
+
+      {/* 用户 2026-11-11 (画布小地图): the whole board in the corner; click or drag to move there. */}
+      {prefs?.map !== false && nodes.length > 0 && boxRef.current && (() => {
+        const W = boxRef.current.clientWidth, H = boxRef.current.clientHeight;
+        const vx0 = -view.x / view.s, vy0 = -view.y / view.s, vx1 = vx0 + W / view.s, vy1 = vy0 + H / view.s;
+        const x0 = Math.min(vx0, ...nodes.map((n) => n.x)), y0 = Math.min(vy0, ...nodes.map((n) => n.y));
+        const x1 = Math.max(vx1, ...nodes.map((n) => n.x + n.w)), y1 = Math.max(vy1, ...nodes.map((n) => n.y + n.h));
+        const MW = 168, MH = 112, pad = 6;
+        const k = Math.min((MW - pad * 2) / (x1 - x0), (MH - pad * 2) / (y1 - y0));
+        const ox = pad + (MW - pad * 2 - (x1 - x0) * k) / 2, oy = pad + (MH - pad * 2 - (y1 - y0) * k) / 2;
+        const goTo = (e: React.PointerEvent) => {
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const wx = (e.clientX - r.left - ox) / k + x0, wy = (e.clientY - r.top - oy) / k + y0;
+          setView((v) => ({ ...v, x: W / 2 - wx * v.s, y: H / 2 - wy * v.s }));
+        };
+        return (
+          <div
+            className="absolute bottom-3 right-3 z-20 overflow-hidden rounded-xl bg-white/85 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
+            style={{ width: MW, height: MH }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+              goTo(e);
+            }}
+            onPointerMove={(e) => e.buttons === 1 && goTo(e)}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          >
+            {nodes.map((n) => (
+              <div
+                key={n.id}
+                className={`absolute rounded-[2px] ${sel.has(n.id) ? "bg-[#0071e3]" : n.kind === "text" ? "bg-[#c7c7cc]" : "bg-[#8e8e93]"}`}
+                style={{ left: ox + (n.x - x0) * k, top: oy + (n.y - y0) * k, width: Math.max(2, n.w * k), height: Math.max(2, n.h * k) }}
+              />
+            ))}
+            <div
+              className="pointer-events-none absolute rounded-[3px] border-[1.5px] border-[#0071e3] bg-[#0071e3]/[0.06]"
+              style={{ left: ox + (vx0 - x0) * k, top: oy + (vy0 - y0) * k, width: (vx1 - vx0) * k, height: (vy1 - vy0) * k }}
+            />
+          </div>
+        );
+      })()}
 
       {/* Zoom controls (only when the page does not host them). */}
       {!onScale && <div

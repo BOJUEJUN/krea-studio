@@ -504,7 +504,17 @@ export default function StudioPage() {
   const [reverseMode, setReverseMode] = useState<"direct" | "fill">("direct");
   const [reversing, setReversing] = useState(false);
   const reversedForRef = useRef<string | null>(null);
-  const [canvasOn, setCanvasOn] = useState(false);
+  const [canvasWant, setCanvasOn] = useState(false);
+  // 用户 2026-11-11 (手机不用画布，就简单生图): phones always get the plain single-picture page.
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const set = () => setPhone(mq.matches);
+    set();
+    mq.addEventListener("change", set);
+    return () => mq.removeEventListener("change", set);
+  }, []);
+  const canvasOn = canvasWant && !phone;
   const canvasOnRef = useRef(false);
   canvasOnRef.current = canvasOn;
   const canvasApi = useRef<BoardApi | null>(null);
@@ -540,14 +550,14 @@ export default function StudioPage() {
       localStorage.setItem("ais-theme", t);
     } catch {}
   };
-  const [boardPrefs, setBoardPrefs] = useState({ snap: true, grid: true, lines: true });
+  const [boardPrefs, setBoardPrefs] = useState({ snap: true, grid: true, lines: true, map: true });
   useEffect(() => {
     try {
       const v = JSON.parse(localStorage.getItem("ais-board-prefs") || "null");
       if (v) setBoardPrefs((p) => ({ ...p, ...v }));
     } catch {}
   }, []);
-  const setBoardPref = (k: "snap" | "grid" | "lines", v: boolean) =>
+  const setBoardPref = (k: "snap" | "grid" | "lines" | "map", v: boolean) =>
     setBoardPrefs((p) => {
       const next = { ...p, [k]: v };
       try {
@@ -654,6 +664,7 @@ export default function StudioPage() {
   }, [openPanel]);
   // History is open by default (用户 2026-11-05); fold it to a corner icon any time.
   const [histHidden, setHistHidden] = useState(false);
+  const histOff = histHidden && !phone; // phones always list history under the picture
   const toggleHistory = (hide: boolean) => setHistHidden(hide);
   const [histToolsOpen, setHistToolsOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -2196,8 +2207,8 @@ export default function StudioPage() {
         }}
       />
 
-      {user && (
-        // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar.
+      {user && !phone && (
+        // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar (not on phones).
         <div className="fixed left-5 top-[68px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
           {([
             ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
@@ -2322,6 +2333,7 @@ export default function StudioPage() {
                       ["snap", "移动时自动对齐", boardPrefs.snap],
                       ["grid", "显示网格点", boardPrefs.grid],
                       ["lines", "显示来源连线", boardPrefs.lines],
+                      ["map", "显示小地图", boardPrefs.map],
                     ] as const).map(([k, label, on]) => (
                       <button key={k} type="button" onClick={() => setBoardPref(k, !on)} className="flex w-full items-center justify-between rounded-lg px-1.5 py-1.5 hover:bg-black/[0.04]">
                         <span>{label}</span>
@@ -2343,7 +2355,7 @@ export default function StudioPage() {
           </div>
         </div>
       )}
-      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : "p-2"}`}>
+      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
@@ -3149,7 +3161,7 @@ export default function StudioPage() {
         </section>
         </div>
 
-        {!histHidden && (
+        {!histOff && (
         <div
           role="separator"
           aria-orientation="vertical"
@@ -3171,7 +3183,7 @@ export default function StudioPage() {
           data-tip="历史记录" data-tip-end=""
           aria-label="打开历史记录"
           className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105 active:scale-95"
-          style={{ opacity: histHidden ? 1 : 0, transform: histHidden ? "none" : "scale(0.6)", pointerEvents: histHidden ? undefined : "none", transition: "opacity 260ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" }}
+          style={{ opacity: histOff ? 1 : 0, transform: histOff ? "none" : "scale(0.6)", pointerEvents: histOff ? undefined : "none", transition: "opacity 260ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 12a9 9 0 1 0 3-6.7" />
@@ -3180,12 +3192,12 @@ export default function StudioPage() {
           </svg>
         </button>}
         <aside
-          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[34vw] lg:max-w-[calc(100vw-420px)] ${histHidden ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
+          className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[34vw] lg:max-w-[calc(100vw-420px)] ${histOff ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
           style={
             isDesktop
               ? {
-                  width: histHidden ? 0 : rightPx,
-                  opacity: histHidden ? 0 : 1,
+                  width: histOff ? 0 : rightPx,
+                  opacity: histOff ? 0 : 1,
                   // Glides open / closed; follows the pointer instantly while being dragged.
                   transition: draggingRef.current ? "none" : "width 420ms cubic-bezier(0.22, 1, 0.36, 1), opacity 300ms ease",
                 }
@@ -3196,11 +3208,11 @@ export default function StudioPage() {
             className="flex h-full flex-col"
             style={{
               width: isDesktop ? rightPx : undefined,
-              opacity: histHidden ? 0 : 1,
-              transform: histHidden ? "translateX(24px)" : "none",
+              opacity: histOff ? 0 : 1,
+              transform: histOff ? "translateX(24px)" : "none",
               transition: "opacity 260ms ease, transform 420ms cubic-bezier(0.22, 1, 0.36, 1)",
-              pointerEvents: histHidden ? "none" : undefined,
-              display: !isDesktop && histHidden ? "none" : undefined,
+              pointerEvents: histOff ? "none" : undefined,
+              display: !isDesktop && histOff ? "none" : undefined,
             }}
           >
           <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
