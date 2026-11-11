@@ -506,6 +506,16 @@ export default function StudioPage() {
   const reversedForRef = useRef<string | null>(null);
   const [canvasOn, setCanvasOn] = useState(false);
   const canvasApi = useRef<BoardApi | null>(null);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [zoomMenu, setZoomMenu] = useState(false);
+  useEffect(() => {
+    if (!zoomMenu) return;
+    const close = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.("[data-zoom-menu]")) setZoomMenu(false);
+    };
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
+  }, [zoomMenu]);
   // 2026-11-10 (用户: 画布要能新建 画布1 2 3): several boards per account, kept in this browser.
   const [boards, setBoards] = useState<{ id: string; name: string }[]>([{ id: "1", name: "画布1" }]);
   const [boardId, setBoardId] = useState("1");
@@ -513,6 +523,7 @@ export default function StudioPage() {
   const [boardDelArm, setBoardDelArm] = useState<string | null>(null);
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
+  const [onBoard, setOnBoard] = useState<Set<string>>(new Set());
   const [composeOpen, setComposeOpen] = useState(false);
   const [chipsMore, setChipsMore] = useState(false);
   // 2026-11-10 (用户: 参数要紧贴素材): the compose box hugs the selected pictures.
@@ -1385,6 +1396,37 @@ export default function StudioPage() {
       });
   }, [finishBatch]);
 
+  /** 高清放大 (用户 2026-11-10): Topaz 2× through Krea; the result lands in history and on the board like any picture. */
+  const upscaleItem = useCallback(
+    async (gid: string) => {
+      if (busyRef.current) {
+        setError("等当前这张生成完再放大");
+        return;
+      }
+      const g = gallery.find((x) => x.id === gid);
+      const id = g?.url?.match(/\/api\/img\/([0-9A-Za-z_-]+)/)?.[1];
+      if (!g || !id) {
+        setError("这张图暂时不能放大");
+        return;
+      }
+      try {
+        const d = await fetchJson("/api/upscale", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id }),
+        });
+        if (!d?.ok || !d.taskId) throw new Error(d?.error || "高清放大失败");
+        const now = Date.now();
+        const p: PendingJob = { taskId: d.taskId, mode: g.mode, model: g.model as ModelId | undefined, prompt: g.prompt, createdAt: now, startedAt: now };
+        writePending([p]);
+        resumePending([p]);
+      } catch (e: any) {
+        setError(e?.message || "高清放大失败");
+      }
+    },
+    [gallery, resumePending]
+  );
+
   const resumePendingRef = useRef(resumePending);
   resumePendingRef.current = resumePending;
 
@@ -1569,6 +1611,7 @@ export default function StudioPage() {
     }
   };
 
+  const startOrQueueRef = useRef<() => void>(() => {});
   const startOrQueue = () => {
     if (mode === "i2i" && reverse && reverseMode === "fill" && preview && reversedForRef.current !== preview && !busyRef.current) {
       reverseToBox();
@@ -1581,6 +1624,7 @@ export default function StudioPage() {
     }
     generate();
   };
+  startOrQueueRef.current = startOrQueue;
   useEffect(() => {
     if (!loading && queued > 0 && !busyRef.current) {
       setQueued((n) => n - 1);
@@ -1953,7 +1997,7 @@ export default function StudioPage() {
 
       {user && (
         // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar.
-        <div className="fixed left-4 top-[60px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
+        <div className="fixed left-5 top-[64px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
           {([
             ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
             ["canvas", "自由画布", <path key="p" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />],
@@ -2006,6 +2050,37 @@ export default function StudioPage() {
               )}
             </div>
           )}
+          {canvasOn && (
+            // 用户 2026-11-10: the zoom level as a small "67%" chip in the rail; click it for − / + / 100% / 适应.
+            <div className="relative" data-zoom-menu="">
+              <button
+                type="button"
+                data-tip={zoomMenu ? undefined : "缩放"}
+                data-tip-start=""
+                aria-label="缩放"
+                onClick={() => setZoomMenu((v) => !v)}
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums tracking-tight transition ${zoomMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+              >
+                {Math.round(canvasScale * 100)}%
+              </button>
+              {zoomMenu && (
+                <>
+                  <div className="animate-pop-in absolute left-11 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-full bg-white p-1 text-[12px] text-[#1d1d1f] shadow-[0_12px_36px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
+                    <button type="button" aria-label="缩小" data-tip="缩小" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("out")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M3.5 8h9" /></svg>
+                    </button>
+                    <span className="w-11 text-center font-medium tabular-nums">{Math.round(canvasScale * 100)}%</span>
+                    <button type="button" aria-label="放大" data-tip="放大" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("in")}>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M3.5 8h9M8 3.5v9" /></svg>
+                    </button>
+                    <span className="mx-0.5 h-4 w-px bg-black/10" />
+                    <button type="button" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom(1)}>100%</button>
+                    <button type="button" data-tip="显示全部（Shift+1）" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("fit")}>适应</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <div className="my-0.5 h-px w-5 bg-black/[0.08]" />
           <button
             type="button"
@@ -2019,7 +2094,7 @@ export default function StudioPage() {
           </button>
         </div>
       )}
-      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 pl-14 lg:flex-row lg:gap-0 lg:overflow-hidden lg:pl-[60px]">
+      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
@@ -2035,6 +2110,21 @@ export default function StudioPage() {
                   storageKey={boardKey(boardId)}
                   onSelectionChange={onBoardSelection}
                   onSelectionBox={onSelectionBox}
+                  onGidsChange={(ids) => setOnBoard(new Set(ids))}
+                  onRetry={(gid) => {
+                    // Same prompt, model and references as the failed one, made again (用户: 失败的格子加重试).
+                    const g = gallery.find((x) => x.id === gid);
+                    if (!g) return;
+                    reuseItem(g);
+                    setTimeout(() => startOrQueueRef.current(), 600);
+                  }}
+                  onAgain={(gid) => {
+                    const g = gallery.find((x) => x.id === gid);
+                    if (!g) return;
+                    reuseItem(g);
+                    setTimeout(() => startOrQueueRef.current(), 600);
+                  }}
+                  onUpscale={(gid) => upscaleItem(gid)}
                   sources={boardSources}
                   pendingIds={loading ? batch : []}
                   loading={loading}
@@ -2047,6 +2137,7 @@ export default function StudioPage() {
                   onDownload={boardDownload}
                   flash={flash}
                   apiRef={canvasApi}
+                  onScale={setCanvasScale}
                 />
               </div>
             )}
@@ -2217,7 +2308,7 @@ export default function StudioPage() {
             onClick={() => setComposeOpen(true)}
             className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-4 py-2.5 text-[13px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
           >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1z" /></svg>
+            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
             生成新图
           </button>
         )}
@@ -3058,8 +3149,14 @@ export default function StudioPage() {
                           <span className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/70 transition-opacity duration-300 ${show}`} />
                           {/* 2026-11-10 (用户: 不要显示那么多，两个最重要的加一个收纳菜单): 看大图 and 下载 on the card,
                               the rest in the ⋯ menu. A favourite keeps its gold star visible. */}
-                          {g.fav && (
-                            <span className="pointer-events-none absolute left-2 top-2 text-[15px] leading-none text-[#ffcc00] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">★</span>
+                          {(g.fav || onBoard.has(g.id)) && (
+                            <span className="pointer-events-none absolute left-2 top-2 flex items-center gap-1 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                              {g.fav && <span className="text-[15px] leading-none text-[#ffcc00]">★</span>}
+                              {onBoard.has(g.id) && (
+                                // 用户 2026-11-10: 历史里已经放到画布上的图做个小标记.
+                                <span className="rounded-full bg-[#1d1d1f]/70 px-1.5 py-0.5 text-[10px] font-medium leading-none text-white">画布</span>
+                              )}
+                            </span>
                           )}
                           <span className="absolute right-1 top-1 flex items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
                             <button type="button" data-tip="看大图" aria-label="看大图" onClick={(e) => act(e, () => setViewer(g.url))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>

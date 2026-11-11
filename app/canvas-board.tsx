@@ -20,6 +20,8 @@ export type BoardApi = {
   has: (gid: string) => boolean;
   /** References (data URLs) on the left, the result they made on the right, linked; the references end up selected. */
   importSet: (refs: string[], resultGid: string | null) => void;
+  /** Zoom around the middle of the board: in / out a step, fit everything, or an exact scale (1 = 100%). */
+  zoom: (to: "in" | "out" | "fit" | number) => void;
 };
 
 type Node = {
@@ -79,7 +81,21 @@ export function CanvasBoard({
   apiRef,
   onSelectionChange,
   onSelectionBox,
+  onGidsChange,
+  onRetry,
+  onAgain,
+  onUpscale,
+  onScale,
 }: {
+  /** History ids currently on this board (history cards mark them). */
+  onGidsChange?: (gids: string[]) => void;
+  /** Failed placeholder → make it again; the placeholder is removed and its sources get selected. */
+  onRetry?: (gid: string) => void;
+  /** 再来一张 / 高清放大 for one picture from history (用户 2026-11-10). */
+  onAgain?: (gid: string) => void;
+  onUpscale?: (gid: string) => void;
+  /** When set the board hides its own zoom buttons; the page shows the level in its rail instead. */
+  onScale?: (s: number) => void;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
@@ -211,6 +227,7 @@ export function CanvasBoard({
     if (!apiRef) return;
     const api: BoardApi = {
       importSet: () => {},
+      zoom: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -251,11 +268,22 @@ export function CanvasBoard({
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
     };
+    api.zoom = (to) => {
+      if (to === "fit") return fitAll();
+      const r = boxRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const cur = viewRef.current.s;
+      zoomAt(r.left + r.width / 2, r.top + r.height / 2, to === "in" ? cur * 1.25 : to === "out" ? cur / 1.25 : to);
+    };
     apiRef.current = api;
     return () => {
       apiRef.current = null;
     };
-  }, [apiRef, toWorld, commit]);
+  }, [apiRef, toWorld, commit, zoomAt, fitAll]);
+  // The page shows the zoom level in its tool rail (用户 2026-11-10).
+  useEffect(() => {
+    onScale?.(view.s);
+  }, [view.s, onScale]);
 
   // ---- placeholders for pictures being made: next to the selection, else in the middle of the view
   const anchor = useRef<{ x: number; y: number; from: string[] } | null>(null);
@@ -498,6 +526,20 @@ export function CanvasBoard({
     }
   };
 
+  const gidKey = nodes.map((n) => n.gid ?? "").filter(Boolean).sort().join(",");
+  const onGidsRef = useRef(onGidsChange);
+  onGidsRef.current = onGidsChange;
+  useEffect(() => {
+    onGidsRef.current?.(gidKey ? gidKey.split(",") : []);
+  }, [gidKey]);
+  const retry = (n: Node) => {
+    if (!n.gid) return;
+    const from = n.from ?? [];
+    commit((list) => list.filter((m) => m.id !== n.id));
+    setSel(new Set(from));
+    onRetry?.(n.gid);
+  };
+
   const urlOf = (n: Node): string | null => n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null);
   const selKey = nodes.filter((n) => sel.has(n.id)).map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
@@ -539,6 +581,8 @@ export function CanvasBoard({
   const grid = 24 * view.s;
 
   const btn = "flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.06]";
+  const ibtn = "flex h-8 min-w-8 items-center justify-center rounded-full px-1.5 text-[#1d1d1f] transition hover:bg-black/[0.06] active:scale-[0.94]";
+  const ico = "h-[18px] w-[18px] fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.6]";
   return (
     <div
       ref={boxRef}
@@ -615,7 +659,19 @@ export function CanvasBoard({
                   }}
                 />
               ) : status === "failed" || status === "expired" ? (
-                <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-[#fff1f1] text-[13px] text-[#d70015]">没有生成成功</div>
+                <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-[#fff1f1] text-[13px] text-[#d70015]">
+                  没有生成成功
+                  {onRetry && (
+                    <button
+                      type="button"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={() => retry(n)}
+                      className="rounded-full bg-[#d70015] px-3 py-1 text-[12px] font-medium text-white hover:bg-[#b80012]"
+                    >
+                      重试
+                    </button>
+                  )}
+                </div>
               ) : (
                 // The site's own generating animation, sized to the placeholder (用户: 生成动画也要同步).
                 <div className="h-full w-full overflow-hidden rounded-[10px]">
@@ -660,26 +716,49 @@ export function CanvasBoard({
       {selBox && selected.some((n) => urlOf(n)) && (
         <div
           className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-white/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] backdrop-blur"
-          style={{ left: Math.max(200, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 200)), top: Math.max(44, selBox.y - 48) }}
+          style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(44, selBox.y - 48) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
-          <button type="button" className={`${btn} text-[#0071e3]`} onClick={() => onUseAsRef(selected.map(urlOf).filter((u): u is string => !!u))}>
-            用作参考图{selected.length > 1 ? `（${selected.length}）` : ""}
+          {/* 用户 2026-11-10: icons only, the name shows on hover. */}
+          <button type="button" aria-label="用作参考图" data-tip={selected.length > 1 ? `用作参考图（${selected.length}）` : "用作参考图"} className={`${ibtn} text-[#0071e3]`} onClick={() => onUseAsRef(selected.map(urlOf).filter((u): u is string => !!u))}>
+            <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M3.5 13.5l4-4 3 3 2-2 4 4" /><circle cx="13" cy="7.8" r="1.2" /></svg>
+            {selected.length > 1 && <span className="ml-0.5 text-[11px] font-semibold tabular-nums">{selected.length}</span>}
           </button>
+          {selected.length === 1 && selected[0].gid && onAgain && (
+            <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!)}>
+              <svg viewBox="0 0 20 20" className={ico}><path d="M15.5 8A6 6 0 1 0 16 11" /><path d="M16 4v4h-4" /></svg>
+            </button>
+          )}
+          {selected.length === 1 && selected[0].gid && onUpscale && (
+            <button type="button" aria-label="高清放大" data-tip="高清放大 2 倍（约 ¥0.7）" className={ibtn} onClick={() => onUpscale(selected[0].gid!)}>
+              <svg viewBox="0 0 20 20" className={ico}><path d="M11.5 3.5h5v5" /><path d="M16.5 3.5L11 9" /><path d="M8.5 16.5h-5v-5" /><path d="M3.5 16.5L9 11" /></svg>
+            </button>
+          )}
           {selected.length === 1 && (
             <>
-              <button type="button" className={btn} onClick={() => onView(urlOf(selected[0])!)}>看大图</button>
-              <button type="button" className={btn} onClick={() => onDownload(selected[0].gid ?? null, urlOf(selected[0])!)}>下载</button>
+              <button type="button" aria-label="看大图" data-tip="看大图" className={ibtn} onClick={() => onView(urlOf(selected[0])!)}>
+                <svg viewBox="0 0 20 20" className={ico}><circle cx="8.8" cy="8.8" r="5.3" /><path d="M12.8 12.8L17 17" /><path d="M8.8 6.6v4.4M6.6 8.8h4.4" /></svg>
+              </button>
+              <button type="button" aria-label="下载" data-tip="下载" className={ibtn} onClick={() => onDownload(selected[0].gid ?? null, urlOf(selected[0])!)}>
+                <svg viewBox="0 0 20 20" className={ico}><path d="M10 3.5v9" /><path d="M6 8.8l4 4 4-4" /><path d="M4 16.5h12" /></svg>
+              </button>
             </>
           )}
-          <button type="button" className={btn} onClick={toFront}>置顶</button>
-          <button type="button" className={btn} onClick={duplicateSel}>复制</button>
-          <button type="button" className={`${btn} text-[#d70015]`} onClick={removeSel}>移出画布</button>
+          <span className="mx-0.5 h-4 w-px bg-black/10" />
+          <button type="button" aria-label="置顶" data-tip="置顶" className={ibtn} onClick={toFront}>
+            <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5V4a.5.5 0 0 0-.5-.5H4a.5.5 0 0 0-.5.5v8.5a.5.5 0 0 0 .5.5h.5" /></svg>
+          </button>
+          <button type="button" aria-label="复制" data-tip="复制一份" className={ibtn} onClick={duplicateSel}>
+            <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
+          </button>
+          <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-[#d70015] hover:bg-[#d70015]/[0.08]`} onClick={removeSel}>
+            <svg viewBox="0 0 20 20" className={ico}><path d="M4 6h12" /><path d="M8 6V4.5h4V6" /><path d="M5.5 6l.8 10h7.4l.8-10" /></svg>
+          </button>
         </div>
       )}
 
-      {/* Zoom controls. */}
-      <div
+      {/* Zoom controls (only when the page does not host them). */}
+      {!onScale && <div
         className="absolute bottom-3 left-3 z-20 flex items-center gap-0.5 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -687,7 +766,7 @@ export function CanvasBoard({
         <button type="button" className="h-7 w-12 rounded-full tabular-nums hover:bg-black/[0.06]" data-tip="回到 100%" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); }}>{Math.round(view.s * 100)}%</button>
         <button type="button" aria-label="放大" className="h-7 w-7 rounded-full hover:bg-black/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s * 1.25); }}>+</button>
         <button type="button" className="h-7 rounded-full px-2.5 hover:bg-black/[0.06]" data-tip="显示全部（Shift+1）" onClick={() => fitAll()}>适应</button>
-      </div>
+      </div>}
 
       {!nodes.length && (
         <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-[13px] text-[#86868b]">
