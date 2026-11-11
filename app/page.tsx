@@ -2965,11 +2965,12 @@ ${link}`;
                             <button
                               type="button"
                               onClick={(e) => { anchorModel(chipRowRef.current?.querySelector<HTMLElement>('[data-setting="model"]') ?? e.currentTarget); setMultiOnly(true); setOpenPanel("model"); }}
-                              className="self-center rounded-xl bg-[light-dark(#fff8e6,#352a15)] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[color:light-dark(#9a6700,#f5c451)] ring-1 ring-[#f5c451]/50 hover:bg-[light-dark(#fff1cc,#443319)]"
+                              aria-label={`${limit === 1 ? "仅用图1" : `仅用前 ${limit} 张`}，切换模型`}
+                              title={`已连接 ${canvasSel.length} 张，当前模型支持 ${limit} 张`}
+                              className="inline-flex items-center gap-2 self-center whitespace-nowrap rounded-md px-1.5 py-1 text-[11px] text-secondary hover:bg-edge/[0.05]"
                             >
-                              连进来 {canvasSel.length} 张图，这个模型只能用 {limit} 张
-                              <br />
-                              <span className="font-medium text-accent">换成能用多张图的模型 →</span>
+                              <span>{limit === 1 ? "仅用图1" : `仅用前 ${limit} 张`}</span>
+                              <span className="font-medium text-accent">换模型</span>
                             </button>
                           )}
                         </>
