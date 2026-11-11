@@ -75,12 +75,12 @@ export function workflowFor(model: ModelId, mode: Mode): WorkflowSpec | null {
   if (model === "brown-dust") return brownDust(mode);
   const id = WORKFLOW_IDS[model]?.[mode];
   if (!id) return null;
-  // 局内视角 chains two LoRAs (用户): LOL0811 at 2, LOL1105 at 1.
+  // 局内视角 chains two LoRAs (用户): LOL0811 at 2, LOL1105 at 0.7 (用户 2026-11-11: 1.0 → 0.7).
   if (model === "lol-ingame") {
     const base = krea2(id, mode);
     return mode === "t2i"
-      ? { ...base, lora: undefined, fixed: [{ nodeId: "374", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "435", fieldName: "strength_model", fieldValue: 1 }] }
-      : { ...base, lora: undefined, fixed: [{ nodeId: "244", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "380", fieldName: "strength_model", fieldValue: 1 }] };
+      ? { ...base, lora: undefined, fixed: [{ nodeId: "374", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "435", fieldName: "strength_model", fieldValue: 0.7 }] }
+      : { ...base, lora: undefined, fixed: [{ nodeId: "244", fieldName: "strength_model", fieldValue: 2 }, { nodeId: "380", fieldName: "strength_model", fieldValue: 0.7 }] };
   }
   // CherryCHE: LoRA strength 1, not the workflow's 2 (用户 2026-11-06).
   if (model === "cherryche") {
