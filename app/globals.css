@@ -730,12 +730,12 @@ button:not(:disabled):active,
 .compose-split > button { flex: none; justify-content: center; padding-inline: .625rem; }
 .compose-submit { margin-inline-start: auto; padding-inline-start: .875rem; }
 
-/* 用户 2026-11-11 (手机操作简单): on phones the settings row scrolls sideways under a pinned 生成 button instead of
-   shrinking, and every control is a comfortable thumb size. */
+/* 用户 2026-11-11 (手机操作简单 / 参数多的模型有问题): on phones the settings wrap onto as many lines as they need,
+   at a comfortable thumb size, and 生成 is one full-width button underneath. */
 @media (max-width: 767px) {
-  .compose-settings { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; zoom: 1 !important; }
-  .compose-settings::-webkit-scrollbar { display: none; }
+  .compose-settings { flex-wrap: wrap !important; white-space: normal !important; row-gap: .5rem; zoom: 1 !important; }
   .compose-settings > button, .compose-settings > .compose-split { height: 2.5rem; }
-  .compose-submit { position: sticky; right: 0; z-index: 2; background: linear-gradient(to right, transparent, var(--color-panel) 0.875rem); }
-  .compose-submit .generate-button { height: 2.75rem; padding-inline: 1.25rem; font-size: 15px; }
+  .compose-submit { flex-basis: 100% !important; margin: .25rem 0 0 !important; padding: 0 !important; }
+  .compose-submit .generate-button { width: 100%; height: 3rem; font-size: 16px; }
 }
+
