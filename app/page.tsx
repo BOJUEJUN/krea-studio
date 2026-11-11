@@ -3026,6 +3026,7 @@ ${link}`;
                   )}
                   <textarea
                     ref={promptRef}
+                    id="studio-prompt"
                     onScroll={(e) => {
                       if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
                     }}
@@ -3100,14 +3101,18 @@ ${link}`;
                 </div>
 
 
-                {canvasOn && promptOverflows && <button type="button" aria-expanded={promptExpanded} className="mb-1 ml-3.5 text-[12px] font-medium text-accent"
+                {canvasOn && promptOverflows && <button type="button" aria-expanded={promptExpanded} aria-controls="studio-prompt"
+                  aria-label={promptExpanded ? "收起提示词" : "展开提示词"} title={promptExpanded ? "收起提示词" : "展开提示词"}
+                  className="mb-1 ml-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-secondary hover:bg-edge/[0.06] hover:text-ink"
                   onClick={() => {
                     if (promptExpanded && promptRef.current) {
                       promptRef.current.scrollTop = 0;
                       if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = 0;
                     }
                     setPromptExpanded((v) => !v);
-                  }}>{promptExpanded ? "收起提示词" : "展开提示词"}</button>}
+                  }}>
+                  <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={promptExpanded ? "rotate-180" : ""}><path d="m4 6 4 4 4-4" /></svg>
+                </button>}
                 {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
                 {false && (
                   <div className="flex items-center gap-2 px-2 pb-2 pt-1">
