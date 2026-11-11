@@ -555,6 +555,8 @@ export default function StudioPage() {
   const [reversing, setReversing] = useState(false);
   const reversedForRef = useRef<string | null>(null);
   const [canvasWant, setCanvasOn] = useState(false);
+  // 用户 2026-11-11 (刷新后怎么先打开单图页面): the work area stays hidden until 单图 / 画布 is restored.
+  const [restored, setRestored] = useState(false);
   // 用户 2026-11-11 (手机不用画布，就简单生图): phones always get the plain single-picture page.
   const [phone, setPhone] = useState(false);
   useEffect(() => {
@@ -961,6 +963,7 @@ export default function StudioPage() {
       setCanvasOn(true);
       setHistHidden(true);
     }
+    setRestored(true);
     if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
     const pl = localStorage.getItem("ais-polish-level-v2");
     setPolishLevel(restoredPolishLevel(pl ?? localStorage.getItem("ais-polish-level"), pl ? 2 : 1));
@@ -2516,7 +2519,7 @@ export default function StudioPage() {
         }}
       />
 
-      {user && (
+      {user && restored && (
         <nav aria-label="工作室工具" className="fixed left-5 top-5 md:top-1/2 md:-translate-y-1/2 z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
           <div ref={userMenuRef} className="relative">
             <button
@@ -2741,7 +2744,7 @@ export default function StudioPage() {
           </div>}
         </nav>
       )}
-      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
+      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
