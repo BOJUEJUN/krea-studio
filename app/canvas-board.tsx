@@ -1553,7 +1553,7 @@ export function CanvasBoard({
           <button type="button" aria-label="复制" data-tip="复制到旁边" className={ibtn} onClick={duplicateSel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
-          {onShare && <button type="button" aria-label="分享选中节点" data-tip="分享选中节点（复制口令）" className={ibtn} onClick={() => onShare(true)}>
+          {onShare && selected.length >= 2 && <button type="button" aria-label="分享选中节点" data-tip="分享选中节点（复制口令）" className={ibtn} onClick={() => onShare(true)}>
             <svg viewBox="0 0 20 20" className={ico}><path d="M10 12V2.5M6.5 6 10 2.5 13.5 6M6.5 8.5H4v8h12v-8h-2.5" /></svg>
           </button>}
           <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-danger hover:bg-danger/[0.08]`} onClick={removeSel}>
@@ -1623,7 +1623,7 @@ export function CanvasBoard({
                 <div className="my-1 h-px bg-edge/[0.07]" />
                 <button type="button" className={item} onClick={go(copySel)}>复制节点</button>
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制到旁边</button>
-                {onShare && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的{selected.length > 1 ? ` ${selected.length} 个` : "这张"}…</button>}
+                {onShare && selected.length >= 2 && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的 {selected.length} 个节点…</button>}
                 <button type="button" className={`${item} text-danger`} onClick={go(removeSel)}>移出画布</button>
               </>
             ) : (
