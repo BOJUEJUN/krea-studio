@@ -182,20 +182,35 @@ function ZoomBar({ z, boxRef, style }: { z: ReturnType<typeof useZoom>; boxRef: 
  * aspect ratio, so they line up pixel for pixel.
  */
 export function CompareView({
-  before,
-  after,
+  before: beforeSmall,
+  after: afterSmall,
+  beforeFull,
+  afterFull,
   mode,
 }: {
   before: string;
   after: string;
+  /** Full-size pictures, used only once zoomed in (用户 2026-11-11: 大陆网络对比滑动卡 — the 1600 px copies load fast). */
+  beforeFull?: string;
+  afterFull?: string;
   mode: CompareMode;
 }) {
   const [pos, setPos] = useState(50);
+  const posRef = useRef(50);
+  const clipRef = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
+  const raf = useRef(0);
   const [blend, setBlend] = useState(50);
   const [showBefore, setShowBefore] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const dragging = useRef<"divider" | "pan" | null>(null);
   const z = useZoom();
+  const [wantFull, setWantFull] = useState(false);
+  useEffect(() => {
+    if (z.view.s > 1.15) setWantFull(true);
+  }, [z.view.s]);
+  const before = wantFull && beforeFull ? beforeFull : beforeSmall;
+  const after = wantFull && afterFull ? afterFull : afterSmall;
   const at = usePictureRect(boxRef, after);
   // The wheel zooms the pictures instead of scrolling the page.
   useEffect(() => {
@@ -206,11 +221,20 @@ export function CompareView({
     return () => el.removeEventListener("wheel", stop);
   }, [mode]);
 
+  // Dragging the divider writes straight to the two styles once per frame, no React re-render per move.
   const moveTo = useCallback((clientX: number) => {
     const box = boxRef.current?.getBoundingClientRect();
     if (!box) return;
-    setPos(Math.min(100, Math.max(0, ((clientX - box.left) / box.width) * 100)));
+    posRef.current = Math.min(100, Math.max(0, ((clientX - box.left) / box.width) * 100));
+    if (raf.current) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0;
+      const p = posRef.current;
+      if (clipRef.current) clipRef.current.style.clipPath = `inset(0 ${100 - p}% 0 0)`;
+      if (lineRef.current) lineRef.current.style.left = `${p}%`;
+    });
   }, []);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   const img = "absolute inset-0 h-full w-full select-none object-contain";
   const layer = "absolute inset-0 will-change-transform";
@@ -331,7 +355,7 @@ export function CompareView({
       {...z.bind}
       onPointerDown={(e) => {
         const box = boxRef.current!.getBoundingClientRect();
-        const nearDivider = Math.abs(e.clientX - (box.left + (box.width * pos) / 100)) < 28;
+        const nearDivider = Math.abs(e.clientX - (box.left + (box.width * posRef.current) / 100)) < 28;
         if (z.down(e, !nearDivider)) {
           dragging.current = "pan";
           return;
@@ -346,10 +370,12 @@ export function CompareView({
       }}
       onPointerUp={(e) => {
         z.up(e);
+        if (dragging.current === "divider") setPos(posRef.current);
         dragging.current = null;
       }}
       onPointerCancel={(e) => {
         z.up(e);
+        if (dragging.current === "divider") setPos(posRef.current);
         dragging.current = null;
       }}
     >
@@ -359,13 +385,13 @@ export function CompareView({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={after} alt="结果" draggable={false} className={img} />
       </div>
-      <div className="absolute inset-0" style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}>
+      <div ref={clipRef} className="absolute inset-0 will-change-[clip-path]" style={{ clipPath: `inset(0 ${100 - pos}% 0 0)` }}>
         <div className={layer} style={z.style}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={before} alt="原图" draggable={false} className={img} />
         </div>
       </div>
-      <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: `${pos}%` }}>
+      <div ref={lineRef} className="pointer-events-none absolute inset-y-0 z-10" style={{ left: `${pos}%` }}>
         <div className="absolute inset-y-0 -translate-x-1/2 border-l-2 border-white shadow-[0_0_6px_rgba(0,0,0,0.45)]" />
         <div className="absolute top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-panel text-[12px] text-ink shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
           ⇆

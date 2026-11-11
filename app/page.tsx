@@ -2891,7 +2891,7 @@ export default function StudioPage() {
               />
             ) : resultUrl && compareRefs.length > 0 && compareOn && !loading ? (
               <div className="h-full w-full p-2">
-                <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={fullOf((compareRefs[compareIdx] ?? resultRef) as string)} after={fullOf(resultUrl)} mode={compareMode} />
+                <CompareView key={`${resultKey}-${compareMode}-${compareIdx}`} before={thumbOf((compareRefs[compareIdx] ?? resultRef) as string, 1600)} after={thumbOf(resultUrl, 1600)} beforeFull={fullOf((compareRefs[compareIdx] ?? resultRef) as string)} afterFull={fullOf(resultUrl)} mode={compareMode} />
               </div>
             ) : resultUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -3598,7 +3598,7 @@ export default function StudioPage() {
                     <button type="button" aria-label="关闭对比" onClick={() => setBoardCompare(null)} className="flex h-8 w-8 items-center justify-center rounded-full bg-panel/90 text-[16px] text-ink hover:bg-panel">×</button>
                   </div>
                   <div className="min-h-0 flex-1 p-4 pt-0" onClick={(e) => e.stopPropagation()}>
-                    <CompareView key={`${boardCompare.before}-${boardCompare.after}-${compareMode}`} before={fullOf(boardCompare.before)} after={fullOf(boardCompare.after)} mode={compareMode} />
+                    <CompareView key={`${boardCompare.before}-${boardCompare.after}-${compareMode}`} before={thumbOf(boardCompare.before, 1600)} after={thumbOf(boardCompare.after, 1600)} beforeFull={fullOf(boardCompare.before)} afterFull={fullOf(boardCompare.after)} mode={compareMode} />
                   </div>
                 </div>, document.body
               )}
