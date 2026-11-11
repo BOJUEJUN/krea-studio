@@ -1978,8 +1978,8 @@ export default function StudioPage() {
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
-    (urls: string[]) => {
-      switchComposeRef.current(urls.join("|"));
+    (urls: string[], nodeKey?: string) => {
+      switchComposeRef.current(nodeKey ?? urls.join("|"));
       setCanvasSel(urls);
       setComposeOpen(false); // clicking a picture (or empty space) closes the free-standing box
       if (selTimer.current) clearTimeout(selTimer.current);
@@ -2122,8 +2122,8 @@ export default function StudioPage() {
   // 用户 2026-11-11 (小预览跟随我选择的参数): the short line under a picture on the board.
   const liveSummary = chips.filter((c) => c.key !== "model").map((c) => c.label).join(" · ");
   liveSummaryRef.current = liveSummary;
-  const boardSummary = (url: string) => {
-    const key = url;
+  const boardSummary = (nodeId: string) => {
+    const key = nodeId;
     const m = key === composeKey.current ? { model, summary: liveSummary } : composeMem.current.get(key);
     if (!m) return null;
     const md = findModel(m.model);
@@ -2455,11 +2455,41 @@ export default function StudioPage() {
                     reuseItem(g);
                     setTimeout(() => startOrQueueRef.current(), 600);
                   }}
-                  onAgain={(gid, text) => {
+                  onDescribe={async (url) => {
+                    const r = await fetch(url.startsWith("data:") ? url : rawOf(url));
+                    if (!r.ok) throw new Error("图片读取失败");
+                    const b = await r.blob();
+                    const fd = new FormData();
+                    fd.append("image", await describeCopy(new File([b], "pic.jpg", { type: b.type || "image/jpeg" })), "reference.jpg");
+                    const d = await fetchJson("/api/describe", { method: "POST", body: fd });
+                    if (!d?.ok || !d?.prompt) throw new Error(d?.error || "看图写描述失败");
+                    return String(d.prompt).trim();
+                  }}
+                  onAgain={(gid, text, refs) => {
                     const g = gallery.find((x) => x.id === gid);
                     if (!g) return;
                     reuseItem(g);
                     if (text) setPrompt(text);
+                    // Pictures linked into it are the references this time (用户 2026-11-11: 连线).
+                    if (refs?.length) {
+                      Promise.all(
+                        refs.map(async (u, i) => {
+                          const r = await fetch(u.startsWith("data:") ? u : rawOf(u));
+                          const b = await r.blob();
+                          return new File([b], `link-${i + 1}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/jpeg" });
+                        })
+                      )
+                        .then((files) => {
+                          refLoadRef.current = null; // the history record's own reference must not land on top
+                          onPickFile(null);
+                          setExtraRefs([]);
+                          addRefs(files, true);
+                          setMode("i2i");
+                          setTimeout(() => startOrQueueRef.current(), 400);
+                        })
+                        .catch(() => flash("连着的图片读取失败"));
+                      return;
+                    }
                     setTimeout(() => startOrQueueRef.current(), 600);
                   }}
                   onUpscale={(gid) => upscaleItem(gid)}
