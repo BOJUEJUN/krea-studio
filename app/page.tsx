@@ -1822,9 +1822,12 @@ export default function StudioPage() {
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
   ];
   // 2026-11-10 (用户: 参数最多显示两个最重要的，多的收起来): model + one key setting; the rest behind 更多.
+  // 用户 2026-11-10: 模型 + 两个参数 + 更多.
   const primaryChips = [
     "model",
-    mode === "t2i" ? "ratio" : (["denoise", "res", "quality"].find((k) => chips.some((c) => c.key === k)) ?? ""),
+    ...(mode === "t2i" ? ["ratio", "res", "quality", "lora"] : ["denoise", "res", "quality", "lora"])
+      .filter((k) => chips.some((c) => c.key === k))
+      .slice(0, 2),
   ];
   const hiddenChipCount = chips.filter((c) => !primaryChips.includes(c.key)).length;
   /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
@@ -2622,7 +2625,9 @@ export default function StudioPage() {
                       )}
                     </div>
                   )}
-                  <div className="flex h-8 items-center overflow-hidden rounded-full bg-[#0071e3]/[0.08] text-[12px] font-medium text-[#0071e3] ring-1 ring-[#0071e3]/25 transition hover:ring-[#0071e3]/50">
+                  {/* 用户 2026-11-10: 提示词润色 shows once there is a prompt to polish. */}
+                  {(prompt.trim() || polishing) && (
+                  <div className="animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-[#0071e3]/[0.08] text-[12px] font-medium text-[#0071e3] ring-1 ring-[#0071e3]/25 transition hover:ring-[#0071e3]/50">
                     <button
                       type="button"
                       onClick={runPolish}
@@ -2652,6 +2657,7 @@ export default function StudioPage() {
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   </div>
+                  )}
                   {polishUndo && polishUndo.after === prompt && (
                     <button
                       type="button"
