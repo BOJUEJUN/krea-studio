@@ -264,7 +264,7 @@ const MODEL_KEY = "krea-studio.model";
 const COUNT_KEY = "krea-studio.count";
 const REVERSE_KEY = "krea-studio.reverse-prompt";
 const PANEL_LEFT_KEY = "krea-studio.panel-left";
-const PANEL_RIGHT_KEY = "krea-studio.panel-right-2";
+const PANEL_RIGHT_KEY = "krea-studio.panel-right-3"; // -3 (2026-11-11): everyone starts again from the new default
 // Netlify buffers function requests and binary uploads incur Base64 overhead.
 // Leave room for multipart fields and the platform's 6 MB request limit.
 // 2026-11-06: smaller uploads keep the site's Vercel traffic down; 2048 px JPEG stays sharp for every model.
@@ -888,7 +888,8 @@ export default function StudioPage() {
     // 2026-11-05 (用户: 历史默认大一些，还能拉更大): about a third of the window by default, up to all but 420px.
     const maxR = () => Math.max(320, window.innerWidth - 420);
     if (savedR >= 240) setRightPx(Math.min(savedR, maxR()));
-    else setRightPx(Math.min(maxR(), Math.max(320, Math.round(window.innerWidth * 0.34))));
+    // 用户 2026-11-11: by default the widest size that still shows two pictures side by side (3 columns start at 620).
+    else setRightPx(Math.min(maxR(), 600));
     sync();
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
