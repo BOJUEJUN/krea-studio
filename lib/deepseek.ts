@@ -107,9 +107,9 @@ export async function describeImage(image: Blob): Promise<string> {
 export type PolishLevel = "low" | "medium" | "high";
 
 const POLISH_RULES: Record<PolishLevel, string> = {
-  low: "只做最小改动：理顺语句、改正错别字和语病、去掉重复，让意思表达得更清楚。不要增加任何新内容、新细节或风格词，不要删掉任何要求，长度和原文差不多。",
-  medium: "在保留全部原意和所有要求的前提下，把描述写得更清楚、更有条理：可以把含糊的地方说具体一些（比如动作、位置关系、主次），可以调整语序，但不要加入原文没有暗示的新元素。",
-  high: "在保留全部原意和所有要求的前提下，扩写成一段专业、完整的生图提示词：补充构图、姿态、细节、光影和氛围等有助于出图的描述，让画面更丰富，但不能改变主体、人物设定和原文的任何要求。",
+  low: "在保留全部原意和所有要求的前提下，把描述写得更清楚、更有条理：可以把含糊的地方说具体一些（比如动作、位置关系、主次），可以调整语序，但不要加入原文没有暗示的新元素。",
+  medium: "主动重写成可直接作画的描述。先交代主体及其动作，再理清空间或参考图之间的关系。在用户留白的地方，补上两三个真正影响画面的具体决定，例如姿态受力、主体在画幅中的位置或受光方向。改图只细化用户点名的改动，让它和原图衔接。",
+  high: "以美术指导的方式构思一套完整且统一的画面方案，再写成一段可执行的提示词。围绕用户意图主动决定关键的取景、前中后景、动作轮廓、光源、配色或材质，写清它们如何配合突出主体；按题材取舍。局部改图应深入描述修改对象的形态、结构、透视和与原有部分的衔接，不扩大修改范围。避免用画质标签或空泛形容词填充。",
 };
 
 export async function polishPrompt(prompt: string, level: PolishLevel): Promise<string> {
@@ -123,7 +123,7 @@ export async function polishPrompt(prompt: string, level: PolishLevel): Promise<
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,
         max_tokens: 4000,
-        reasoning_effort: level === "low" ? "low" : "medium",
+        reasoning_effort: "medium",
         messages: [
           {
             role: "system",
@@ -131,6 +131,7 @@ export async function polishPrompt(prompt: string, level: PolishLevel): Promise<
               "你是生图提示词润色助手。用户给你一段 AI 生图/改图的提示词，你按要求润色后只输出润色后的提示词本身，不要解释、不要加引号、不要加标题。",
               "保持原文语言（中文就写中文，英文就写英文）。",
               "像「@图1」「@图2」这样的标记代表用户上传的参考图，必须原样保留，每个标记出现的次数和它在句子里指代的对象都不能变，不能改写成别的说法。",
+              "保留明示的人物身份、数量、风格、禁止项和参考图分工。只看到图号时，不虚构图中具体内容。",
               POLISH_RULES[level],
               extra,
             ].join("\n"),

@@ -24,7 +24,7 @@ import {
 } from "@/lib/models";
 
 import type { BoardNode, CanvasDraft } from "@/lib/canvas-workflow";
-import { pictureParams, pictureRefs, type EditMetadata } from "@/lib/edit-recipe";
+import { pictureParams, pictureRefs, restoredPolishLevel, type EditMetadata } from "@/lib/edit-recipe";
 
 type Readiness = Record<string, Record<Mode, boolean>>;
 
@@ -636,7 +636,7 @@ export default function StudioPage() {
   const [hugOn, setHugOn] = useState(false);
   const leftColRef = useRef<HTMLDivElement>(null);
   const composeRef = useRef<HTMLElement>(null);
-  const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("medium"); // 用户 2026-11-10: 默认中
+  const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
   const [regional, setRegional] = useState(false);
@@ -935,8 +935,8 @@ export default function StudioPage() {
       setHistHidden(true);
     }
     if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
-    const pl = localStorage.getItem("ais-polish-level");
-    if (pl === "low" || pl === "medium" || pl === "high") setPolishLevel(pl);
+    const pl = localStorage.getItem("ais-polish-level-v2");
+    setPolishLevel(restoredPolishLevel(pl ?? localStorage.getItem("ais-polish-level"), pl ? 2 : 1));
     const savedCount = Number(localStorage.getItem(COUNT_KEY));
     void savedCount; // 张数 removed 2026-11-10: always one picture per click
     fetchJson("/api/status")
@@ -1321,7 +1321,7 @@ export default function StudioPage() {
     setHeight(v.height);
     setWidthText(v.widthText);
     setHeightText(v.heightText);
-    setPolishLevel(v.polishLevel);
+    setPolishLevel(restoredPolishLevel(v.polishLevel, v.polishVersion));
     setThinking(v.thinking);
     setRegional(v.regional);
     setBackground(v.background);
@@ -2172,7 +2172,7 @@ ${link}`;
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2277,7 +2277,7 @@ ${link}`;
 
   const changePolishLevel = (level: CanvasDraft["polishLevel"]) => {
     setPolishLevel(level);
-    try { localStorage.setItem("ais-polish-level", level); } catch {}
+    try { localStorage.setItem("ais-polish-level-v2", level); } catch {}
   };
   const runPolish = async () => {
     const before = prompt;
@@ -3229,7 +3229,7 @@ ${link}`;
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
                     {openPanel === "reverse" && <Choice note="根据参考图自动写画面描述" options={[["direct", "直接生成（默认）", "反推完马上出图"], ["fill", "先填到提示词框", "反推结果放进框里，你改好再点生成"]]} value={reverseMode} onPick={(v) => { setReverseMode(v as "direct" | "fill"); try { localStorage.setItem("ais-reverse-mode", v); } catch {} setOpenPanel(null); }} />}
-                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低", "只理顺语句、改错字，几乎不改内容（约 3 秒）"], ["medium", "中（默认）", "说得更清楚具体，不加新东西（约 4 秒）"], ["high", "高", "扩写成完整的专业提示词（约 9 秒）"]]} value={polishLevel} onPick={(v) => { changePolishLevel(v as typeof polishLevel); setOpenPanel(null); }} />}
+                    {openPanel === "polish" && <Choice note="@图 编号会保留" options={[["low", "低（默认）", "理顺表达，保留原意"], ["medium", "中", "重写描述，补足动作与画面细节"], ["high", "高", "深入设计构图、光影与材质"]]} value={polishLevel} onPick={(v) => { changePolishLevel(v as typeof polishLevel); setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}

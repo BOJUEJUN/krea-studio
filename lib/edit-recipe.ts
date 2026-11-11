@@ -57,11 +57,15 @@ export function pictureParams(g: EditablePicture) {
 }
 
 export type CanvasDraft = ReturnType<typeof pictureParams> & {
-  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
+  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; polishVersion?: number; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
 };
+export function restoredPolishLevel(level: unknown, version: unknown): CanvasDraft["polishLevel"] {
+  if (level === "high") return "high";
+  return version === 2 && level === "medium" ? "medium" : "low";
+}
 export function pictureDraft(g: EditablePicture): CanvasDraft {
   const p = pictureParams(g);
-  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "medium", reverseOn: false, reverseMode: "direct", summary: "" };
+  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "low", polishVersion: 2, reverseOn: false, reverseMode: "direct", summary: "" };
 }
 /** Share only editor fields, never account or task metadata. */
 export function readDraft(v: unknown): CanvasDraft | undefined {
@@ -75,6 +79,8 @@ export function readDraft(v: unknown): CanvasDraft | undefined {
     if (k !== "model" && typeof x === typeof fallback && (typeof x !== "number" || Number.isFinite(x)))
       out[k] = typeof x === "string" ? x.slice(0, 8000) : x;
   }
+  out.polishLevel = restoredPolishLevel(data.polishLevel, data.polishVersion);
+  out.polishVersion = 2;
   if (out.reverseMode !== "fill") out.reverseMode = "direct";
   return out as CanvasDraft;
 }
