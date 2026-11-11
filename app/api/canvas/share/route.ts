@@ -1,9 +1,9 @@
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "crypto";
+import { randomInt } from "crypto";
 import { storeGet, storePut } from "@/lib/store";
 import { readDraft } from "@/lib/canvas-workflow";
-import { shareLifetime } from "@/lib/canvas-share-code";
+import { isShortShareCode, shareLifetime, shortAlphabet } from "@/lib/canvas-share-code";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,22 +38,39 @@ export async function POST(req: NextRequest) {
         draft: n.kind === "gen" || n.kind === "result" ? readDraft(n.draft) : undefined,
       }));
     if (!nodes.length) return NextResponse.json({ ok: false, error: "画布是空的" }, { status: 400 });
-    const t = "EZ-" + randomBytes(12).toString("hex").toUpperCase().match(/.{4}/g)!.join("-");
     const name = String(body?.name || "画布").slice(0, 20);
     const createdAt = Date.now(), expiresAt = createdAt + shareLifetime;
-    await storePut(key(t), JSON.stringify({ owner: who.user, name, nodes, view: body?.view ?? null, createdAt, expiresAt }), "application/json");
-    return NextResponse.json({ ok: true, token: t, expiresAt });
+    const snapshot = JSON.stringify({ owner: who.user, name, nodes, view: body?.view ?? null, createdAt, expiresAt });
+    for (let attempt = 0; attempt < 8; attempt++) {
+      let token = "";
+      do {
+        token = Array.from({ length: 6 }, () => shortAlphabet[randomInt(shortAlphabet.length)]).join("");
+      } while (!isShortShareCode(token));
+      if (await storeGet(key(token))) continue;
+      try { await storePut(key(token), snapshot, "application/json", 20_000, true); }
+      catch (error) { if (await storeGet(key(token))) continue; throw error; }
+      return NextResponse.json({ ok: true, token, expiresAt });
+    }
+    throw new Error("暂时无法创建分享，请重试");
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "分享失败" }, { status: 500 });
   }
 }
 
+// Short codes are bearer credentials. Limit repeated misses by signed-in account.
+const misses = new Map<string, { count: number; until: number }>();
 export async function GET(req: NextRequest) {
   const who = await activeUser(req);
   if ("res" in who) return who.res;
   const t = new URL(req.url).searchParams.get("t") || "";
-  if (!/^[0-9A-Za-z_-]{8,32}$/.test(t)) return NextResponse.json({ ok: false, error: "链接不对" }, { status: 400 });
-  const b = await storeGet(key(t)).catch(() => null);
+  const short = isShortShareCode(t);
+  if (!short && !/^[0-9A-Za-z_-]{8,32}$/.test(t)) return NextResponse.json({ ok: false, error: "链接不对" }, { status: 400 });
+  const now = Date.now();
+  for (const [account, limit] of misses) if (limit.until <= now) misses.delete(account);
+  const limit = misses.get(who.user);
+  if (short && limit && limit.count >= 20) return NextResponse.json({ ok: false, error: "请稍后再试" }, { status: 429 });
+  const b = await storeGet(key(t));
+  if (short && !b) misses.set(who.user, { count: (limit?.count ?? 0) + 1, until: limit?.until ?? now + 60_000 });
   if (!b) return NextResponse.json({ ok: false, error: "这个分享链接不存在了" }, { status: 404 });
   try {
     const d = JSON.parse(b.toString("utf8"));

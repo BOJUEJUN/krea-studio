@@ -76,11 +76,11 @@ export async function cosHas(key: string): Promise<boolean> {
   return res.ok;
 }
 
-export async function cosPut(key: string, body: Buffer | string, contentType: string, timeoutMs = 30_000): Promise<void> {
+export async function cosPut(key: string, body: Buffer | string, contentType: string, timeoutMs = 30_000, createOnly = false): Promise<void> {
   const c = cosConf()!;
   const res = await fetch(url(c, "put", key), {
     method: "PUT",
-    headers: { "Content-Type": contentType, "x-cos-acl": "private" },
+    headers: { "Content-Type": contentType, "x-cos-acl": "private", ...(createOnly ? { "x-cos-forbid-overwrite": "true" } : {}) },
     body: typeof body === "string" ? body : new Uint8Array(body),
     signal: AbortSignal.timeout(timeoutMs),
   });

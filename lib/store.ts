@@ -87,21 +87,22 @@ export async function storePut(
   key: string,
   body: Buffer | string,
   contentType = "application/octet-stream",
-  timeoutMs = 20_000
+  timeoutMs = 20_000,
+  createOnly = false
 ): Promise<void> {
   safeKey(key);
   const kind = storeKind();
   if (kind === "local") {
     await fs.mkdir(LOCAL_DIR, { recursive: true });
-    await fs.writeFile(path.join(LOCAL_DIR, key), body);
+    await fs.writeFile(path.join(LOCAL_DIR, key), body, { flag: createOnly ? "wx" : "w" });
     return;
   }
-  if (kind === "cos") return cosPut(key, body, contentType, timeoutMs);
+  if (kind === "cos") return cosPut(key, body, contentType, timeoutMs, createOnly);
   if (kind === "vercel") {
     await blobPut(key, body, {
       access: "private",
       addRandomSuffix: false,
-      allowOverwrite: true,
+      allowOverwrite: !createOnly,
       contentType,
       cacheControlMaxAge: 60,
       abortSignal: AbortSignal.timeout(timeoutMs),
@@ -111,7 +112,7 @@ export async function storePut(
   const req = netlifyUrl(key);
   const res = await fetch(req.url, {
     method: "PUT",
-    headers: req.headers,
+    headers: createOnly ? { ...req.headers, "If-None-Match": "*" } : req.headers,
     body: typeof body === "string" ? body : new Uint8Array(body),
     signal: AbortSignal.timeout(timeoutMs),
   });

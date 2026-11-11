@@ -2048,19 +2048,11 @@ export default function StudioPage() {
         body: JSON.stringify({ ...snap, view: onlySelected ? null : snap.view, name: (boards.find((b) => b.id === boardId)?.name ?? "画布") + (onlySelected ? "（部分）" : "") }),
       });
       if (!d?.ok || !d.token) throw new Error(d?.error || "分享失败");
-      const link = `${location.origin}/?share=${d.token}`;
-      const until = new Date(d.expiresAt).toLocaleString("zh-CN", { hour12: false, timeZoneName: "short" });
-      const message = `【AI Studio】${user} 向你分享了工作流
-
-分享口令：${d.token}
-
-在画布空白处粘贴本条消息或口令即可导入，${until} 前有效。
-${link}`;
       try {
-        await navigator.clipboard.writeText(message);
-        flash("分享口令已复制，7 天内可在画布粘贴导入");
+        await navigator.clipboard.writeText(d.token);
+        flash("口令已复制，可在画布粘贴，7 天有效");
       } catch {
-        window.prompt("复制分享消息或口令发给朋友", message);
+        window.prompt("复制口令（7 天有效）", d.token);
       }
     } catch (e: any) {
       flash(e?.message || "分享失败");
