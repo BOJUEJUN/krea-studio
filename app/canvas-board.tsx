@@ -169,6 +169,17 @@ export function CanvasBoard({
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   const urlOfRef = useRef<(n: Node) => string | null>(() => null);
+  // 用户 2026-11-11: the minimap shows only while moving around zoomed far out, then fades.
+  const [navOn, setNavOn] = useState(false);
+  const [mapHold, setMapHold] = useState(false); // the pointer is on the minimap
+  const navTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navRef = useRef<() => void>(() => {});
+  const nav = useCallback(() => {
+    setNavOn(true);
+    if (navTimer.current) clearTimeout(navTimer.current);
+    navTimer.current = setTimeout(() => setNavOn(false), 1500);
+  }, []);
+  navRef.current = nav;
   const addGenRef = useRef<() => void>(() => {});
   const prefsRef = useRef(prefs ?? { snap: true, grid: true, lines: true });
   prefsRef.current = prefs ?? { snap: true, grid: true, lines: true };
@@ -391,6 +402,7 @@ export function CanvasBoard({
         wheelIsMouse = e.deltaMode !== 0 || (e.deltaX === 0 && !!wd && Math.abs(wd) % 120 === 0);
       } else if (e.deltaX !== 0) wheelIsMouse = false;
       lastWheel = now;
+      navRef.current();
       if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-e.deltaY * 0.01));
       else if (wheelIsMouse && !e.shiftKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY) * (e.deltaMode ? 33 : 1), 200) * 0.0015));
       else setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
@@ -600,6 +612,7 @@ export function CanvasBoard({
     }
     if (d.kind === "pan") {
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
+      nav();
       setView((v) => ({ ...v, x: d.vx + e.clientX - d.sx, y: d.vy + e.clientY - d.sy }));
     } else if (d.kind === "marquee") {
       const w = toWorld(e.clientX, e.clientY);
@@ -835,7 +848,9 @@ export function CanvasBoard({
   // A selected empty frame stands for what is linked into it: its pictures are the references, its text the description.
   // 用户 2026-11-11 (连上了就要显示加上的内容): a picture brings what is linked into it — itself is 图1, linked
   // pictures 图2, 图3…, linked text joins the description — all handed to the model together.
-  const inputsOf = (n: Node): Node[] => (n.from ?? []).map((id) => nodes.find((m) => m.id === id)).filter((m): m is Node => !!m);
+  function inputsOf(n: Node): Node[] {
+    return (n.from ?? []).map((id) => nodes.find((m) => m.id === id)).filter((m): m is Node => !!m);
+  }
   const expandSel = (n: Node): Node[] => (n.kind === "gen" && !n.gid ? inputsOf(n) : n.kind === "text" ? [n] : [n, ...inputsOf(n)]);
   const selFlat = [...new Map(nodes.filter((n) => sel.has(n.id)).flatMap(expandSel).map((n) => [n.id, n])).values()];
   const selKey = selFlat.map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
@@ -863,6 +878,28 @@ export function CanvasBoard({
     onSelTextRef.current?.(selTextKey);
   }, [selTextKey]);
   const [editing, setEditing] = useState<string | null>(null);
+  /** 用户 2026-11-11 (文本里输入@要能@图片): the pictures a text node can name, numbered as the model will see them —
+   *  the picture it is linked into is 图1 and that picture's other linked pictures follow; a 生成框 starts at its inputs. */
+  const picsForText = (textId: string): { n: number; url: string }[] => {
+    const target = nodes.find((m) => m.from?.includes(textId) && m.kind !== "text");
+    if (!target) return [];
+    const list = [...(target.kind === "gen" && !target.gid ? [] : [target]), ...inputsOf(target).filter((m) => m.kind !== "text")];
+    return list.map((m, i) => ({ n: i + 1, url: urlOf(m) ?? "" })).filter((x) => x.url);
+  };
+  const [mention, setMention] = useState<{ id: string; at: number } | null>(null);
+  const mentionTokens = (text: string, pics: { n: number; url: string }[]) =>
+    text.split(/(@图\d+)/g).map((part, i) => {
+      const m = part.match(/^@图(\d+)$/);
+      if (!m) return part;
+      const p = pics.find((x) => x.n === Number(m[1]));
+      return (
+        <span key={i} className={`mx-0.5 inline-flex items-center gap-0.5 rounded-md px-1 align-middle text-[12px] ${p ? "bg-[#0071e3]/10 text-[#0071e3]" : "bg-[#d70015]/10 text-[#d70015]"}`}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          {p && <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="h-4 w-4 rounded object-cover" />}
+          图{m[1]}
+        </span>
+      );
+    });
   const addText = (at: { x: number; y: number }) => {
     const n: Node = { id: uid(), kind: "text", text: "", x: at.x, y: at.y, w: 320, h: 180 };
     commit((list) => [...list, n]);
@@ -1115,6 +1152,7 @@ export function CanvasBoard({
               </div>
               {isText ? (
                 editing === n.id ? (
+                  <>
                   <textarea
                     autoFocus
                     value={n.text ?? ""}
@@ -1122,16 +1160,58 @@ export function CanvasBoard({
                     onPointerDown={(e) => e.stopPropagation()}
                     onChange={(e) => {
                       const v = e.target.value.slice(0, 2000);
+                      const c = e.target.selectionStart ?? v.length;
+                      setMention(v[c - 1] === "@" && v.length > (n.text ?? "").length ? { id: n.id, at: c - 1 } : null);
                       setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, text: v } : m)));
                     }}
-                    onBlur={() => setEditing(null)}
-                    onKeyDown={(e) => e.key === "Escape" && (e.currentTarget as HTMLTextAreaElement).blur()}
+                    onBlur={() => setTimeout(() => { setEditing((cur) => (cur === n.id ? null : cur)); setMention(null); }, 150)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        if (mention) setMention(null);
+                        else (e.currentTarget as HTMLTextAreaElement).blur();
+                      }
+                    }}
                     className="h-full w-full resize-none rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-[#1d1d1f] outline-none"
                   />
+                  {mention?.id === n.id && (() => {
+                    const pics = picsForText(n.id);
+                    return (
+                      <div
+                        className="animate-pop-in absolute left-3 top-9 z-30 w-56 rounded-xl bg-white p-1 shadow-[0_12px_36px_rgba(0,0,0,0.18)] ring-1 ring-black/[0.06]"
+                        style={{ transform: `scale(${k})`, transformOrigin: "top left" }}
+                        onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                      >
+                        {pics.length ? (
+                          pics.map((p) => (
+                            <button
+                              key={p.n}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => {
+                                const t = n.text ?? "";
+                                const at = mention.at;
+                                const v = t.slice(0, at) + `@图${p.n} ` + t.slice(at + 1);
+                                setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, text: v } : m)));
+                                setMention(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.05]"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="h-8 w-8 rounded-md object-cover" />
+                              图{p.n}
+                            </button>
+                          ))
+                        ) : (
+                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-[#86868b]">先把这段文本的「+」连到图片或生成框上，就能 @ 那里的图</div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  </>
                 ) : (
                   <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
                     <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-[#1d1d1f]" : "text-[#aeaeb2]"}`}>
-                      {n.text || "双击输入文字。选中它再选图片，就用这段文字生成"}
+                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字。连到图片上，选中图片就用这段文字生成；输入 @ 可以指定图片"}
                     </div>
                     <div className="pt-1 text-[11px] text-[#aeaeb2]">{(n.text ?? "").length} 字</div>
                   </div>
@@ -1378,7 +1458,7 @@ export function CanvasBoard({
 
       {/* 用户 2026-11-11 (画布小地图): the whole board in the corner; click or drag to move there. */}
       {/* 用户 2026-11-11: only when zoomed far out, looking for things. */}
-      {prefs?.map !== false && nodes.length > 0 && view.s < 0.6 && boxRef.current && (() => {
+      {prefs?.map !== false && nodes.length > 0 && view.s < 0.6 && (navOn || mapHold) && boxRef.current && (() => {
         const W = boxRef.current.clientWidth, H = boxRef.current.clientHeight;
         const vx0 = -view.x / view.s, vy0 = -view.y / view.s, vx1 = vx0 + W / view.s, vy1 = vy0 + H / view.s;
         const x0 = Math.min(vx0, ...nodes.map((n) => n.x)), y0 = Math.min(vy0, ...nodes.map((n) => n.y));
@@ -1401,6 +1481,8 @@ export function CanvasBoard({
               goTo(e);
             }}
             onPointerMove={(e) => e.buttons === 1 && goTo(e)}
+            onPointerEnter={() => setMapHold(true)}
+            onPointerLeave={() => { setMapHold(false); nav(); }}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           >
             {nodes.map((n) => (
