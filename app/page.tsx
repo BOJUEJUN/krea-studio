@@ -2472,16 +2472,12 @@ export default function StudioPage() {
           : (b.durationMs || 0) - (a.durationMs || 0)
     );
   }
-  // 2026-11-05 (用户: 历史上下页怎么设计): no pages — more pictures load as you scroll down.
-  const HIST_PAGE_SIZE = 30;
-  // 用户 2026-11-11 (手机历史不能无限往下拉): phones get real pages of 12 with 上一页 / 下一页.
-  const PHONE_PAGE = 12;
+  // 用户 2026-11-11 (手机历史不能无限往下拉; 电脑端也要上下页): real pages with 上一页 / 下一页 —
+  // 12 per page on phones, 24 on desktop.
+  const PHONE_PAGE = phone ? 12 : 24;
   const phonePages = Math.max(1, Math.ceil(visibleHistory.length / PHONE_PAGE));
   const phonePage = Math.min(histPage, phonePages - 1);
-  const pageItems = phone
-    ? visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE)
-    : visibleHistory.slice(0, (histPage + 1) * HIST_PAGE_SIZE);
-  const histHasMore = !phone && pageItems.length < visibleHistory.length;
+  const pageItems = visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE);
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
   const pickModel = (id: ModelId) => {
@@ -3823,10 +3819,6 @@ export default function StudioPage() {
 
           <div
             className="min-h-0 flex-1 overflow-y-auto p-2"
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              if (histHasMore && el.scrollTop + el.clientHeight > el.scrollHeight - 500) setHistPage((p) => p + 1);
-            }}
           >
             {visibleHistory.length === 0 ? (
               <p className="px-2 py-8 text-center text-[12px] text-hint">
@@ -4025,13 +4017,8 @@ export default function StudioPage() {
                     </div>
                   );
                 })()}
-                {histHasMore && (
-                  <button type="button" onClick={() => setHistPage((p) => p + 1)} className="mx-auto mt-1 block rounded-full px-3 py-1 text-[11px] text-muted hover:bg-edge/[0.04]">
-                    加载更多
-                  </button>
-                )}
-                {phone && phonePages > 1 && (
-                  <div className="mt-3 flex items-center justify-between gap-2 px-1 pb-1">
+                {phonePages > 1 && (
+                  <div className={`mt-3 flex items-center gap-2 px-1 pb-1 ${phone ? "justify-between" : "justify-center"}`}>
                     {(["上一页", "下一页"] as const).map((label, i) => {
                       const to = phonePage + (i ? 1 : -1);
                       const off = to < 0 || to >= phonePages;
@@ -4042,9 +4029,11 @@ export default function StudioPage() {
                           disabled={off}
                           onClick={(e) => {
                             setHistPage(to);
-                            (e.currentTarget.closest("aside, section") as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                            const box = e.currentTarget.closest(".overflow-y-auto") as HTMLElement | null;
+                            if (phone) (e.currentTarget.closest("aside, section") as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                            else box?.scrollTo({ top: 0 });
                           }}
-                          className="h-11 min-w-[88px] rounded-full bg-edge/[0.05] px-4 text-[14px] font-medium text-ink active:scale-[0.97] disabled:opacity-35"
+                          className={`rounded-full bg-edge/[0.05] font-medium text-ink active:scale-[0.97] disabled:opacity-35 ${phone ? "h-11 min-w-[88px] px-4 text-[14px]" : "h-8 min-w-[72px] px-3 text-[12px] hover:bg-edge/[0.09]"}`}
                         >
                           {label}
                         </button>
