@@ -829,7 +829,26 @@ export function CanvasBoard({
     setSel(new Set());
   }, [sel, commit]);
   const duplicateSel = useCallback(() => {
-    placeClip(selectionClip());
+    const clip = selectionClip();
+    const selected = new Set(clip.selected);
+    const group = clip.nodes.filter((n) => selected.has(n.id));
+    const board = boxRef.current;
+    if (!group.length || !board) return;
+    const left = Math.min(...group.map((n) => n.x)), top = Math.min(...group.map((n) => n.y));
+    const width = Math.max(...group.map((n) => n.x + n.w)) - left;
+    const height = Math.max(...group.map((n) => n.y + n.h)) - top;
+    const list = nodesRef.current, v = viewRef.current;
+    const candidates = [
+      { x: left + width + GAP, y: top }, { x: left - width - GAP, y: top },
+      { x: left, y: top + height + GAP }, { x: left, y: top - height - GAP },
+    ].filter(({ x, y }) => !list.some((n) => n.x < x + width && n.x + n.w > x && n.y < y + height && n.y + n.h > y));
+    const visible = ({ x, y }: { x: number; y: number }) =>
+      x * v.s + v.x >= 0 && y * v.s + v.y >= 0 &&
+      (x + width) * v.s + v.x <= board.clientWidth && (y + height) * v.s + v.y <= board.clientHeight;
+    const target = candidates.find(visible) ?? candidates[0] ?? { x: Math.max(...list.map((n) => n.x + n.w)) + GAP, y: top };
+    const center = { x: target.x + width / 2, y: target.y + height / 2 };
+    placeClip(clip, center);
+    if (!visible(target)) setView({ ...v, x: board.clientWidth / 2 - center.x * v.s, y: board.clientHeight / 2 - center.y * v.s });
   }, [selectionClip, placeClip]);
   const copySel = async () => {
     const clip = selectionClip();
@@ -1504,7 +1523,7 @@ export function CanvasBoard({
             </>
           )}
           {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
-          <button type="button" aria-label="复制" data-tip="复制节点" className={ibtn} onClick={copySel}>
+          <button type="button" aria-label="复制" data-tip="复制到旁边" className={ibtn} onClick={duplicateSel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
           {onShare && <button type="button" aria-label="分享选中节点" data-tip="分享选中节点（复制口令）" className={ibtn} onClick={() => onShare(true)}>
@@ -1576,7 +1595,7 @@ export function CanvasBoard({
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
                 <div className="my-1 h-px bg-edge/[0.07]" />
                 <button type="button" className={item} onClick={go(copySel)}>复制节点</button>
-                <button type="button" className={item} onClick={go(duplicateSel)}>原地复制一份</button>
+                <button type="button" className={item} onClick={go(duplicateSel)}>复制到旁边</button>
                 {onShare && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的{selected.length > 1 ? ` ${selected.length} 个` : "这张"}…</button>}
                 <button type="button" className={`${item} text-danger`} onClick={go(removeSel)}>移出画布</button>
               </>
