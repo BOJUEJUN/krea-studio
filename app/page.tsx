@@ -2541,7 +2541,7 @@ export default function StudioPage() {
       />
 
       {user && restored && (
-        <nav aria-label="工作室工具" className="fixed left-5 top-5 md:top-1/2 md:-translate-y-1/2 z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
+        <nav aria-label="工作室工具" className={`${phone ? "relative z-50 ml-3 mt-3 self-start" : "fixed left-5 top-5 md:top-1/2 md:-translate-y-1/2 z-50"} flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl`}>
           <div ref={userMenuRef} className="relative">
             <button
               type="button"
@@ -2771,7 +2771,7 @@ export default function StudioPage() {
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-accent/25 border-t-accent" />
         </div>
       )}
-      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
+      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "p-0" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
@@ -3716,7 +3716,7 @@ export default function StudioPage() {
             >
               <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" /></svg>
             </button>
-            <button
+            {!phone && <button
               type="button"
               onClick={() => toggleHistory(true)}
               data-tip="收起历史" data-tip-end=""
@@ -3724,7 +3724,7 @@ export default function StudioPage() {
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-secondary transition hover:bg-edge/[0.05]"
             >
               <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M13 6l6 6-6 6M5 6l6 6-6 6" /></svg>
-            </button>
+            </button>}
           </div>
           {histToolsOpen && (
           // 2026-11-05 (用户: 筛选点开后要极简): one search line and one row of chips (state, model, order).
