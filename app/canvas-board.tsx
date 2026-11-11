@@ -833,8 +833,11 @@ export function CanvasBoard({
   const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
   urlOfRef.current = urlOf;
   // A selected empty frame stands for what is linked into it: its pictures are the references, its text the description.
-  const expandSel = (n: Node): Node[] => (n.kind === "gen" && !n.gid ? (n.from ?? []).map((id) => nodes.find((m) => m.id === id)).filter((m): m is Node => !!m) : [n]);
-  const selFlat = nodes.filter((n) => sel.has(n.id)).flatMap(expandSel);
+  // 用户 2026-11-11 (连上了就要显示加上的内容): a picture brings what is linked into it — itself is 图1, linked
+  // pictures 图2, 图3…, linked text joins the description — all handed to the model together.
+  const inputsOf = (n: Node): Node[] => (n.from ?? []).map((id) => nodes.find((m) => m.id === id)).filter((m): m is Node => !!m);
+  const expandSel = (n: Node): Node[] => (n.kind === "gen" && !n.gid ? inputsOf(n) : n.kind === "text" ? [n] : [n, ...inputsOf(n)]);
+  const selFlat = [...new Map(nodes.filter((n) => sel.has(n.id)).flatMap(expandSel).map((n) => [n.id, n])).values()];
   const selKey = selFlat.map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
   onSelRef.current = onSelectionChange;
@@ -1054,7 +1057,8 @@ export function CanvasBoard({
           })()}
         </svg>
         {prefs?.lines !== false && nodes.flatMap((n) => {
-          let pic = 0;
+          // A picture is 图1 itself, so what is linked into it counts from 图2.
+          let pic = n.kind === "gen" && !n.gid ? 0 : 1;
           return (n.from ?? []).map((fid) => {
             const f = byId.get(fid);
             if (!f) return null;
