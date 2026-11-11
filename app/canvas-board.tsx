@@ -94,6 +94,8 @@ export function CanvasBoard({
   onScale,
   onCompose,
   onOpenHistory,
+  onCompare,
+  prefs,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
@@ -107,6 +109,10 @@ export function CanvasBoard({
   /** Right-click menu on empty space: open the compose box / the history list. */
   onCompose?: () => void;
   onOpenHistory?: () => void;
+  /** 对比 (用户 2026-11-11): before may be null, then the page uses the picture's saved reference (gid). */
+  onCompare?: (before: string | null, after: string, gid: string | null) => void;
+  /** 更多设置: snapping, the dot grid and the source lines can be turned off. */
+  prefs?: { snap: boolean; grid: boolean; lines: boolean };
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
@@ -139,6 +145,8 @@ export function CanvasBoard({
   const fileRef = useRef<HTMLInputElement>(null);
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
+  const prefsRef = useRef(prefs ?? { snap: true, grid: true, lines: true });
+  prefsRef.current = prefs ?? { snap: true, grid: true, lines: true };
   useEffect(() => {
     if (!ctx) return;
     const down = (e: PointerEvent) => {
@@ -510,6 +518,13 @@ export function CanvasBoard({
       else next.add(n.id);
     } else if (!sel.has(n.id)) next = new Set([n.id]);
     setSel(next);
+    // 用户 2026-11-11 (置顶没必要): the picture you touch comes to the top by itself.
+    setNodesRaw((list) => {
+      const top = list.filter((m) => next.has(m.id));
+      const rest = list.filter((m) => !next.has(m.id));
+      const same = top.every((m, i) => list[list.length - top.length + i]?.id === m.id);
+      return same ? list : [...rest, ...top];
+    });
     const start = new Map(nodesRef.current.filter((m) => next.has(m.id)).map((m) => [m.id, { x: m.x, y: m.y }]));
     drag.current = { kind: "move", sx: e.clientX, sy: e.clientY, start, before: nodesRef.current, moved: false };
   };
@@ -543,7 +558,7 @@ export function CanvasBoard({
       const others = nodesRef.current.filter((n) => !d.start.has(n.id));
       const v: number[] = [];
       const h: number[] = [];
-      if (moving.length && others.length && !e.altKey) {
+      if (moving.length && others.length && !e.altKey && prefsRef.current.snap) {
         const bx0 = Math.min(...moving.map((n) => d.start.get(n.id)!.x)) + dx;
         const by0 = Math.min(...moving.map((n) => d.start.get(n.id)!.y)) + dy;
         const bx1 = Math.max(...moving.map((n) => d.start.get(n.id)!.x + n.w)) + dx;
@@ -593,6 +608,22 @@ export function CanvasBoard({
   };
 
   // ---- keyboard
+  /** Two pictures: left one is "before". One picture: the picture it was made from, else its saved reference. */
+  const compareSel = () => {
+    if (!onCompare) return;
+    const list = nodesRef.current.filter((n) => sel.has(n.id));
+    if (list.length === 2) {
+      const [a, b] = [...list].sort((p, q) => p.x - q.x);
+      const ua = urlOf(a), ub = urlOf(b);
+      if (ua && ub) onCompare(ua, ub, null);
+      return;
+    }
+    const n = list[0];
+    const u = n && urlOf(n);
+    if (!u) return;
+    const src = n.from?.map((id) => nodesRef.current.find((m) => m.id === id)).find((m) => m && urlOf(m));
+    onCompare(src ? urlOf(src)! : null, u, n.gid ?? null);
+  };
   const removeSel = useCallback(() => {
     if (!sel.size) return;
     commit((n) => n.filter((m) => !sel.has(m.id)));
@@ -603,9 +634,6 @@ export function CanvasBoard({
     if (!copies.length) return;
     commit((n) => [...n, ...copies]);
     setSel(new Set(copies.map((c) => c.id)));
-  }, [sel, commit]);
-  const toFront = useCallback(() => {
-    commit((n) => [...n.filter((m) => !sel.has(m.id)), ...n.filter((m) => sel.has(m.id))]);
   }, [sel, commit]);
   useEffect(() => {
     const typing = (t: EventTarget | null) => {
@@ -755,7 +783,7 @@ export function CanvasBoard({
       ref={boxRef}
       className={`relative h-full w-full touch-none select-none overflow-hidden bg-[#f6f6f8] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
       style={{
-        backgroundImage: "radial-gradient(circle, rgba(0,0,0,0.13) 1px, transparent 1.2px)",
+        backgroundImage: prefs?.grid === false ? "none" : "radial-gradient(circle, rgba(0,0,0,0.13) 1px, transparent 1.2px)",
         backgroundSize: `${grid}px ${grid}px`,
         backgroundPosition: `${view.x}px ${view.y}px`,
       }}
@@ -788,7 +816,7 @@ export function CanvasBoard({
       <div className="absolute left-0 top-0 origin-top-left will-change-transform" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}>
         {/* Lines from each source picture to what was made from it. */}
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
-          {nodes.flatMap((n) =>
+          {prefs?.lines !== false && nodes.flatMap((n) =>
             (n.from ?? []).map((fid) => {
               const f = byId.get(fid);
               if (!f) return null;
@@ -899,6 +927,11 @@ export function CanvasBoard({
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
+          {onCompare && (selected.length === 2 || (selected.length === 1 && (selected[0].from?.length || selected[0].gid))) && (
+            <button type="button" aria-label="对比" data-tip={selected.length === 2 ? "对比这两张" : "和原图对比"} className={ibtn} onClick={compareSel}>
+              <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M10 2.5v15" /><path d="M5.5 10h2M12.5 10h2" /></svg>
+            </button>
+          )}
           {selected.length === 1 && selected[0].gid && onAgain && (
             <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!)}>
               <svg viewBox="0 0 20 20" className={ico}><path d="M15.5 8A6 6 0 1 0 16 11" /><path d="M16 4v4h-4" /></svg>
@@ -920,9 +953,6 @@ export function CanvasBoard({
             </>
           )}
           {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-black/10" />}
-          <button type="button" aria-label="置顶" data-tip="置顶" className={ibtn} onClick={toFront}>
-            <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 4.5V4a.5.5 0 0 0-.5-.5H4a.5.5 0 0 0-.5.5v8.5a.5.5 0 0 0 .5.5h.5" /></svg>
-          </button>
           <button type="button" aria-label="复制" data-tip="复制一份" className={ibtn} onClick={duplicateSel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
@@ -949,12 +979,12 @@ export function CanvasBoard({
           >
             {one ? (
               <>
+                {onCompare && (selected.length === 2 || one.from?.length || one.gid) && <button type="button" className={item} onClick={go(compareSel)}>{selected.length === 2 ? "对比这两张" : "和原图对比"}</button>}
                 {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!))}>再来一张</button>}
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
                 <div className="my-1 h-px bg-black/[0.07]" />
-                <button type="button" className={item} onClick={go(toFront)}>置顶</button>
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制一份</button>
                 <button type="button" className={`${item} text-[#d70015]`} onClick={go(removeSel)}>移出画布</button>
               </>

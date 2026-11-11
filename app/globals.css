@@ -652,3 +652,16 @@ button:not(:disabled):active,
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
 }
+
+/* 2026-11-11 (用户: 深浅色调节): dark look. The page is inverted and pictures are inverted back, so every
+   light-only colour in the app follows without a second palette. */
+html.theme-dark {
+  filter: invert(1) hue-rotate(180deg);
+  background: #fff;
+}
+html.theme-dark img,
+html.theme-dark video,
+html.theme-dark picture,
+html.theme-dark [data-keep-color] {
+  filter: invert(1) hue-rotate(180deg);
+}

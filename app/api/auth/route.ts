@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { NeedInvite, SESSION_COOKIE, enterByName, isOwner, makeSession, sessionUser } from "@/lib/auth";
+import { NeedInvite, SESSION_COOKIE, changePassword, isOwner, loginWithPassword, makeSession, registerWithInvite, sessionUser } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ function tooMany(ip: string) {
   return list.length >= 8;
 }
 
-/** { action: "enter" | "logout", name, invite } */
+/** { action: "login" | "register" | "change" | "logout", name, password, invite, oldPassword, newPassword } */
 export async function POST(req: NextRequest) {
   const ip = ipOf(req);
   if (tooMany(ip)) return NextResponse.json({ ok: false, error: "试错太多次了，10 分钟后再试" }, { status: 429 });
@@ -36,13 +36,28 @@ export async function POST(req: NextRequest) {
       return res;
     }
     const name = String(body.name || "").trim();
-    // 2026-11-06 (安全): only 用户名 + 邀请码 sign-in is open. The old password actions let an account without a
-    // password be taken by anyone (no invite needed), so they are closed.
-    if (action !== "enter") return NextResponse.json({ ok: false, error: "不支持的操作" }, { status: 400 });
-    const user = await enterByName(name, String(body.invite ?? ""));
-    if (!user) {
-      fails.get(ip)?.push(Date.now());
-      return NextResponse.json({ ok: false, error: "用户名或密码不对" }, { status: 401 });
+    const password = String(body.password ?? "");
+    // 2026-11-11 (用户: 账号密码邀请码，安全一些): 登录 = 用户名 + 密码; 注册 = 用户名 + 密码 + 邀请码.
+    if (action === "change") {
+      const me = sessionUser(req);
+      if (!me) return NextResponse.json({ ok: false, error: "请先登录" }, { status: 401 });
+      await changePassword(me, String(body.oldPassword ?? ""), String(body.newPassword ?? ""));
+      return NextResponse.json({ ok: true });
+    }
+    // Per-name limit too, so one account is not guessed from many addresses.
+    const nameKey = "n:" + name.toLowerCase();
+    if (tooMany(nameKey)) return NextResponse.json({ ok: false, error: "这个账号试错太多次了，10 分钟后再试" }, { status: 429 });
+    let user;
+    try {
+      if (action === "login") user = await loginWithPassword(name, password);
+      else if (action === "register") user = await registerWithInvite(name, password, String(body.invite ?? ""));
+      else return NextResponse.json({ ok: false, error: "请刷新页面后再登录" }, { status: 400 });
+    } catch (e) {
+      if (!(e instanceof NeedInvite && /还没设密码/.test((e as Error).message))) {
+        if (!fails.has(nameKey)) fails.set(nameKey, []);
+        fails.get(nameKey)!.push(Date.now());
+      }
+      throw e;
     }
     const session = makeSession(user.name);
     const res = NextResponse.json({ ok: true, user: user.name });
@@ -55,7 +70,8 @@ export async function POST(req: NextRequest) {
     });
     return res;
   } catch (e: any) {
-    fails.get(ip)?.push(Date.now());
+    if (!fails.has(ip)) fails.set(ip, []);
+    fails.get(ip)!.push(Date.now());
     return NextResponse.json({ ok: false, error: e?.message || "登录失败", needInvite: e instanceof NeedInvite }, { status: 400 });
   }
 }

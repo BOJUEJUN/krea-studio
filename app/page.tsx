@@ -510,6 +510,58 @@ export default function StudioPage() {
   const canvasApi = useRef<BoardApi | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [zoomMenu, setZoomMenu] = useState(false);
+  const [moreMenu, setMoreMenu] = useState(false);
+  useEffect(() => {
+    if (!moreMenu) return;
+    const close = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.("[data-more-menu]")) setMoreMenu(false);
+    };
+    window.addEventListener("pointerdown", close, true);
+    return () => window.removeEventListener("pointerdown", close, true);
+  }, [moreMenu]);
+  // 用户 2026-11-11 (深浅色调节): 浅色 / 深色 / 跟随系统, remembered in this browser.
+  const [theme, setTheme] = useState<"light" | "dark" | "auto">("light");
+  useEffect(() => {
+    try {
+      const t = localStorage.getItem("ais-theme");
+      if (t === "dark" || t === "auto" || t === "light") setTheme(t);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => document.documentElement.classList.toggle("theme-dark", theme === "dark" || (theme === "auto" && mq.matches));
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [theme]);
+  const chooseTheme = (t: "light" | "dark" | "auto") => {
+    setTheme(t);
+    try {
+      localStorage.setItem("ais-theme", t);
+    } catch {}
+  };
+  const [boardPrefs, setBoardPrefs] = useState({ snap: true, grid: true, lines: true });
+  useEffect(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem("ais-board-prefs") || "null");
+      if (v) setBoardPrefs((p) => ({ ...p, ...v }));
+    } catch {}
+  }, []);
+  const setBoardPref = (k: "snap" | "grid" | "lines", v: boolean) =>
+    setBoardPrefs((p) => {
+      const next = { ...p, [k]: v };
+      try {
+        localStorage.setItem("ais-board-prefs", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  const [boardCompare, setBoardCompare] = useState<{ before: string; after: string } | null>(null);
+  useEffect(() => {
+    if (!boardCompare) return;
+    const key = (e: KeyboardEvent) => e.key === "Escape" && setBoardCompare(null);
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [boardCompare]);
   useEffect(() => {
     if (!zoomMenu) return;
     const close = (e: PointerEvent) => {
@@ -546,6 +598,46 @@ export default function StudioPage() {
   const [openPanel, setOpenPanel] = useState<string | null>(null);
   const [panelLeft, setPanelLeft] = useState(0);
   const chipRowRef = useRef<HTMLDivElement>(null);
+  // 用户 2026-11-11 (参数不要两排): the settings row stays on one line and shrinks to fit a narrow box.
+  useEffect(() => {
+    const row = chipRowRef.current;
+    const box = row?.parentElement;
+    if (!row || !box) return;
+    let raf = 0;
+    let busy = false;
+    const fit = () => {
+      if (busy) return;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        busy = true;
+        const was = row.style.zoom;
+        row.style.zoom = "1";
+        const room = row.clientWidth;
+        const natural = row.scrollWidth;
+        if (!room) {
+          row.style.zoom = was;
+          busy = false;
+          return;
+        }
+        const z = Math.max(0.7, Math.min(1, room / Math.max(1, natural)));
+        row.style.zoom = z < 0.995 ? String(z) : "";
+        if (row.style.zoom !== was) {
+          // ignore the resize our own change causes
+          requestAnimationFrame(() => (busy = false));
+        } else busy = false;
+      });
+    };
+    const ro = new ResizeObserver(fit);
+    ro.observe(box);
+    const mo = new MutationObserver(fit);
+    mo.observe(row, { childList: true, subtree: true, characterData: true });
+    fit();
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, []);
   // A setting's menu closes when you click anywhere else.
   useEffect(() => {
     if (!openPanel) return;
@@ -1777,8 +1869,39 @@ export default function StudioPage() {
   }, [canvasOn]);
   // Selected pictures become the references (in canvas mode only).
   const selTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
+  // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
+  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel };
+  const composeSnapRef = useRef(composeSnap);
+  composeSnapRef.current = composeSnap;
+  const composeMem = useRef(new Map<string, typeof composeSnap>());
+  const composeKey = useRef("");
+  const switchCompose = (key: string) => {
+    if (key === composeKey.current) return;
+    composeMem.current.set(composeKey.current, composeSnapRef.current);
+    composeKey.current = key;
+    const cur = composeSnapRef.current;
+    const v = composeMem.current.get(key) ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
+    setPrompt(v.prompt);
+    setPolishUndo(null);
+    if (v.model !== cur.model && findModel(v.model)) setModel(v.model);
+    setDenoise(v.denoise);
+    setQuality(v.quality);
+    setRes(v.res);
+    setSeedText(v.seedText);
+    setNegative(v.negative);
+    setLora(v.lora);
+    setWidth(v.width);
+    setHeight(v.height);
+    setWidthText(v.widthText);
+    setHeightText(v.heightText);
+    setPolishLevel(v.polishLevel);
+  };
+  const switchComposeRef = useRef(switchCompose);
+  switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
     (urls: string[]) => {
+      switchComposeRef.current(urls.join("|"));
       setCanvasSel(urls);
       setComposeOpen(false); // clicking a picture (or empty space) closes the free-standing box
       if (selTimer.current) clearTimeout(selTimer.current);
@@ -2016,6 +2139,27 @@ export default function StudioPage() {
               <button
                 type="button"
                 onClick={async () => {
+                  // 用户 2026-11-11 (账号密码，安全一些): change the password here.
+                  setUserMenu(false);
+                  const oldPassword = window.prompt("原密码（还没设过密码就留空）") ?? null;
+                  if (oldPassword === null) return;
+                  const newPassword = window.prompt("新密码（至少 6 位）") ?? "";
+                  if (!newPassword) return;
+                  if (window.prompt("再输一次新密码") !== newPassword) return flash("两次输入的新密码不一样");
+                  const d = await fetchJson("/api/auth", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action: "change", oldPassword, newPassword }),
+                  }).catch((e: any) => ({ ok: false, error: e?.message }));
+                  flash(d?.ok ? "密码已修改" : d?.error || "修改失败");
+                }}
+                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]"
+              >
+                修改密码
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
                   await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) });
                   try {
                     localStorage.removeItem(HIST_CACHE_KEY); // the next account must not see this one's pictures
@@ -2138,6 +2282,54 @@ export default function StudioPage() {
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7.5V12l3 2" /></svg>
           </button>
+          {/* 用户 2026-11-11: 更多设置 (深浅色 and board options) at the end of the rail. */}
+          <div className="relative" data-more-menu="">
+            <button
+              type="button"
+              data-tip={moreMenu ? undefined : "更多设置"}
+              data-tip-start=""
+              aria-label="更多设置"
+              onClick={() => setMoreMenu((v) => !v)}
+              className={`flex h-8 w-8 items-center justify-center rounded-full transition ${moreMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
+            </button>
+            {moreMenu && (
+              <div className="animate-pop-in absolute -top-2 left-11 w-60 rounded-2xl bg-white p-2 text-[13px] text-[#1d1d1f] shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
+                <div className="px-1.5 pb-1 text-[12px] font-semibold text-[#86868b]">外观</div>
+                <div className="apple-seg mb-2 flex">
+                  {([["light", "浅色"], ["dark", "深色"], ["auto", "跟随系统"]] as const).map(([k, label]) => (
+                    <button key={k} type="button" data-active={theme === k} onClick={() => chooseTheme(k)} className="apple-seg-item flex-1 py-1 text-[12px] font-medium text-[#6e6e73]">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {canvasOn && (
+                  <>
+                    <div className="px-1.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">画布</div>
+                    {([
+                      ["snap", "移动时自动对齐", boardPrefs.snap],
+                      ["grid", "显示网格点", boardPrefs.grid],
+                      ["lines", "显示来源连线", boardPrefs.lines],
+                    ] as const).map(([k, label, on]) => (
+                      <button key={k} type="button" onClick={() => setBoardPref(k, !on)} className="flex w-full items-center justify-between rounded-lg px-1.5 py-1.5 hover:bg-black/[0.04]">
+                        <span>{label}</span>
+                        <span className={`relative h-5 w-9 rounded-full transition ${on ? "bg-[#34c759]" : "bg-black/15"}`}>
+                          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
+                        </span>
+                      </button>
+                    ))}
+                    <div className="mt-2 rounded-xl bg-[#f5f5f7] px-2.5 py-2 text-[11px] leading-[18px] text-[#6e6e73]">
+                      滚轮 缩放 · 按住滚轮 拖动画布<br />
+                      左键 选择 / 框选 · 右键 菜单<br />
+                      ⌘Z 撤销 · ⌘A 全选 · Delete 移出<br />
+                      Shift+1 显示全部 · ⌘V 粘贴图片 · Alt 拖动不对齐
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
       <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${canvasOn ? "p-0" : "p-2"}`}>
@@ -2187,6 +2379,12 @@ export default function StudioPage() {
                   onScale={setCanvasScale}
                   onCompose={() => setComposeOpen(true)}
                   onOpenHistory={() => toggleHistory(false)}
+                  prefs={boardPrefs}
+                  onCompare={(before, after, gid) => {
+                    const ref = before ?? (gid ? gallery.find((x) => x.id === gid)?.refUrl : null);
+                    if (!ref) return flash("这张没有原图可以对比");
+                    setBoardCompare({ before: ref, after });
+                  }}
                 />
               </div>
             )}
@@ -2623,7 +2821,7 @@ export default function StudioPage() {
                     </div>
                   </div>
                 )}
-                <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
                   {canvasOn && !canvasSel.length && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]">×</button>
                   )}
@@ -2882,6 +3080,24 @@ export default function StudioPage() {
                 {error}
               </div>
             )}
+              {boardCompare && (
+                // 用户 2026-11-11: 对比 on the board, full screen, same four ways as the single-picture view.
+                <div className="animate-pop-in fixed inset-0 z-[96] flex flex-col bg-black/80 backdrop-blur-sm" onClick={() => setBoardCompare(null)}>
+                  <div className="flex shrink-0 items-center justify-center gap-2 p-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="apple-seg flex bg-white/90">
+                      {COMPARE_MODES.map((m) => (
+                        <button key={m.key} type="button" data-active={compareMode === m.key} onClick={() => setCompareMode(m.key)} className="apple-seg-item px-3 py-1 text-[12px] font-medium text-[#6e6e73]">
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                    <button type="button" aria-label="关闭对比" onClick={() => setBoardCompare(null)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-[16px] text-[#1d1d1f] hover:bg-white">×</button>
+                  </div>
+                  <div className="min-h-0 flex-1 p-4 pt-0" onClick={(e) => e.stopPropagation()}>
+                    <CompareView key={`${boardCompare.before}-${boardCompare.after}-${compareMode}`} before={fullOf(boardCompare.before)} after={fullOf(boardCompare.after)} mode={compareMode} />
+                  </div>
+                </div>
+              )}
               {viewer && (() => {
                 // Several pictures from this run: ← → move between them.
                 const done = batch.map((id) => gallery.find((x) => x.id === id)).filter((g): g is GalleryItem => !!g?.url);

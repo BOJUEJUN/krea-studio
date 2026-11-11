@@ -172,6 +172,69 @@ export async function signIn(rawName: string, password: string, invite = ""): Pr
   return user;
 }
 
+/**
+ * 2026-11-11 (用户: 加上用户账号密码邀请码系统，安全一些): 用户名 + 密码 to sign in; a new account needs the invite
+ * code. Accounts made earlier with only a name set their password once through 注册 with the invite code (the owner
+ * with the owner code), so knowing someone's name is no longer enough.
+ */
+function passwordOk(user: UserRecord, password: string): boolean {
+  if (!user.hash || !user.salt) return false;
+  const a = Buffer.from(hashPassword(password, user.salt), "hex");
+  const b = Buffer.from(user.hash, "hex");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+function checkPasswordRule(password: string) {
+  if (password.length < 6) throw new Error("密码至少 6 位");
+  if (password.length > 64) throw new Error("密码太长了");
+}
+
+export async function loginWithPassword(rawName: string, password: string): Promise<UserRecord> {
+  const name = rawName.trim();
+  const file = await readUsersFresh();
+  const user = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
+  if (user && !user.hash) throw new NeedInvite("这个账号还没设密码：点「注册」，用邀请码设一个密码");
+  if (!user || !passwordOk(user, password)) throw new Error("用户名或密码不对");
+  if (user.disabled) throw new Error("这个账号已被停用");
+  return user;
+}
+
+export async function registerWithInvite(rawName: string, password: string, invite: string): Promise<UserRecord> {
+  const name = rawName.trim();
+  if (!validName(name)) throw new Error("用户名 2–20 个字，只能用字母、数字、中文、_ . -");
+  checkPasswordRule(password);
+  const file = await readUsersFresh(); // writes start from the stored list
+  const found = file.users.find((u) => u.name.toLowerCase() === name.toLowerCase());
+  if (found?.hash) throw new Error("这个用户名已经有人用了");
+  const typed = invite.trim().toUpperCase();
+  const code = found?.owner ? (process.env.OWNER_CODE || "").trim().toUpperCase() : (await inviteCode()).trim().toUpperCase();
+  if (!code || !safeEqual(typed, code)) throw new NeedInvite(typed ? "邀请码不对" : "请填邀请码");
+  if (found?.disabled) throw new Error("这个账号已被停用");
+  const salt = randomBytes(16).toString("hex");
+  let user = found;
+  if (user) {
+    user.salt = salt;
+    user.hash = hashPassword(password, salt);
+  } else {
+    user = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
+    file.users.push(user);
+  }
+  await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
+  return user;
+}
+
+export async function changePassword(name: string, oldPassword: string, newPassword: string): Promise<void> {
+  checkPasswordRule(newPassword);
+  const file = await readUsersFresh();
+  const user = file.users.find((u) => u.name === name);
+  if (!user) throw new Error("账号不存在");
+  if (user.hash && !passwordOk(user, oldPassword)) throw new Error("原密码不对");
+  user.salt = randomBytes(16).toString("hex");
+  user.hash = hashPassword(newPassword, user.salt);
+  await storePut("users.json", JSON.stringify(file), "application/json");
+  usersCache = { at: Date.now(), data: structuredClone(file) };
+}
+
 /** Accounts (no password data) for the owner's admin page. */
 export async function listUsers(): Promise<{ name: string; owner: boolean; disabled: boolean; createdAt: number }[]> {
   const file = await readUsers();

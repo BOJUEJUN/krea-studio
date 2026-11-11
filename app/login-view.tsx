@@ -7,9 +7,11 @@ import { MODELS } from "@/lib/models";
 const COVERS = MODELS.map((m) => m.cover).filter((c) => c.endsWith(".jpg"));
 
 
-/** 2026-11-05: a plain 账号 + 密码 sign-in; the first sign-in with a new 账号 creates it. */
+/** 2026-11-11 (用户: 账号密码邀请码系统): 登录 with 用户名 + 密码; 注册 (or first password for an old account) adds the invite code. */
 export function LoginView({ onDone }: { onDone: (user: string) => void }) {
+  const [tab, setTab] = useState<"login" | "register">("login");
   const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
   const [invite, setInvite] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,10 +24,13 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "enter", name, invite }),
+        body: JSON.stringify({ action: tab, name, password, invite: tab === "register" ? invite : "" }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!data?.ok) throw new Error(data?.error || "登录失败");
+      if (!data?.ok) {
+        if (data?.needInvite && tab === "login") setTab("register");
+        throw new Error(data?.error || "登录失败");
+      }
       onDone(data.user);
     } catch (err: any) {
       setError(err?.message || "登录失败");
@@ -48,7 +53,13 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
       </div>
       <form onSubmit={submit} className="animate-pop-in relative w-full max-w-[340px] rounded-[24px] bg-white/80 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.16)] ring-1 ring-white/60 backdrop-blur-2xl">
         <div className="mb-1 text-[22px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">AI Studio</div>
-        <div className="mb-5 text-[13px] text-[#86868b]">填用户名和邀请码进入</div>
+        <div className="apple-seg mb-4 mt-3 flex">
+          {([["login", "登录"], ["register", "注册"]] as const).map(([k, label]) => (
+            <button key={k} type="button" data-active={tab === k} onClick={() => { setTab(k); setError(null); }} className="apple-seg-item flex-1 py-1.5 text-[13px] font-medium text-[#6e6e73]">
+              {label}
+            </button>
+          ))}
+        </div>
         <input
           autoFocus
           className="w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] text-[#1d1d1f] outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
@@ -58,15 +69,28 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
           onChange={(e) => setName(e.target.value)}
         />
         <input
+          type="password"
           className="mt-2.5 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] text-[#1d1d1f] outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
-          placeholder="邀请码"
-          value={invite}
-          onChange={(e) => setInvite(e.target.value)}
+          placeholder={tab === "register" ? "设置密码（至少 6 位）" : "密码"}
+          autoComplete={tab === "register" ? "new-password" : "current-password"}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
         />
-        <div className="mt-2 text-[11px] text-[#aeaeb2]">同一个用户名看到的是同一份历史</div>
+        {tab === "register" && (
+          <input
+            className="mt-2.5 w-full rounded-xl border border-black/[0.08] bg-[#f5f5f7] px-3.5 py-2.5 text-[14px] text-[#1d1d1f] outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-white focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+            placeholder="邀请码"
+            autoComplete="off"
+            value={invite}
+            onChange={(e) => setInvite(e.target.value)}
+          />
+        )}
+        <div className="mt-2 text-[11px] leading-[16px] text-[#aeaeb2]">
+          {tab === "register" ? "新账号要邀请码。以前只用用户名进来的老账号，也在这里用邀请码设一次密码。" : "没有账号？点上面的「注册」"}
+        </div>
         {error && <div className="mt-3 rounded-xl bg-[#fff1f0] px-3 py-2 text-[12px] text-[#d70015]">{error}</div>}
-        <button type="submit" disabled={busy || !name.trim() || !invite.trim()} className="apple-btn-primary mt-4 flex w-full items-center justify-center py-3 text-[15px]">
-          {busy ? "请稍候…" : "进入"}
+        <button type="submit" disabled={busy || !name.trim() || password.length < (tab === "register" ? 6 : 1) || (tab === "register" && !invite.trim())} className="apple-btn-primary mt-4 flex w-full items-center justify-center py-3 text-[15px]">
+          {busy ? "请稍候…" : tab === "register" ? "注册并进入" : "登录"}
         </button>
       </form>
     </div>
