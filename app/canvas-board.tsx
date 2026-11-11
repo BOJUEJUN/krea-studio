@@ -40,7 +40,7 @@ type Node = {
   fit?: boolean; // adopt the picture's real shape once it loads
 };
 type View = { x: number; y: number; s: number };
-type Saved = { nodes: Node[]; view: View };
+type Saved = { nodes: Node[]; view: View; updatedAt?: number };
 
 const MIN_S = 0.1;
 const MAX_S = 4;
@@ -58,19 +58,21 @@ function load(key: string): Saved | null {
   return null;
 }
 
-/** A dropped file, shrunk so the board still fits in browser storage. */
-async function fileToDataUrl(file: File, max = 1024): Promise<{ url: string; w: number; h: number }> {
+/** A dropped file, shrunk to at most 2048 px; PNG / WebP stay PNG so see-through parts survive. */
+async function fileToDataUrl(file: File, max = 2048): Promise<{ url: string; w: number; h: number }> {
   const bmp = await createImageBitmap(file);
   const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement("canvas");
   c.width = Math.round(bmp.width * k);
   c.height = Math.round(bmp.height * k);
   c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
-  return { url: c.toDataURL("image/jpeg", 0.86), w: c.width, h: c.height };
+  const keepAlpha = /png|webp|gif/.test(file.type);
+  return { url: keepAlpha ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height };
 }
 
 export function CanvasBoard({
   storageKey,
+  cloudId,
   sources,
   pendingIds,
   loading,
@@ -111,6 +113,8 @@ export function CanvasBoard({
   /** The selected pictures' urls (in canvas mode they become the reference images). */
   onSelectionChange?: (urls: string[]) => void;
   storageKey: string;
+  /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
+  cloudId?: string;
   sources: Map<string, BoardSource>;
   pendingIds: string[];
   loading: boolean;
@@ -173,6 +177,10 @@ export function CanvasBoard({
   }, []);
 
   // ---- load / save
+  // The browser copy shows at once; the server copy wins when it is newer (another computer, a cleared browser).
+  const editedAt = useRef(0);
+  const remoteReady = useRef(!cloudId);
+  const lastPushed = useRef("");
   useEffect(() => {
     const saved = load(storageKey);
     if (saved) {
@@ -182,19 +190,116 @@ export function CanvasBoard({
       const r = boxRef.current?.getBoundingClientRect();
       setView({ x: (r?.width ?? 800) / 2, y: (r?.height ?? 600) / 2, s: 1 });
     }
+    editedAt.current = saved?.updatedAt ?? 0;
     loaded.current = true;
-  }, [storageKey]);
+    if (!cloudId) return;
+    remoteReady.current = false;
+    let alive = true;
+    fetch(`/api/canvas/${encodeURIComponent(cloudId)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive) return;
+        const b = d?.board;
+        if (b && Array.isArray(b.nodes) && (b.updatedAt ?? 0) > editedAt.current) {
+          setNodesRaw(b.nodes);
+          if (b.view) setView(b.view);
+          editedAt.current = b.updatedAt;
+          lastPushed.current = JSON.stringify({ nodes: b.nodes, view: b.view });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!alive) return;
+        remoteReady.current = true;
+        firstSave.current = true;
+        setSyncTick((n) => n + 1);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [storageKey, cloudId]);
+  const push = useCallback(
+    (keepalive = false) => {
+      if (!cloudId || !remoteReady.current) return;
+      const nodesNow = nodesRef.current.filter((n) => !n.src?.startsWith("data:"));
+      const body = JSON.stringify({ nodes: nodesNow, view: viewRef.current });
+      if (body === lastPushed.current) return;
+      lastPushed.current = body;
+      fetch(`/api/canvas/${encodeURIComponent(cloudId)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nodes: nodesNow, view: viewRef.current, updatedAt: editedAt.current || Date.now() }),
+        keepalive,
+      }).catch(() => {
+        lastPushed.current = "";
+      });
+    },
+    [cloudId]
+  );
+  const firstSave = useRef(true);
+  const [syncTick, setSyncTick] = useState(0);
   useEffect(() => {
     if (!loaded.current) return;
+    // The first run is the load itself, not an edit; nothing counts as an edit until the server copy has been
+    // checked, or an empty board opening in a fresh browser would look newer than the saved one and replace it.
+    if (!remoteReady.current) return;
+    if (firstSave.current) {
+      firstSave.current = false;
+    } else {
+      editedAt.current = Date.now();
+    }
     const t = setTimeout(() => {
       try {
-        localStorage.setItem(storageKey, JSON.stringify({ nodes, view }));
+        localStorage.setItem(storageKey, JSON.stringify({ nodes, view, updatedAt: editedAt.current }));
       } catch {
-        flash("画布太大，浏览器存不下了；删掉几张从电脑拖进来的图试试");
+        // Too big for the browser (pictures not uploaded yet); the server copy still keeps the board.
+        if (!cloudId) flash("画布太大，浏览器存不下了；删掉几张从电脑拖进来的图试试");
       }
     }, 400);
-    return () => clearTimeout(t);
-  }, [nodes, view, storageKey, flash]);
+    const t2 = setTimeout(() => push(), 1500);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(t2);
+    };
+  }, [nodes, view, storageKey, flash, push, cloudId, syncTick]);
+  useEffect(() => {
+    const flush = () => push(true);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      flush();
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [push]);
+
+  // Pictures from the computer go up to the server; the board then keeps only their link.
+  const uploading = useRef(new Set<string>());
+  const dataKey = nodes.filter((n) => n.src?.startsWith("data:")).map((n) => n.id).join(",");
+  useEffect(() => {
+    if (!cloudId || !dataKey) return;
+    for (const n of nodesRef.current) {
+      if (!n.src?.startsWith("data:") || uploading.current.has(n.id)) continue;
+      const id = n.id;
+      const src = n.src;
+      uploading.current.add(id);
+      (async () => {
+        try {
+          const blob = await (await fetch(src)).blob();
+          const fd = new FormData();
+          fd.append("image", blob, `canvas.${blob.type.includes("png") ? "png" : "jpg"}`);
+          const d = await (await fetch("/api/canvas/upload", { method: "POST", body: fd })).json();
+          if (!d?.ok || !d.url) throw new Error(d?.error || "上传失败");
+          const swap = (list: Node[]) => list.map((m) => (m.src === src ? { ...m, src: d.url } : m));
+          setNodesRaw(swap);
+          undo.current = undo.current.map(swap);
+          redo.current = redo.current.map(swap);
+        } catch {
+          // Stays in this browser; tried again next time the board opens.
+        } finally {
+          uploading.current.delete(id);
+        }
+      })();
+    }
+  }, [dataKey, cloudId]);
 
   // ---- coordinates
   const toWorld = useCallback((cx: number, cy: number) => {

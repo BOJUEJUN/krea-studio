@@ -1679,7 +1679,42 @@ export default function StudioPage() {
       const cur = localStorage.getItem(`ais-canvas-current:${user}`);
       if (cur) setBoardId(cur);
     } catch {}
+    // 用户 2026-11-11 (云端保存): the board list on the server wins; a first visit uploads this browser's list.
+    let alive = true;
+    fetchJson("/api/canvas")
+      .then((d) => {
+        if (!alive) return;
+        const idx = d?.index;
+        if (idx && Array.isArray(idx.boards) && idx.boards.length) {
+          setBoards(idx.boards);
+          setBoardId(idx.current || idx.boards[0].id);
+          try {
+            localStorage.setItem(`ais-canvas-boards:${user}`, JSON.stringify(idx.boards));
+            localStorage.setItem(`ais-canvas-current:${user}`, idx.current || idx.boards[0].id);
+          } catch {}
+        } else {
+          let list = [{ id: "1", name: "画布1" }];
+          let cur = "1";
+          try {
+            const raw = JSON.parse(localStorage.getItem(`ais-canvas-boards:${user}`) || "null");
+            if (Array.isArray(raw) && raw.length) list = raw;
+            cur = localStorage.getItem(`ais-canvas-current:${user}`) || list[0].id;
+          } catch {}
+          pushBoardIndex(list, cur);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [user]);
+  const pushBoardIndex = (list: { id: string; name: string }[], current: string) => {
+    fetchJson("/api/canvas", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ boards: list, current, updatedAt: Date.now() }),
+    }).catch(() => {});
+  };
   const saveBoards = (list: { id: string; name: string }[], current: string) => {
     setBoards(list);
     setBoardId(current);
@@ -1687,6 +1722,7 @@ export default function StudioPage() {
       localStorage.setItem(`ais-canvas-boards:${user}`, JSON.stringify(list));
       localStorage.setItem(`ais-canvas-current:${user}`, current);
     } catch {}
+    pushBoardIndex(list, current);
   };
   const boardKey = (id: string) => (id === "1" ? `ais-canvas-v1:${user}` : `ais-canvas-v1:${user}:${id}`);
   const newBoard = () => {
@@ -1706,6 +1742,7 @@ export default function StudioPage() {
     if (boards.length <= 1) return flash("至少要留一个画布");
     if (boardDelArm !== id) return setBoardDelArm(id);
     try { localStorage.removeItem(boardKey(id)); } catch {}
+    fetch(`/api/canvas/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
     const rest = boards.filter((x) => x.id !== id);
     saveBoards(rest, boardId === id ? rest[0].id : boardId);
     setBoardDelArm(null);
@@ -2117,6 +2154,7 @@ export default function StudioPage() {
                 <CanvasBoard
                   key={boardId}
                   storageKey={boardKey(boardId)}
+                  cloudId={boardId}
                   onSelectionChange={onBoardSelection}
                   onSelectionBox={onSelectionBox}
                   onGidsChange={(ids) => setOnBoard(new Set(ids))}
