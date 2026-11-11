@@ -52,6 +52,23 @@ type Saved = { nodes: Node[]; view: View; updatedAt?: number };
 const MIN_S = 0.1;
 const MAX_S = 4;
 const GAP = 40;
+// Finished pictures are archived under the task id, even when the history list is still loading.
+const archivedPicture = (gid?: string) => gid && /^[0-9A-Za-z_-]{1,64}$/.test(gid) ? `/api/img/${gid}` : null;
+
+function NodePicture({ url, thumb, backup, onLoad }: {
+  url: string; thumb: string; backup: string | null; onLoad: (image: HTMLImageElement) => void;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  const original = (u: string) => /^\/api\/(?:ref|img)\//.test(u) ? `${u.split("?")[0]}?raw=1` : u;
+  const candidates = [...new Set([thumb, original(url), ...(backup ? [original(backup)] : [])])];
+  if (!candidates[attempt]) return (
+    <button type="button" className="h-full w-full rounded-[10px] bg-well text-[12px] text-secondary"
+      onPointerDown={(e) => e.stopPropagation()} onClick={() => setAttempt(0)}>重新加载图片</button>
+  );
+  return <img src={candidates[attempt]} alt="" draggable={false} decoding="async" className="h-full w-full rounded-[10px] object-cover"
+    onLoad={(e) => onLoad(e.currentTarget)} onError={() => setAttempt((v) => v + 1)} />;
+}
+
 const typing = (target: EventTarget | null) => target instanceof HTMLElement &&
   (target.matches("input,textarea,select") || target.isContentEditable);
 function writeNodeCopy(e: ClipboardEvent, text: string) {
@@ -654,7 +671,7 @@ export function CanvasBoard({
       for (const n of next) {
         if (!n.pendingGid) continue;
         const src = sources.get(n.pendingGid);
-        if (src?.url) replace(n, { gid: n.pendingGid, pendingGid: undefined, kind: "result", editOf: undefined, src: undefined, nw: undefined, nh: undefined, from: n.from ?? [], fit: true });
+        if (src?.url) replace(n, { gid: n.pendingGid, pendingGid: undefined, kind: "result", editOf: undefined, src: src.url.startsWith("/api/img/") ? src.url : undefined, nw: undefined, nh: undefined, from: n.from ?? [], fit: true });
         else if (src?.status === "failed" || src?.status === "expired") replace(n, { pendingGid: undefined });
       }
       return next;
@@ -1013,7 +1030,14 @@ export function CanvasBoard({
     onRetry?.(n.gid);
   };
 
-  const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
+  const urlOf = (n: Node): string | null => {
+    if (n.kind === "text") return null;
+    const source = n.gid ? sources.get(n.gid) : undefined;
+    if (source?.url) return source.url;
+    if (n.src) return n.src;
+    if (source?.status === "failed" || source?.status === "expired" || source?.status === "pending") return null;
+    return archivedPicture(n.gid);
+  };
   urlOfRef.current = urlOf;
   // The generated picture itself only becomes input through an explicit outgoing wire.
   const selected = nodes.filter((n) => sel.has(n.id));
@@ -1421,21 +1445,12 @@ export function CanvasBoard({
                   </div>
                 </div>
               ) : url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={n.src ? n.src : thumb(url, n.w * view.s > 480 ? 1280 : 640)}
-                  alt=""
-                  draggable={false}
-                  decoding="async"
-                  className="h-full w-full rounded-[10px] object-cover"
-                  onLoad={(e) => {
-                    if (!n.fit) return;
-                    const im = e.currentTarget;
-                    if (!im.naturalWidth) return;
-                    const h = (n.w * im.naturalHeight) / im.naturalWidth;
-                    setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, h, fit: false } : m)));
-                  }}
-                />
+                <NodePicture key={url} url={url} backup={archivedPicture(n.gid)} thumb={thumb(url, n.w * view.s > 480 ? 1600 : 640)}
+                  onLoad={(image) => {
+                    if (!n.fit || !image.naturalWidth) return;
+                    const h = n.w * image.naturalHeight / image.naturalWidth;
+                    setNodesRaw((list) => list.map((m) => m.id === n.id && urlOfRef.current(m) === url ? { ...m, h, fit: false } : m));
+                  }} />
               ) : status === "failed" || status === "expired" ? (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-[light-dark(#fff1f1,#382022)] text-[13px] text-danger">
                   没有生成成功
