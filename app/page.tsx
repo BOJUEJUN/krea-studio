@@ -3103,7 +3103,8 @@ export default function StudioPage() {
                     </button>
                   ))}
                   {chipsMore && mode === "i2i" && !findModel(model)?.billing && (
-                    <div className="flex items-center gap-0.5">
+                    // 用户 2026-11-11: one chip — 提示词反推 is the parent switch, how to use it is its child option.
+                    <div className={`flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${reverse ? "bg-[#0071e3]/[0.08] ring-1 ring-[#0071e3]/25" : "bg-black/[0.04]"}`}>
                       <button
                         type="button"
                         role="switch"
@@ -3113,13 +3114,14 @@ export default function StudioPage() {
                           const next = !reverse;
                           setReverse(next);
                           localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
+                          if (!next && openPanel === "reverse") setOpenPanel(null);
                         }}
-                        className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
+                        className={`flex h-full items-center gap-1.5 pl-3 ${reverse ? "pr-2 font-medium text-[#0071e3] hover:bg-[#0071e3]/[0.06]" : "pr-3 text-[#1d1d1f] hover:bg-black/[0.04]"}`}
                       >
-                        提示词反推
-                        <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
-                          <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
+                        <span className={`relative inline-block h-[14px] w-[24px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.18]"}`}>
+                          <span className={`absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[12px]" : "left-[2px]"}`} />
                         </span>
+                        提示词反推
                       </button>
                       {reverse && (
                         <button
@@ -3128,13 +3130,14 @@ export default function StudioPage() {
                           data-tip="直接生成：反推完马上出图；先填到框里：反推结果放进提示词框，你改好再生成"
                           onClick={(e) => {
                             const row = chipRowRef.current;
-                            setPanelLeft(Math.max(0, Math.min(e.currentTarget.offsetLeft, (row?.clientWidth ?? 600) - 300)));
+                            const x = (e.currentTarget.parentElement as HTMLElement).offsetLeft;
+                            setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                             setOpenPanel((v) => (v === "reverse" ? null : "reverse"));
                           }}
-                          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${openPanel === "reverse" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.04]"}`}
+                          className={`flex h-full items-center gap-1 border-l border-[#0071e3]/20 pl-2 pr-2.5 text-[#0071e3] transition ${openPanel === "reverse" ? "bg-[#0071e3]/15" : "hover:bg-[#0071e3]/[0.12]"}`}
                         >
                           {reversing ? "反推中…" : reverseMode === "fill" ? "先填到框里" : "直接生成"}
-                          <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                          <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "reverse" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                         </button>
                       )}
                     </div>
