@@ -70,6 +70,25 @@ export async function cosGet(key: string, timeoutMs = 15_000): Promise<Buffer | 
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** A bucket-level setting (e.g. "versioning", "lifecycle"): GET reads it, PUT replaces it. */
+export async function cosBucket(method: "GET" | "PUT", sub: string, xml?: string): Promise<{ status: number; body: string }> {
+  const c = cosConf()!;
+  const now = Math.floor(Date.now() / 1000);
+  const headers: Record<string, string> = {};
+  if (xml !== undefined) {
+    headers["Content-Type"] = "application/xml";
+    headers["Content-MD5"] = createHash("md5").update(xml).digest("base64");
+  }
+  const res = await fetch(`https://${host(c)}/?${sub}=&${sign(c, method, "/", now - 60, now + 600, { [sub]: "" })}`, {
+    method,
+    headers,
+    body: xml,
+    cache: "no-store",
+    signal: AbortSignal.timeout(15_000),
+  });
+  return { status: res.status, body: await res.text() };
+}
+
 /** Removes one object; a missing one counts as removed. */
 export async function cosDelete(key: string): Promise<void> {
   const c = cosConf()!;
