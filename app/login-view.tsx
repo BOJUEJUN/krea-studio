@@ -64,7 +64,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
         </div>
         <input
           autoFocus
-          className="w-full rounded-xl border border-edge/[0.08] bg-page px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+          className="w-full rounded-xl border border-edge/[0.08] bg-page px-3.5 py-2.5 text-[16px] md:text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
           placeholder="用户名"
           autoComplete="username"
           value={name}
@@ -74,7 +74,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
         <div className="relative mt-2.5">
           <input
             type={showPw ? "text" : "password"}
-            className="w-full rounded-xl border border-edge/[0.08] bg-page py-2.5 pl-3.5 pr-11 text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+            className="w-full rounded-xl border border-edge/[0.08] bg-page py-2.5 pl-3.5 pr-11 text-[16px] md:text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
             placeholder={tab === "register" ? "设置密码（至少 6 位）" : "密码"}
             autoComplete={tab === "register" ? "new-password" : "current-password"}
             value={password}
@@ -97,7 +97,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
           // 用户 2026-11-11: 注册时密码输两次.
           <input
             type={showPw ? "text" : "password"}
-            className={`mt-2.5 w-full rounded-xl border bg-page px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:bg-panel focus:ring-4 ${password2 && password2 !== password ? "border-[#d70015]/50 focus:ring-[#d70015]/10" : "border-edge/[0.08] focus:border-[rgba(0,113,227,0.45)] focus:ring-[rgba(0,113,227,0.12)]"}`}
+            className={`mt-2.5 w-full rounded-xl border bg-page px-3.5 py-2.5 text-[16px] md:text-[14px] text-ink outline-none transition focus:bg-panel focus:ring-4 ${password2 && password2 !== password ? "border-[#d70015]/50 focus:ring-[#d70015]/10" : "border-edge/[0.08] focus:border-[rgba(0,113,227,0.45)] focus:ring-[rgba(0,113,227,0.12)]"}`}
             placeholder="再输一次密码"
             autoComplete="new-password"
             value={password2}
@@ -109,7 +109,7 @@ export function LoginView({ onDone }: { onDone: (user: string) => void }) {
         )}
         {tab === "register" && (
           <input
-            className="mt-2.5 w-full rounded-xl border border-edge/[0.08] bg-page px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
+            className="mt-2.5 w-full rounded-xl border border-edge/[0.08] bg-page px-3.5 py-2.5 text-[16px] md:text-[14px] text-ink outline-none transition focus:border-[rgba(0,113,227,0.45)] focus:bg-panel focus:ring-4 focus:ring-[rgba(0,113,227,0.12)]"
             placeholder="邀请码"
             autoComplete="off"
             value={invite}

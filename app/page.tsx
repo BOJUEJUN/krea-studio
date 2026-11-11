@@ -721,6 +721,10 @@ export default function StudioPage() {
     const fit = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        if (window.innerWidth < 768) {
+          row.style.zoom = ""; // phones scroll the row sideways instead (globals.css)
+          return;
+        }
         const was = row.style.zoom;
         row.style.zoom = "1";
         const room = row.clientWidth;
@@ -3186,7 +3190,7 @@ export default function StudioPage() {
                     <div
                       ref={promptMirrorRef}
                       aria-hidden
-                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[14px] leading-relaxed text-ink"
+                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-ink"
                     >
                       {withMentions(prompt, [preview, ...extraRefs.map((r) => r.url)])}
                       {"\n"}
@@ -3236,7 +3240,7 @@ export default function StudioPage() {
                           ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
                           : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
                     }
-                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
+                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
                     style={{
                       // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
                       fieldSizing: "content",

@@ -729,3 +729,13 @@ button:not(:disabled):active,
 .compose-settings > button, .compose-settings > .compose-split, .compose-submit { flex: none; }
 .compose-split > button { flex: none; justify-content: center; padding-inline: .625rem; }
 .compose-submit { margin-inline-start: auto; padding-inline-start: .875rem; }
+
+/* 用户 2026-11-11 (手机操作简单): on phones the settings row scrolls sideways under a pinned 生成 button instead of
+   shrinking, and every control is a comfortable thumb size. */
+@media (max-width: 767px) {
+  .compose-settings { overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; zoom: 1 !important; }
+  .compose-settings::-webkit-scrollbar { display: none; }
+  .compose-settings > button, .compose-settings > .compose-split { height: 2.5rem; }
+  .compose-submit { position: sticky; right: 0; z-index: 2; background: linear-gradient(to right, transparent, var(--color-panel) 0.875rem); }
+  .compose-submit .generate-button { height: 2.75rem; padding-inline: 1.25rem; font-size: 15px; }
+}
