@@ -1049,6 +1049,19 @@ export function CanvasBoard({
   }, [sel, removeSel, duplicateSel, selectionClip, flash, fitAll, commit]);
 
   // ---- drop from history or the computer
+  const onPictureDrag = (e: React.DragEvent) => {
+    const data = e.dataTransfer;
+    const image = data.types.includes(dragType) || (data.types.includes("Files") &&
+      (!data.items.length || Array.from(data.items).some((item) => item.kind === "file" && (!item.type || item.type.startsWith("image/")))));
+    if (!image) return;
+    e.preventDefault();
+    e.stopPropagation();
+    data.dropEffect = "copy";
+    const id = (e.target as Element).closest("[data-node-id]")?.getAttribute("data-node-id");
+    const resource = nodesRef.current.find((node) => node.id === id && isResource(node));
+    setDropResource(resource?.id ?? null);
+    setDropHover(true);
+  };
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1340,15 +1353,9 @@ export function CanvasBoard({
       onLostPointerCapture={(e) => {
         if (e.target === boxRef.current && dragPointer.current === e.pointerId) finishDrag(false);
       }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = "copy";
-        const id = (e.target as Element).closest("[data-node-id]")?.getAttribute("data-node-id");
-        const resource = nodesRef.current.find((n) => n.id === id && isResource(n));
-        setDropResource(resource?.id ?? null);
-        if (!dropHover) setDropHover(true);
-      }}
+      onDragEnter={onPictureDrag}
+      onDragOver={onPictureDrag}
+      onDragEnd={() => { setDropHover(false); setDropResource(null); }}
       onDragLeave={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) { setDropHover(false); setDropResource(null); }
       }}
@@ -1587,8 +1594,17 @@ export function CanvasBoard({
                   </div>
                 );
               })()}
-              {isResource(n) && <button type="button" aria-label="更换图片"
-                className={`absolute right-1.5 top-1.5 rounded-full bg-panel/95 px-2 py-1 text-[11px] font-medium text-ink shadow-sm transition-opacity focus-visible:opacity-100 ${dropResource === n.id ? "opacity-100" : "opacity-0 group-hover/node:opacity-100"}`}
+              {dropResource === n.id && <div role="status" data-drop-replace=""
+                className="pointer-events-none absolute inset-0 z-10 flex justify-center overflow-hidden rounded-[10px] bg-black/45"
+                style={{ boxShadow: `inset 0 0 0 ${3 * k}px var(--color-accent)` }}>
+                <span className="absolute flex origin-top items-center gap-1.5 whitespace-nowrap rounded-full bg-white px-3 py-1.5 text-[13px] font-semibold text-[#17212d] shadow-lg"
+                  style={{ top: Math.min(14 * k, n.h * 0.08), transform: `scale(${Math.min(k, n.w / 150, n.h / 60)})` }}>
+                  <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 9h13l-3-3m6 9H7l3 3" /></svg>
+                  松开替换当前图片
+                </span>
+              </div>}
+              {isResource(n) && dropResource !== n.id && <button type="button" aria-label="更换图片"
+                className="absolute right-1.5 top-1.5 rounded-full bg-panel/95 px-2 py-1 text-[11px] font-medium text-ink opacity-0 shadow-sm transition-opacity group-hover/node:opacity-100 focus-visible:opacity-100"
                 onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); replaceId.current = n.id; replacePicker.current?.click(); }}>
                 更换图片
@@ -1851,7 +1867,7 @@ export function CanvasBoard({
           <div className="text-[12px]">拖空白处移动画布 · 双指捏合 / ⌘+滚轮 缩放 · Shift+拖动 框选 · ⌘Z 撤销</div>
         </div>
       )}
-      {dropHover && (
+      {dropHover && !dropResource && (
         <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-[14px] border-2 border-dashed border-accent bg-accent/[0.04] text-[14px] font-medium text-accent">
           松开，放到画布上
         </div>
