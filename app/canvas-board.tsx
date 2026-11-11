@@ -1440,7 +1440,9 @@ export function CanvasBoard({
                   style={{ transform: `translate(${10 * k}px, -50%) scale(${k})`, transformOrigin: "left center" }}
                   onPointerDown={(e) => startLink(e, n)}
                 >
-                  +
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" className="pointer-events-none block" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <path d="M8 3v10M3 8h10" />
+                  </svg>
                 </span>
               )}
               {on && selected.length === 1 && (url || isText) && (
