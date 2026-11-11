@@ -1150,9 +1150,9 @@ export default function StudioPage() {
     if (el && main) main.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
   }, []);
 
-  const flash = useCallback((text: string) => {
+  const flash = useCallback((text: string, ms = 2600) => {
     setNotice(text);
-    window.setTimeout(() => setNotice((n) => (n === text ? null : n)), 2600);
+    window.setTimeout(() => setNotice((n) => (n === text ? null : n)), ms);
   }, []);
 
   /**
@@ -2072,6 +2072,8 @@ export default function StudioPage() {
     const snap = canvasApi.current?.snapshot(onlySelected);
     if (!snap) return flash("还有图片在上传，稍等几秒再分享");
     if (!snap.nodes.length) return flash("画布是空的");
+    // 用户 2026-11-11 (点了要提示复制成功没有): say at once that it is working, then clearly whether it was copied.
+    flash("正在生成分享口令…", 15000);
     try {
       const d = await fetchJson("/api/canvas/share", {
         method: "POST",
@@ -2081,9 +2083,10 @@ export default function StudioPage() {
       if (!d?.ok || !d.token) throw new Error(d?.error || "分享失败");
       try {
         await navigator.clipboard.writeText(d.token);
-        flash("口令已复制，可在画布粘贴，7 天有效");
+        flash(`✓ 已复制分享口令 ${d.token}，发给朋友在画布里粘贴就行（7 天有效）`, 5000);
       } catch {
-        window.prompt("复制口令（7 天有效）", d.token);
+        setNotice(null);
+        window.prompt("没能自动复制，请手动复制这个口令（7 天有效）", d.token);
       }
     } catch (e: any) {
       flash(e?.message || "分享失败");
