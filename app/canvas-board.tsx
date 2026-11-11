@@ -1399,7 +1399,7 @@ export function CanvasBoard({
                     }} />
                 </div>
               ) : running ? (
-                <div data-node-generating="" className="h-full w-full overflow-hidden rounded-[10px]"><GeneratingView aspect={n.w / Math.max(1, n.h)} progress={frameProgress.get(n.id) ?? progress} compact fill /></div>
+                <div data-node-generating="" className="h-full w-full overflow-hidden rounded-[10px]"><GeneratingView aspect={n.w / Math.max(1, n.h)} progress={frameProgress.get(n.id) ?? progress} zoom={view.s} compact fill /></div>
               ) : isGen ? (
                 <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[10px]">
                   <div className="flex shrink-0 flex-col items-center gap-1.5 px-2 text-center text-[13px] font-medium leading-[19px] text-ink"

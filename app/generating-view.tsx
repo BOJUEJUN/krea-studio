@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
  * patch, and the percentage in a pill at the bottom right.
  */
 
-type Props = { aspect: number; progress: number; compact?: boolean; fill?: boolean };
+type Props = { aspect: number; progress: number; compact?: boolean; fill?: boolean; zoom?: number };
 
 /** Fits an aspect-correct, rounded frame inside whatever space it is given. */
 function Frame({ aspect, children, tight }: { aspect: number; children: React.ReactNode; tight?: boolean }) {
@@ -144,9 +144,15 @@ function blobDensity(u: number, v: number, w: number, h: number, t: number, sd: 
   return blob * edge;
 }
 
-export function GeneratingView({ aspect, progress, compact, fill }: Props) {
+export function GeneratingView({ aspect, progress, compact, fill, zoom = 1 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
+  const zoomRef = useRef(zoom);
+  const resizeRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    zoomRef.current = zoom;
+    resizeRef.current?.();
+  }, [zoom]);
 
   useEffect(() => {
     const canvas = ref.current;
@@ -154,19 +160,7 @@ export function GeneratingView({ aspect, progress, compact, fill }: Props) {
     if (!canvas || !wrap) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    let W = 0,
-      H = 0;
-    const size = () => {
-      W = wrap.clientWidth;
-      H = wrap.clientHeight;
-      canvas.width = W * dpr;
-      canvas.height = H * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    size();
-    const ro = new ResizeObserver(size);
-    ro.observe(wrap);
+    let W = 0, H = 0;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     // Dot spacing follows the frame (7-12 px) so small and large frames show a
     // similar number of dots across the droplet.
@@ -201,9 +195,31 @@ export function GeneratingView({ aspect, progress, compact, fill }: Props) {
         ctx.fill(paths[k]);
       }
     };
-    raf = requestAnimationFrame(draw);
+    const resize = () => {
+      W = wrap.clientWidth;
+      H = wrap.clientHeight;
+      if (!W || !H) return;
+      // Render in display pixels, bounding memory for very large or parallel nodes.
+      const density = Math.min((window.devicePixelRatio || 1) * zoomRef.current,
+        4096 / W, 4096 / H, Math.sqrt(8_000_000 / (W * H)));
+      const w = Math.max(1, Math.round(W * density)), h = Math.max(1, Math.round(H * density));
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.setTransform(w / W, 0, 0, h / H, 0, 0);
+      if (reduce) draw(performance.now());
+    };
+    resizeRef.current = resize;
+    const ro = new ResizeObserver(resize);
+    ro.observe(wrap);
+    window.addEventListener("resize", resize);
+    resize();
+    if (!reduce) raf = requestAnimationFrame(draw);
     return () => {
+      resizeRef.current = null;
       cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
       ro.disconnect();
     };
   }, []);
