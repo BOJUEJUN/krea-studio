@@ -574,6 +574,8 @@ export default function StudioPage() {
   canvasOnRef.current = canvasOn;
   const canvasApi = useRef<BoardApi | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
+  const canvasScaleRef = useRef(1);
+  canvasScaleRef.current = canvasScale;
   const [zoomMenu, setZoomMenu] = useState(false);
   const [moreMenu, setMoreMenu] = useState(false);
   useEffect(() => {
@@ -2276,7 +2278,10 @@ export default function StudioPage() {
     if (!canvasOn || !selBox) return null;
     const col = leftColRef.current?.getBoundingClientRect();
     if (!col) return null;
-    const w = Math.min(640, col.width - 32);
+    // 用户 2026-11-11 (输入框也适当缩小): narrower when the board is zoomed out, never under 440 px; the settings row
+    // shrinks itself to fit, the text keeps its size.
+    const zf = Math.min(1, Math.max(0.7, canvasScaleRef.current));
+    const w = Math.min(col.width - 32, Math.max(440, 640 * zf));
     const h = composeRef.current?.offsetHeight || 200;
     const cx = (selBox.left + selBox.right) / 2 - col.left;
     const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
