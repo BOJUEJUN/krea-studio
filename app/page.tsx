@@ -2065,7 +2065,7 @@ export default function StudioPage() {
     const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
     const below = selBox.bottom - col.top + 14;
     if (below + h <= col.height - 12) return { left, top: Math.max(56, below), width: w };
-    const above = selBox.top - col.top - 14 - h - 48; // leave room for the selection toolbar
+    const above = selBox.top - col.top - 14 - h - 72; // leave room for the selection toolbar and the label row
     if (above >= 56) return { left, top: above, width: w };
     return { left, top: col.height - h - 16, width: w };
   };

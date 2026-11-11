@@ -1244,7 +1244,7 @@ export function CanvasBoard({
       {selBox && selected.some((n) => urlOf(n)) && (
         <div
           className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-white/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] backdrop-blur"
-          style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(44, selBox.y - 48) }}
+          style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(8, selBox.y - 48 - 24) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
           {/* 用户 2026-11-10: icons only, the name shows on hover. A selected picture already is the reference, so no 用作参考图. */}
