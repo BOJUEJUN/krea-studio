@@ -539,12 +539,7 @@ export default function StudioPage() {
   const [negative, setNegative] = useState("");
   const [lora, setLora] = useState(2);
   // 用户 2026-11-11 (速度可以选，标准 / 高速): RunningHub workflow models can run on the 48G "plus" machines.
-  const [speed, setSpeed] = useState<"standard" | "fast">("standard");
-  useEffect(() => {
-    try {
-      if (localStorage.getItem("ais-speed") === "fast") setSpeed("fast");
-    } catch {}
-  }, []);
+  const [speed, setSpeed] = useState<"standard" | "fast">("standard"); // always 标准 now; the option is hidden
   const chooseSpeed = (v: "standard" | "fast") => {
     setSpeed(v);
     try {
@@ -2338,7 +2333,7 @@ export default function StudioPage() {
     ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
-    ...(modelParams.denoise ? [{ key: "speed", label: speed === "fast" ? "高速" : "标准速度" }] : []),
+    // 速度 (标准 / 高速) removed 2026-11-11: 高速 measured no faster and ~30% dearer (用户: 高速没用就去掉).
     // 2026-11-05 (用户: 随机种子去掉吧，没什么人用): every picture gets a random seed.
     // 不想要 removed (用户 2026-11-06: 去掉).
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
