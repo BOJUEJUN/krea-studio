@@ -521,6 +521,10 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 不分了，合成吧): one form — a reference image makes it 图生图, none makes it 文生图.
   const [mode, setMode] = useState<Mode>("t2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
+  // A retired model (e.g. Nano Banana, 用户 2026-11-11) coming back from saved settings or an old picture → default.
+  useEffect(() => {
+    if (findModel(model)?.retired) setModel(DEFAULT_MODEL);
+  }, [model]);
   const [reverseOn, setReverse] = useState(true);
   // AI 写描述 only for the RunningHub workflow models (用户 2026-11-05); GPT / Krea 3 / Banana read the picture themselves.
   const reverse = reverseOn && !findModel(model)?.billing;

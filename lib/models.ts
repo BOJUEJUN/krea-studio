@@ -42,6 +42,8 @@ export const LORA_STRENGTH = 2.0;
 export type ModelInfo = {
   id: ModelId;
   name: string;
+  /** Taken off the site: old pictures keep its name, but it can't be picked or used. */
+  retired?: boolean;
   tagline: string;
   cover: string;
   /** Estimated ¥ per image for models billed outside RunningHub China (no real cost comes back). */
@@ -110,7 +112,7 @@ export const QUALITY_LABELS: Record<Quality, string> = { low: "快速", medium: 
 /** Estimated ¥ per GPT image by quality (OpenAI bills by tokens; both 2.6 models share the rates). */
 export const GPT_PRICE: Record<Quality, number> = { low: 0.1, medium: 0.3, high: 1.0 };
 
-export const MODELS: ModelInfo[] = [
+const ALL_MODELS: ModelInfo[] = [
   {
     id: "brown-dust",
     name: "棕色尘埃",
@@ -157,6 +159,8 @@ export const MODELS: ModelInfo[] = [
   {
     id: "banana-21",
     name: "Nano Banana 2.1",
+    // 用户 2026-11-11: 下架 banana 模型.
+    retired: true,
     tagline: "谷歌 · 约 40 秒 · 改图细",
     cover: "/models/google.svg",
     price: 0.22,
@@ -245,8 +249,12 @@ export const DEFAULT_MODEL: ModelId = "lol-236-v11";
 /** Requests without a model come from pages cached before the picker existed. */
 export const LEGACY_MODEL: ModelId = "brown-dust";
 
+/** Models the page offers (retired ones left out). */
+export const MODELS: ModelInfo[] = ALL_MODELS.filter((m) => !m.retired);
+
+/** Any model, retired ones included (names and settings of old pictures). */
 export function findModel(id: unknown): ModelInfo | undefined {
-  return MODELS.find((m) => m.id === id);
+  return ALL_MODELS.find((m) => m.id === id);
 }
 
 /**

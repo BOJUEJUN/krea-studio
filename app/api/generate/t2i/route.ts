@@ -29,6 +29,9 @@ export async function POST(req: NextRequest) {
     if (!model) {
       return NextResponse.json({ ok: false, error: "未知模型" }, { status: 400 });
     }
+    if (model.retired) {
+      return NextResponse.json({ ok: false, error: `${model.name} 已下架，请换一个模型` }, { status: 400 });
+    }
     const gptModel = GPT_IMAGE_MODELS[model.id];
     const krea = model.id === "krea-3";
     const hosted = !!RH_HOSTED_MODELS[model.id] || krea;
