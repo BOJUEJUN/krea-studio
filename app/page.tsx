@@ -516,7 +516,10 @@ export default function StudioPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [chipsMore, setChipsMore] = useState(false);
   // 2026-11-10 (用户: 参数要紧贴素材): the compose box hugs the selected pictures.
-  const [selBox, setSelBox] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  // The box follows the selection every frame by moving its own style (no page re-render while panning).
+  type Box = { left: number; top: number; right: number; bottom: number };
+  const selBoxRef = useRef<Box | null>(null);
+  const [hugOn, setHugOn] = useState(false);
   const leftColRef = useRef<HTMLDivElement>(null);
   const composeRef = useRef<HTMLElement>(null);
   const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("medium"); // 用户 2026-11-10: 默认中
@@ -1752,8 +1755,8 @@ export default function StudioPage() {
   );
 
   // Under the selection when it fits, else above it, else at the bottom; always inside the board.
-  const hugStyle: React.CSSProperties | null = (() => {
-    if (!canvasOn || !canvasSel.length || !selBox) return null;
+  const hugFor = (selBox: Box | null): { left: number; top: number; width: number } | null => {
+    if (!canvasOn || !selBox) return null;
     const col = leftColRef.current?.getBoundingClientRect();
     if (!col) return null;
     const w = Math.min(640, col.width - 32);
@@ -1765,7 +1768,21 @@ export default function StudioPage() {
     const above = selBox.top - col.top - 14 - h - 48; // leave room for the selection toolbar
     if (above >= 56) return { left, top: above, width: w };
     return { left, top: col.height - h - 16, width: w };
-  })();
+  };
+  const hugForRef = useRef(hugFor);
+  hugForRef.current = hugFor;
+  const hugStyle = hugOn && canvasSel.length ? hugFor(selBoxRef.current) : null;
+  const onSelectionBox = useCallback((r: Box | null) => {
+    selBoxRef.current = r;
+    setHugOn(!!r);
+    const el = composeRef.current;
+    const st = hugForRef.current(r);
+    if (el && st) {
+      el.style.left = `${st.left}px`;
+      el.style.top = `${st.top}px`;
+      el.style.width = `${st.width}px`;
+    }
+  }, []);
 
   const runPolish = async () => {
     const before = prompt;
@@ -1945,7 +1962,7 @@ export default function StudioPage() {
                   key={boardId}
                   storageKey={boardKey(boardId)}
                   onSelectionChange={onBoardSelection}
-                  onSelectionBox={setSelBox}
+                  onSelectionBox={onSelectionBox}
                   sources={boardSources}
                   pendingIds={loading ? batch : []}
                   loading={loading}

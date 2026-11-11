@@ -334,10 +334,7 @@ export function CanvasBoard({
   const onMove = (e: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
-    if (!moving.current) {
-      moving.current = true;
-      onBoxRef.current?.(null);
-    }
+    moving.current = true;
     const s = viewRef.current.s;
     if (d.kind === "pan") {
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
@@ -534,7 +531,6 @@ export function CanvasBoard({
   useEffect(() => {
     const cb = onBoxRef.current;
     if (!cb) return;
-    if (moving.current) return;
     const r = boxRef.current?.getBoundingClientRect();
     if (!selRect || !r) return cb(null);
     const [x0, y0, x1, y1] = selRect.split(",").map(Number);
