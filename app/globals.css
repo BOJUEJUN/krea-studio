@@ -17,14 +17,14 @@
 
 html.theme-dark {
   color-scheme: dark;
-  --color-panel: #101012;
-  --color-well: #202023;
-  --color-page: #0a0a0c;
+  --color-panel: #303238;
+  --color-well: #393c43;
+  --color-page: #25272b;
   --color-edge: #fff;
-  --color-ink: #f1f1f3;
-  --color-secondary: #b3b3b9;
-  --color-muted: #a1a1a8;
-  --color-hint: #929298;
+  --color-ink: #eeeef1;
+  --color-secondary: #cdcdd3;
+  --color-muted: #b6b7bf;
+  --color-hint: #b2b4bd;
   --color-accent: #409cff;
   --color-accent-hover: #64adff;
   --color-danger: #ff6961;
@@ -229,6 +229,33 @@ input[type="range"] {
 
 .apple-card:hover {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 12px 36px rgba(0, 0, 0, 0.08);
+}
+
+html.theme-dark .canvas-compose-card {
+  background: #3b3e45;
+  border-color: #727681;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 32%);
+}
+html.theme-dark .canvas-compose-card:focus-within,
+html.theme-dark .canvas-compose-card[data-drag="zone"] {
+  border-color: var(--color-accent);
+}
+.picture-mention {
+  display: inline-grid;
+  height: 1lh;
+  vertical-align: top;
+  white-space: nowrap;
+  place-items: center;
+}
+.picture-mention > * { grid-area: 1 / 1; }
+.picture-mention > span { visibility: hidden; }
+.picture-mention > img {
+  display: block;
+  width: 1.35em;
+  height: 1.35em;
+  object-fit: cover;
+  border: 1px solid var(--color-accent);
+  border-radius: .3em;
 }
 
 .apple-btn-primary {
@@ -695,3 +722,9 @@ button:not(:disabled):active,
   content-visibility: auto;
   contain-intrinsic-size: auto 260px;
 }
+
+
+/* Measure whole controls before fitting the row; never crop either half of a split pill. */
+.compose-settings > button, .compose-settings > .compose-split, .compose-submit { flex: none; }
+.compose-split > button { flex: none; justify-content: center; padding-inline: .625rem; }
+.compose-submit { margin-inline-start: auto; padding-inline-start: .875rem; }

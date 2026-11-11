@@ -2,6 +2,8 @@ import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "crypto";
 import { storeGet, storePut } from "@/lib/store";
+import { readDraft } from "@/lib/canvas-workflow";
+import { shareLifetime } from "@/lib/canvas-share-code";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,8 +20,8 @@ export async function POST(req: NextRequest) {
   if ("res" in who) return who.res;
   try {
     const body = await req.json();
+    if (body?.nodes?.length > 400) return NextResponse.json({ ok: false, error: "一次最多分享 400 个节点" }, { status: 400 });
     const nodes = (Array.isArray(body?.nodes) ? body.nodes : [])
-      .slice(0, 400)
       .filter((n: any) => n && typeof n.id === "string" && (n.kind === "text" || n.kind === "gen" || okSrc(n.src)))
       .map((n: any) => ({
         id: String(n.id).slice(0, 40),
@@ -33,12 +35,14 @@ export async function POST(req: NextRequest) {
         from: Array.isArray(n.from) ? n.from.map(String).slice(0, 20) : undefined,
         nw: Number(n.nw) || undefined,
         nh: Number(n.nh) || undefined,
+        draft: n.kind === "gen" || n.kind === "result" ? readDraft(n.draft) : undefined,
       }));
     if (!nodes.length) return NextResponse.json({ ok: false, error: "画布是空的" }, { status: 400 });
-    const t = randomBytes(9).toString("base64url");
+    const t = "EZ-" + randomBytes(12).toString("hex").toUpperCase().match(/.{4}/g)!.join("-");
     const name = String(body?.name || "画布").slice(0, 20);
-    await storePut(key(t), JSON.stringify({ owner: who.user, name, nodes, view: body?.view ?? null, createdAt: Date.now() }), "application/json");
-    return NextResponse.json({ ok: true, token: t });
+    const createdAt = Date.now(), expiresAt = createdAt + shareLifetime;
+    await storePut(key(t), JSON.stringify({ owner: who.user, name, nodes, view: body?.view ?? null, createdAt, expiresAt }), "application/json");
+    return NextResponse.json({ ok: true, token: t, expiresAt });
   } catch (e: any) {
     return NextResponse.json({ ok: false, error: e?.message || "分享失败" }, { status: 500 });
   }
@@ -53,6 +57,8 @@ export async function GET(req: NextRequest) {
   if (!b) return NextResponse.json({ ok: false, error: "这个分享链接不存在了" }, { status: 404 });
   try {
     const d = JSON.parse(b.toString("utf8"));
+    if (d.expiresAt && Date.now() >= d.expiresAt)
+      return NextResponse.json({ ok: false, error: "分享口令已过期，请让对方重新分享" }, { status: 410 });
     return NextResponse.json({ ok: true, owner: d.owner, name: d.name, nodes: d.nodes, view: d.view });
   } catch {
     return NextResponse.json({ ok: false, error: "分享内容坏了" }, { status: 500 });

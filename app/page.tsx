@@ -8,7 +8,8 @@ import { BatchGrid } from "./batch-grid";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
-import { CanvasBoard, type BoardApi, type BoardSource } from "./canvas-board";
+import { PictureMention } from "./picture-mention";
+import { CanvasBoard, type BoardApi, type BoardJob, type BoardSource } from "./canvas-board";
 import {
   DEFAULT_MODEL,
   RES_PIXELS,
@@ -61,17 +62,7 @@ function withMentions(text: string, thumbs: (string | null | undefined)[] = []) 
           {part}
         </span>
       );
-    return (
-      <span key={i} className="relative inline-block align-baseline text-transparent" title={part.slice(1)}>
-        {part}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={part.slice(1)}
-          className="absolute left-1/2 top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-accent/70"
-        />
-      </span>
-    );
+    return <PictureMention key={i} token={part} src={src} />;
   });
 }
 
@@ -174,6 +165,13 @@ if (typeof window !== "undefined") {
 function thumbOf(url: string, w: number): string {
   return url.startsWith("/api/img/") ? viaDirect(url, String(w), `${url}?w=${w}`) : url;
 }
+async function polishText(prompt: string, level: CanvasDraft["polishLevel"]): Promise<string> {
+  const res = await fetch("/api/polish", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, level }) });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.ok || typeof data.prompt !== "string" || !data.prompt.trim()) throw new Error(data?.error || "提示词润色失败");
+  return data.prompt;
+}
+
 /** The original picture, straight from storage when possible. */
 function fullOf(url: string): string {
   return url.startsWith("/api/") ? viaDirect(url, "full", url) : url;
@@ -187,6 +185,7 @@ function formatDuration(ms?: number): string | null {
 }
 
 type PendingJob = EditMetadata & {
+  canvasBoard?: string;
   /** When 生成 was clicked (2026-11-06 用户: 用时比体感短 — it now includes 提示词优化 and the upload). */
   startedAt?: number;
   taskId: string;
@@ -393,6 +392,11 @@ function writePending(list: PendingJob[]) {
   if (list.length) localStorage.setItem(PENDING_KEY, JSON.stringify(list));
   else localStorage.removeItem(PENDING_KEY);
 }
+function addPending(list: PendingJob[]) {
+  const byId = new Map(readPending().map((p) => [p.taskId, p]));
+  for (const p of list) byId.set(p.taskId, p);
+  writePending([...byId.values()]);
+}
 function dropPending(taskId: string) {
   writePending(readPending().filter((p) => p.taskId !== taskId));
 }
@@ -586,8 +590,32 @@ export default function StudioPage() {
   // 2026-11-10 (用户: 画布要能新建 画布1 2 3): several boards per account, kept in this browser.
   const [boards, setBoards] = useState<{ id: string; name: string }[]>([{ id: "1", name: "画布1" }]);
   const [boardId, setBoardId] = useState("1");
+  const [boardJobs, setBoardJobs] = useState<BoardJob[]>([]);
+  const jobsPlaced = useCallback((done: BoardJob[]) => {
+    setBoardJobs((list) => list.filter((job) => !done.includes(job)));
+  }, []);
+  const placeJobs = useCallback((jobs: PendingJob[], failed = false) => {
+    const added = jobs.filter((p) => p.canvasBoard || p.canvasLayout?.frame.node)
+      .map((p) => ({ gid: p.taskId, frame: p.canvasLayout?.frame.node, board: p.canvasBoard, failed }));
+    if (added.length) setBoardJobs((list) => [...list.filter((j) => !added.some((a) => a.gid === j.gid)), ...added]);
+  }, []);
   const [boardMenu, setBoardMenu] = useState(false);
   const [boardDelArm, setBoardDelArm] = useState<string | null>(null);
+  const boardMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!boardMenu) return;
+    const close = () => { setBoardMenu(false); setBoardDelArm(null); };
+    const outside = (e: Event) => { if (!(e.target instanceof Node && boardMenuRef.current?.contains(e.target))) close(); };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("focusin", outside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [boardMenu]);
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
   const [editingNode, setEditingNode] = useState("");
@@ -621,6 +649,17 @@ export default function StudioPage() {
   }, [openPanel]);
   const [panelLeft, setPanelLeft] = useState(0);
   const chipRowRef = useRef<HTMLDivElement>(null);
+  const modelPopupRef = useRef<HTMLDivElement>(null);
+  const [modelAnchor, setModelAnchor] = useState<React.CSSProperties | null>(null);
+  const anchorModel = (trigger: HTMLElement) => {
+    const r = trigger.getBoundingClientRect(), w = Math.min(300, window.innerWidth - 16);
+    const above = r.top - 16, below = window.innerHeight - r.bottom - 16;
+    const up = above >= below;
+    setModelAnchor({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), width: w,
+      ...(up ? { bottom: window.innerHeight - r.top + 8 } : { top: r.bottom + 8 }),
+      maxHeight: Math.max(48, Math.min(window.innerHeight * 0.56, up ? above : below)) });
+  };
+  const renderSettingPanel = (panel: React.ReactElement) => openPanel === "model" && modelAnchor ? createPortal(panel, document.body) : panel;
   // 用户 2026-11-11 (参数不要两排): the settings row stays on one line and shrinks to fit a narrow box.
   useEffect(() => {
     const row = chipRowRef.current;
@@ -664,11 +703,20 @@ export default function StudioPage() {
   // A setting's menu closes when you click anywhere else.
   useEffect(() => {
     if (!openPanel) return;
-    const close = (e: MouseEvent) => {
-      if (!chipRowRef.current?.contains(e.target as Node)) setOpenPanel(null);
+    const close = (e: PointerEvent) => {
+      const el = e.target as Node;
+      if (!chipRowRef.current?.contains(el) && !modelPopupRef.current?.contains(el)) setOpenPanel(null);
     };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpenPanel(null); } };
+    const resized = () => setOpenPanel(null);
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("resize", resized);
+    return () => {
+      document.removeEventListener("pointerdown", close, true);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("resize", resized);
+    };
   }, [openPanel]);
   // History is open by default (用户 2026-11-05); fold it to a corner icon any time.
   const [histHidden, setHistHidden] = useState(false);
@@ -754,6 +802,17 @@ export default function StudioPage() {
   const [compareMode, setCompareMode] = useState<CompareMode>("slider");
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
+  const frameTimes = useRef(new Map<string, Timing>());
+  const [frameProgress, setFrameProgress] = useState(new Map<string, number>());
+  const paintProgress = useCallback(() => {
+    setFrameProgress(new Map([...frameTimes.current].map(([id, t]) => [id, progressFor(t, Date.now())])));
+  }, []);
+  const hasFrameJobs = frameProgress.size > 0;
+  useEffect(() => {
+    if (!hasFrameJobs) return;
+    const timer = window.setInterval(paintProgress, 400);
+    return () => clearInterval(timer);
+  }, [hasFrameJobs, paintProgress]);
   const timingRef = useRef<Timing>({
     step: "render",
     stepStart: 0,
@@ -802,6 +861,23 @@ export default function StudioPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const promptMirrorRef = useRef<HTMLDivElement>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptOverflows, setPromptOverflows] = useState(false);
+  useEffect(() => { setPromptExpanded(false); }, [editingNode, canvasOn]);
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el || !canvasOn || !editingNode) return;
+    const measure = () => {
+      if (!el.clientWidth) return;
+      const css = getComputedStyle(el);
+      const threeLines = parseFloat(css.lineHeight) * 3 + parseFloat(css.paddingTop) + parseFloat(css.paddingBottom);
+      setPromptOverflows(el.scrollHeight > Math.ceil(threeLines) + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [prompt, canvasOn, editingNode]);
   const resultRef_ = useRef<HTMLElement>(null);
   const fileBlobRef = useRef<File | null>(null);
   /** A reference still downloading after 重新编辑 (the picture already shows). */
@@ -811,9 +887,12 @@ export default function StudioPage() {
 
   const jobRef = useRef(0);
   const busyRef = useRef(false);
+  const mounted = useRef(true);
 
   useEffect(() => {
+    mounted.current = true;
     return () => {
+      mounted.current = false;
       jobRef.current++;
     };
   }, []);
@@ -1252,7 +1331,7 @@ export default function StudioPage() {
       const blob = await r.blob();
       return new File([blob], `ref-${i + 1}.${blob.type.split("/")[1] || "png"}`, { type: blob.type || "image/png" });
     })).then((files) => {
-      if (refLoadRef.current !== loading) return null;
+      if (refLoadRef.current !== loading) return files;
       refLoadRef.current = null;
       fileBlobRef.current = files[0];
       setExtraRefs(files.slice(1).map((file, i) => ({ file, url: fullOf(urls[i + 1]) })));
@@ -1338,7 +1417,16 @@ export default function StudioPage() {
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
-      const files = e.clipboardData?.files;
+      const data = e.clipboardData;
+      if (!data || e.defaultPrevented) return;
+      const target = e.target;
+      const editingText = target instanceof HTMLElement && (target.matches("input,textarea,select") || target.isContentEditable);
+      if (canvasOnRef.current && !editingText && canvasApi.current?.pasteNodes(data)) {
+        e.preventDefault();
+        return;
+      }
+      if (editingText && data.getData("text/plain")) return;
+      const files = data.files;
       if (!files || !files.length) return;
       const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
       if (!images.length) return;
@@ -1390,10 +1478,10 @@ export default function StudioPage() {
     };
   }, [addRefs]);
 
-  const pollTask = useCallback(async (taskId: string, job: number) => {
+  const pollTask = useCallback(async (taskId: string, job: number | null) => {
     const start = Date.now();
     let failures = 0;
-    while (jobRef.current === job) {
+    while (mounted.current && (job === null || jobRef.current === job)) {
       if (Date.now() - start > 600_000) {
         throw new Error("生成超时，请稍后重试");
       }
@@ -1401,12 +1489,12 @@ export default function StudioPage() {
       try {
         d = await fetchJson(`/api/task?taskId=${encodeURIComponent(taskId)}`);
       } catch (e) {
-        if (jobRef.current !== job) return null;
+        if ((job !== null && jobRef.current !== job)) return null;
         if (++failures >= 8) throw e;
         await sleep(2000);
         continue;
       }
-      if (jobRef.current !== job) return null;
+      if ((job !== null && jobRef.current !== job)) return null;
       if (!d?.ok) {
         if (++failures >= 8) throw new Error(d?.error || "查询任务失败");
         await sleep(2000);
@@ -1427,9 +1515,9 @@ export default function StudioPage() {
 
   /** Wait for one task, then show (first of the batch only) and record it. */
   const finishPending = useCallback(
-    async (pending: PendingJob, job: number, shown: { v: boolean }): Promise<GalleryItem | null> => {
+    async (pending: PendingJob, job: number | null, shown: { v: boolean }): Promise<GalleryItem | null> => {
       const done = await pollTask(pending.taskId, job);
-      if (done === null || jobRef.current !== job) return null;
+      if (!mounted.current || done === null || (job !== null && jobRef.current !== job)) return null;
       const url = done.outputs?.[0];
       if (!url) throw new Error(done.error || "任务完成但未返回图片");
       const item: GalleryItem = {
@@ -1448,11 +1536,10 @@ export default function StudioPage() {
       setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
         (a, b) => b.createdAt - a.createdAt
       ));
-      setBatchDone((n) => n + 1);
-      if (!shown.v) {
+      if (job !== null) setBatchDone((n) => n + 1);
+      if (job !== null && !shown.v) {
         shown.v = true;
         showItem(item);
-        setHistHidden(false);
         setDetailOpen(false);
       }
       dropPending(pending.taskId);
@@ -1479,6 +1566,7 @@ export default function StudioPage() {
   /** Run a whole batch in parallel; errors only surface if every image failed. */
   const finishBatch = useCallback(
     async (pendings: PendingJob[], job: number) => {
+      placeJobs(pendings);
       setBatch(pendings.map((p) => p.taskId));
       setBatchTotal(pendings.length);
       setBatchDone(0);
@@ -1496,13 +1584,14 @@ export default function StudioPage() {
           if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
         })
         .catch(() => {});
+      placeJobs(pendings.filter((_, i) => results[i].status === "rejected"), true);
       const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
       if (failed.length === results.length) throw failed[0].reason;
       if (failed.length) {
         setError(`${failed.length} 张没有生成成功：${failed[0].reason?.message || "任务失败"}`);
       }
     },
-    [finishPending]
+    [finishPending, placeJobs]
   );
 
   const resumePending = useCallback((pendings: PendingJob[]) => {
@@ -1533,7 +1622,7 @@ export default function StudioPage() {
         if (jobRef.current !== job) return;
         const message = e?.message || "查询任务失败";
         setError(`${message}（刷新页面可继续查询）`);
-        if (/任务失败|已完成但未返回|不存在|错误码|审核/.test(message)) writePending([]);
+        if (/任务失败|已完成但未返回|不存在|错误码|审核/.test(message)) pendings.forEach((p) => dropPending(p.taskId));
       })
       .finally(() => {
         if (jobRef.current === job) {
@@ -1556,6 +1645,8 @@ export default function StudioPage() {
         setError("这张图暂时不能放大");
         return;
       }
+      const canvasBoard = canvasOnRef.current ? boardId : undefined;
+      const canvasLayout = canvasBoard ? canvasApi.current?.layout() : undefined;
       try {
         const d = await fetchJson("/api/upscale", {
           method: "POST",
@@ -1564,26 +1655,25 @@ export default function StudioPage() {
         });
         if (!d?.ok || !d.taskId) throw new Error(d?.error || "高清放大失败");
         const now = Date.now();
-        const p: PendingJob = { taskId: d.taskId, mode: g.mode, model: g.model as ModelId | undefined, prompt: g.prompt, createdAt: now, startedAt: now };
-        writePending([p]);
+        const p: PendingJob = { canvasBoard, canvasLayout, taskId: d.taskId, mode: g.mode, model: g.model as ModelId | undefined, prompt: g.prompt, createdAt: now, startedAt: now };
+        addPending([p]);
         resumePending([p]);
       } catch (e: any) {
         setError(e?.message || "高清放大失败");
       }
     },
-    [gallery, resumePending]
+    [gallery, resumePending, boardId]
   );
 
   const resumePendingRef = useRef(resumePending);
   resumePendingRef.current = resumePending;
 
   const generate = useCallback(async () => {
-    if (busyRef.current) return;
-    const leftover = readPending();
-    if (leftover.length) {
-      resumePending(leftover);
-      return;
-    }
+    const canvasBoard = canvasOnRef.current ? boardId : undefined;
+    const hasFrame = !!(canvasBoard && canvasApi.current?.layout()?.frame.node);
+    if (!hasFrame && busyRef.current) return;
+    const leftover = hasFrame ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
+    if (leftover.length) { resumePending(leftover); return; }
     setError(null);
     if ((mode === "t2i" || !reverse) && !prompt.trim()) {
       setError("请先输入描述");
@@ -1593,49 +1683,55 @@ export default function StudioPage() {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
     }
-    const refAtClick = refVersion.current;
-    const loadingRefs = refLoadRef.current;
-    const restored = loadingRefs ? await loadingRefs : undefined;
-    if (busyRef.current || restored === null || refVersion.current !== refAtClick) return;
-    const imageFile = restored?.[0] ?? fileBlobRef.current;
-    const supplemental = restored ? restored.slice(1) : extraRefs.map((r) => r.file);
-    const canvasLayout = canvasOnRef.current ? canvasApi.current?.layout() : undefined;
-    if (mode === "i2i" && !imageFile) {
-      setError("请先上传参考图");
-      return;
-    }
-    busyRef.current = true;
-    const job = ++jobRef.current;
+    const refAtClick = refVersion.current, loadingRefs = refLoadRef.current;
+    const firstFile = fileBlobRef.current, extraFiles = extraRefs.map((r) => r.file);
+    if (mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
+    const canvasLayout = hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
+      { ...composeSnapRef.current, summary: liveSummaryRef.current }) : undefined;
+    const frameId = canvasLayout?.frame.node;
+    const job = frameId ? null : ++jobRef.current;
+    if (!frameId) busyRef.current = true;
     const clickedAt = Date.now();
     const useReverse = mode === "i2i" && reverse && reversedForRef.current !== preview;
     const renderKey = `${model}:${mode}`;
-    timingRef.current = {
-      step: useReverse ? "describe" : "submit",
-      stepStart: Date.now(),
-      est: {
-        describe: useReverse ? estimateSeconds("describe", DEFAULT_SECONDS.describe) : 0,
-        submit: DEFAULT_SECONDS.submit,
-        render: estimateSeconds(renderKey, DEFAULT_SECONDS[mode]),
-      },
-      renderKey,
+    let timing: Timing = {
+      step: useReverse ? "describe" : "submit", stepStart: clickedAt,
+      est: { describe: useReverse ? estimateSeconds("describe", DEFAULT_SECONDS.describe) : 0,
+        submit: DEFAULT_SECONDS.submit, render: estimateSeconds(renderKey, DEFAULT_SECONDS[mode]) }, renderKey,
     };
-    setJobVisual({
-      aspect: mode === "i2i" && preview ? previewAspect : width / height,
-      reference: mode === "i2i" ? preview : null,
-    });
-    setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : []);
-    setCompareIdx(0);
-    setLoading(true);
-    // On phones the result sits below the form: bring it into view.
-    if (window.innerWidth < 1024) {
-      window.setTimeout(scrollToResult, 60);
+    const step = (s: ProgressStep) => {
+      if (!frameId) return startStep(s);
+      timing = { ...timing, step: s, stepStart: Date.now() };
+      frameTimes.current.set(frameId, timing); paintProgress();
+    };
+    if (frameId) { frameTimes.current.set(frameId, timing); paintProgress(); }
+    else {
+      timingRef.current = timing;
+      setJobVisual({
+        aspect: mode === "i2i" && preview ? previewAspect : width / height,
+        reference: mode === "i2i" ? preview : null,
+      });
+      setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : []);
+      setCompareIdx(0);
+      setLoading(true);
+      // On phones the result sits below the form: bring it into view.
+      if (window.innerWidth < 1024) {
+        window.setTimeout(scrollToResult, 60);
+      }
+      setResultUrl(null);
+      setBatch([]);
+      setJobCount(count);
+      setResultRef(null);
+      setResultSize(null);
     }
-    setResultUrl(null);
-    setBatch([]);
-    setJobCount(count);
-    setResultRef(null);
-    setResultSize(null);
     try {
+      const restored = loadingRefs ? await loadingRefs : undefined;
+      if (restored === null || (!frameId && refVersion.current !== refAtClick)) {
+        if (frameId) throw new Error("参考图读取失败，请重新选择");
+        return;
+      }
+      const imageFile = restored?.[0] ?? firstFile;
+      const supplemental = restored ? restored.slice(1) : extraFiles;
       let data: any;
       const userPrompt = prompt.trim();
       let finalPrompt = userPrompt;
@@ -1652,8 +1748,8 @@ export default function StudioPage() {
         } catch (e: any) {
           if (!userPrompt) throw new Error(`${e?.message || "提示词反推失败"}，请手动填写描述后重试`);
         }
-        if (jobRef.current !== job) return;
-        startStep("submit");
+        if (!mounted.current || (job !== null && jobRef.current !== job)) return;
+        step("submit");
       }
       if (mode === "t2i") {
         data = await fetchJson("/api/generate/t2i", {
@@ -1663,7 +1759,7 @@ export default function StudioPage() {
             prompt: finalPrompt, canvasLayout,
             editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
-            count,
+            count: frameId ? 1 : count,
             ...sizeFor(clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
               width: clampRes(Number(widthText) || width),
               height: clampRes(Number(heightText) || height),
@@ -1683,7 +1779,7 @@ export default function StudioPage() {
           if (userPrompt) fd.append("userPrompt", userPrompt);
         }
         fd.append("model", model);
-        fd.append("count", String(count));
+        fd.append("count", String(frameId ? 1 : count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         fd.append("quality", quality);
@@ -1699,11 +1795,11 @@ export default function StudioPage() {
         for (const f of supplemental.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(f), "ref.jpg");
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }
-      if (jobRef.current !== job) return;
+      if (!mounted.current || (job !== null && jobRef.current !== job)) return;
       if (!data?.ok || !data?.taskId) {
         throw new Error(data?.error || "任务创建失败");
       }
-      startStep("render");
+      step("render");
       const created: { taskId: string; seed?: number }[] =
         Array.isArray(data.tasks) && data.tasks.length
           ? data.tasks
@@ -1716,26 +1812,36 @@ export default function StudioPage() {
         model,
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
-        refUrls: data.refUrls, settings: data.settings, canvasLayout: data.canvasLayout,
+        refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard,
         createdAt: now + i,
         startedAt: clickedAt,
       }));
-      writePending(pendings);
+      addPending(pendings);
+      if (frameId) {
+        placeJobs(pendings);
+        try {
+          await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
+          recordSeconds(renderKey, (Date.now() - timing.stepStart) / 1000);
+          void fetchJson("/api/status").then((d) => { if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney)); }).catch(() => {});
+        } catch (error) { placeJobs(pendings, true); throw error; }
+        return;
+      }
       try {
         localStorage.setItem(TIMING_KEY, JSON.stringify({ ids: pendings.map((p) => p.taskId), t: timingRef.current, aspect: mode === "i2i" && preview ? previewAspect : width / height }));
       } catch {}
-      await finishBatch(pendings, job);
+      await finishBatch(pendings, job!);
     } catch (e: any) {
-      if (jobRef.current === job) {
+      if (mounted.current && (frameId || jobRef.current === job)) {
         setError(e?.message || "网络错误");
       }
     } finally {
-      if (jobRef.current === job) {
+      if (frameId) { frameTimes.current.delete(frameId); if (mounted.current) paintProgress(); }
+      else if (jobRef.current === job) {
         busyRef.current = false;
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
@@ -1767,7 +1873,7 @@ export default function StudioPage() {
       reverseToBox();
       return;
     }
-    if (busyRef.current) {
+    if (busyRef.current && !(canvasOnRef.current && canvasApi.current?.layout()?.frame.node)) {
       setQueued((n) => Math.min(9, n + 1));
       flash("已排队，这张画完就开始");
       return;
@@ -1864,11 +1970,18 @@ export default function StudioPage() {
       });
       if (!d?.ok || !d.token) throw new Error(d?.error || "分享失败");
       const link = `${location.origin}/?share=${d.token}`;
+      const until = new Date(d.expiresAt).toLocaleString("zh-CN", { hour12: false, timeZoneName: "short" });
+      const message = `【AI Studio】${user} 向你分享了工作流
+
+分享口令：${d.token}
+
+在画布空白处粘贴本条消息或口令即可导入，${until} 前有效。
+${link}`;
       try {
-        await navigator.clipboard.writeText(link);
-        flash("分享链接已复制。朋友打开后，会在他的画布里多一份，可以接着改");
+        await navigator.clipboard.writeText(message);
+        flash("分享口令已复制，7 天内可在画布粘贴导入");
       } catch {
-        window.prompt("复制这个链接发给朋友", link);
+        window.prompt("复制分享消息或口令发给朋友", message);
       }
     } catch (e: any) {
       flash(e?.message || "分享失败");
@@ -2097,20 +2210,18 @@ export default function StudioPage() {
     }
   }, []);
 
+  const changePolishLevel = (level: CanvasDraft["polishLevel"]) => {
+    setPolishLevel(level);
+    try { localStorage.setItem("ais-polish-level", level); } catch {}
+  };
   const runPolish = async () => {
     const before = prompt;
     if (!before.trim() || polishing) return;
     setPolishing(true);
     try {
-      const res = await fetch("/api/polish", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: before, level: polishLevel }),
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok || !json?.ok) throw new Error(json?.error || "提示词优化失败");
-      editPrompt(json.prompt);
-      setPolishUndo({ before, after: json.prompt });
+      const after = await polishText(before, polishLevel);
+      editPrompt(after);
+      setPolishUndo({ before, after });
     } catch (e: any) {
       flash(e?.message || "提示词优化失败");
     } finally {
@@ -2297,7 +2408,7 @@ export default function StudioPage() {
         className="pointer-events-none fixed inset-0"
         style={{
           background:
-            "radial-gradient(900px 420px at 50% -6%, rgba(0,113,227,0.06), transparent 55%), linear-gradient(180deg,light-dark(#fbfbfd,#050507),var(--color-page))",
+            "radial-gradient(900px 420px at 50% -6%, rgba(0,113,227,0.06), transparent 55%), linear-gradient(180deg,light-dark(#fbfbfd,#2b2d32),var(--color-page))",
         }}
       />
 
@@ -2324,9 +2435,10 @@ export default function StudioPage() {
             );
           })}
           {canvasOn && (
-            <div className="relative">
+            <div className="relative" ref={boardMenuRef}>
               <button
                 type="button"
+                aria-expanded={boardMenu}
                 data-tip={`画布列表（当前：${boards.find((b) => b.id === boardId)?.name ?? "画布1"}）`}
                 data-tip-start=""
                 aria-label="画布列表"
@@ -2497,6 +2609,7 @@ export default function StudioPage() {
                   }}
                   onUpscale={(gid) => upscaleItem(gid)}
                   sources={boardSources}
+                  frameProgress={frameProgress}
                   pendingIds={loading ? batch : []}
                   loading={loading}
                   progress={progress}
@@ -2509,7 +2622,11 @@ export default function StudioPage() {
                   flash={flash}
                   apiRef={canvasApi}
                   onScale={setCanvasScale}
-                  onCompose={() => canvasApi.current?.addFrame()}
+                  boardJobs={boardJobs}
+                  onJobsPlaced={jobsPlaced}
+                  polishLevel={polishLevel}
+                  onPolishLevel={changePolishLevel}
+                  onPolish={polishText}
                   onOpenHistory={() => toggleHistory(false)}
                   onShare={shareBoard}
                   prefs={boardPrefs}
@@ -2687,17 +2804,6 @@ export default function StudioPage() {
           )}
 
         </section>
-        {canvasOn && !editingNode && !composeOpen && (
-          // 用户 2026-11-11: 生成新图 puts an empty 生成框 on the board (upload into it or link pictures / text to it).
-          <button
-            type="button"
-            onClick={() => (canvasApi.current ? canvasApi.current.addFrame() : setComposeOpen(true))}
-            className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-ink px-4 py-2.5 text-[13px] font-medium text-panel shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
-          >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
-            生成新图
-          </button>
-        )}
         <section
           ref={composeRef}
           className={
@@ -2746,7 +2852,7 @@ export default function StudioPage() {
                   else addRefs(files);
                 }}
                 data-drag={dragState}
-                className={`apple-card relative rounded-[22px] border bg-panel transition focus-within:border-[rgba(0,113,227,0.45)] ${
+                className={`apple-card ${canvasOn ? "canvas-compose-card" : ""} relative rounded-[22px] border bg-panel transition focus-within:border-[rgba(0,113,227,0.45)] ${
                   dragState === "zone"
                     ? "scale-[1.01] border-accent ring-4 ring-accent/20"
                     : dragState === "page" && !canvasOn
@@ -2854,7 +2960,7 @@ export default function StudioPage() {
                           {canvasOn && canvasSel.length > limit && (
                             <button
                               type="button"
-                              onClick={() => { setPanelLeft(0); setMultiOnly(true); setOpenPanel("model"); }}
+                              onClick={(e) => { anchorModel(chipRowRef.current?.querySelector<HTMLElement>('[data-setting="model"]') ?? e.currentTarget); setMultiOnly(true); setOpenPanel("model"); }}
                               className="self-center rounded-xl bg-[light-dark(#fff8e6,#352a15)] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[color:light-dark(#9a6700,#f5c451)] ring-1 ring-[#f5c451]/50 hover:bg-[light-dark(#fff1cc,#443319)]"
                             >
                               连进来 {canvasSel.length} 张图，这个模型只能用 {limit} 张
@@ -2926,8 +3032,8 @@ export default function StudioPage() {
                       // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
                       fieldSizing: "content",
                       minHeight: 76,
-                      maxHeight: "22vh",
-                      overflowY: "auto",
+                      maxHeight: canvasOn ? (promptExpanded ? "48vh" : "calc(3lh + 1.5rem)") : "22vh",
+                      overflowY: canvasOn && !promptExpanded ? "hidden" : "auto",
                       ...(prompt ? {} : { color: "var(--color-ink)" }),
                     } as React.CSSProperties}
                   />
@@ -2954,6 +3060,14 @@ export default function StudioPage() {
                 </div>
 
 
+                {canvasOn && promptOverflows && <button type="button" aria-expanded={promptExpanded} className="mb-1 ml-3.5 text-[12px] font-medium text-accent"
+                  onClick={() => {
+                    if (promptExpanded && promptRef.current) {
+                      promptRef.current.scrollTop = 0;
+                      if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = 0;
+                    }
+                    setPromptExpanded((v) => !v);
+                  }}>{promptExpanded ? "收起提示词" : "展开提示词"}</button>}
                 {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
                 {false && (
                   <div className="flex items-center gap-2 px-2 pb-2 pt-1">
@@ -2969,14 +3083,16 @@ export default function StudioPage() {
                     </div>
                   </div>
                 )}
-                <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
+                <div ref={chipRowRef} className="compose-settings relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
                   {canvasOn && !editingNode && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-edge/[0.04] text-secondary hover:bg-edge/[0.08]">×</button>
                   )}
-                  {openPanel && (
+                  {openPanel && renderSettingPanel(
                     <div
-                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
-                      style={{ left: panelLeft }}
+                      ref={openPanel === "model" ? modelPopupRef : undefined}
+                      data-setting-menu={openPanel}
+                      className={`${openPanel === "model" ? "fixed z-[100] overscroll-contain" : "animate-pop-in absolute bottom-full z-50 mb-2"} max-h-[56vh] overflow-y-auto rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
+                      style={openPanel === "model" && modelAnchor ? modelAnchor : { left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-muted">
                         {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推" } as Record<string, string>)[openPanel]}
@@ -3040,7 +3156,7 @@ export default function StudioPage() {
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
                     {openPanel === "reverse" && <Choice note="根据参考图自动写画面描述" options={[["direct", "直接生成（默认）", "反推完马上出图"], ["fill", "先填到提示词框", "反推结果放进框里，你改好再点生成"]]} value={reverseMode} onPick={(v) => { setReverseMode(v as "direct" | "fill"); try { localStorage.setItem("ais-reverse-mode", v); } catch {} setOpenPanel(null); }} />}
-                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低", "只理顺语句、改错字，几乎不改内容（约 3 秒）"], ["medium", "中（默认）", "说得更清楚具体，不加新东西（约 4 秒）"], ["high", "高", "扩写成完整的专业提示词（约 9 秒）"]]} value={polishLevel} onPick={(v) => { setPolishLevel(v as typeof polishLevel); try { localStorage.setItem("ais-polish-level", v); } catch {} setOpenPanel(null); }} />}
+                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低", "只理顺语句、改错字，几乎不改内容（约 3 秒）"], ["medium", "中（默认）", "说得更清楚具体，不加新东西（约 4 秒）"], ["high", "高", "扩写成完整的专业提示词（约 9 秒）"]]} value={polishLevel} onPick={(v) => { changePolishLevel(v as typeof polishLevel); setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
@@ -3091,8 +3207,10 @@ export default function StudioPage() {
                     <button
                       key={c.key}
                       type="button"
+                      data-setting={c.key}
                       aria-expanded={openPanel === c.key}
                       onClick={(e) => {
+                        if (c.key === "model") anchorModel(e.currentTarget);
                         const row = chipRowRef.current;
                         const x = e.currentTarget.offsetLeft;
                         setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
@@ -3110,7 +3228,7 @@ export default function StudioPage() {
                   ))}
                   {chipsMore && mode === "i2i" && !findModel(model)?.billing && (
                     // 用户 2026-11-11: one chip — 提示词反推 is the parent switch, how to use it is its child option.
-                    <div className={`flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${reverse ? "bg-accent/[0.08] ring-1 ring-accent/25" : "bg-edge/[0.04]"}`}>
+                    <div className={`compose-split flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${reverse ? "bg-accent/[0.08] ring-1 ring-accent/25" : "bg-edge/[0.04]"}`}>
                       <button
                         type="button"
                         role="switch"
@@ -3150,7 +3268,7 @@ export default function StudioPage() {
                   )}
                   {/* 用户 2026-11-10: 提示词润色 shows once there is a prompt to polish. */}
                   {(prompt.trim() || polishing) && (
-                  <div className="animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-accent/[0.08] text-[12px] font-medium text-accent ring-1 ring-accent/25 transition hover:ring-accent/50">
+                  <div className="compose-split animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-accent/[0.08] text-[12px] font-medium text-accent ring-1 ring-accent/25 transition hover:ring-accent/50">
                     <button
                       type="button"
                       onClick={runPolish}
@@ -3190,7 +3308,7 @@ export default function StudioPage() {
                       撤销润色
                     </button>
                   )}
-                  <div className="ml-auto">
+                  <div className="compose-submit">
                     <button
               onClick={startOrQueue}
               disabled={
@@ -3198,7 +3316,9 @@ export default function StudioPage() {
               }
               className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
-              {loading ? (
+              {canvasOn && frameProgress.has(editingNode) ? (
+                <><span>{Math.floor(frameProgress.get(editingNode)!)}% · 再生成一张</span><span className="generate-price">¥{btnPrice}</span></>
+              ) : loading ? (
                 <>
                   <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
                   {batchTotal > 1 ? `${batchDone}/${batchTotal} 张` : `${Math.floor(progress)}%`}{queued ? ` · 排队 ${queued}` : " · 再点排队"}

@@ -1,10 +1,27 @@
-import { type pictureParams, pictureRefs, type CanvasLayout, type EditablePicture } from "./edit-recipe";
+import { pictureParams, pictureRefs, type CanvasLayout, type EditablePicture } from "./edit-recipe";
 
 export type CanvasDraft = ReturnType<typeof pictureParams> & {
   widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; reverseOn: boolean; summary: string;
 };
+export function pictureDraft(g: EditablePicture): CanvasDraft {
+  const p = pictureParams(g);
+  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "medium", reverseOn: false, summary: "" };
+}
+/** Share only editor fields, never account or task metadata. */
+export function readDraft(v: unknown): CanvasDraft | undefined {
+  if (!v || typeof v !== "object") return;
+  const data = v as Record<string, unknown>;
+  const base = pictureDraft({ id: "", mode: "t2i", prompt: "", model: typeof data.model === "string" ? data.model : undefined });
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, fallback] of Object.entries(base)) {
+    const x = data[k];
+    if (k !== "model" && typeof x === typeof fallback && (typeof x !== "number" || Number.isFinite(x)))
+      out[k] = typeof x === "string" ? x.slice(0, 8000) : x;
+  }
+  return out as CanvasDraft;
+}
 export type BoardNode = {
-  id: string; gid?: string; src?: string;
+  id: string; gid?: string; src?: string; pendingGid?: string;
   x: number; y: number; w: number; h: number;
   from?: string[]; fit?: boolean;
   kind?: "text" | "gen" | "result" | "image";

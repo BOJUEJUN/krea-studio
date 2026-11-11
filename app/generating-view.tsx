@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
  * patch, and the percentage in a pill at the bottom right.
  */
 
-type Props = { aspect: number; progress: number; compact?: boolean };
+type Props = { aspect: number; progress: number; compact?: boolean; fill?: boolean };
 
 /** Fits an aspect-correct, rounded frame inside whatever space it is given. */
 function Frame({ aspect, children, tight }: { aspect: number; children: React.ReactNode; tight?: boolean }) {
@@ -144,7 +144,7 @@ function blobDensity(u: number, v: number, w: number, h: number, t: number, sd: 
   return blob * edge;
 }
 
-export function GeneratingView({ aspect, progress, compact }: Props) {
+export function GeneratingView({ aspect, progress, compact, fill }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -208,8 +208,8 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
     };
   }, []);
 
-  return (
-    <Frame aspect={aspect} tight={compact}>
+  const content = (
+    <>
       <div ref={wrapRef} className="absolute inset-0 bg-well">
         <canvas ref={ref} className="absolute inset-0 h-full w-full [html.theme-dark_&]:invert" />
       </div>
@@ -220,6 +220,7 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
       >
         {Math.floor(progress)}%
       </span>
-    </Frame>
+    </>
   );
+  return fill ? <div className="relative h-full w-full">{content}</div> : <Frame aspect={aspect} tight={compact}>{content}</Frame>;
 }

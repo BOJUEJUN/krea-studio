@@ -3,9 +3,12 @@
 import { createPortal } from "react-dom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
-import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, restoreWorkflow, selectedGeneration, uid, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
+import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
+import { shareCodeIn } from "@/lib/canvas-share-code";
+import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, pictureDraft, restoreWorkflow, selectedGeneration, uid, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
 
 /**
  * 2026-11-10 (用户: 页面可以切换成自由画布). An infinite board, modelled on what makes Krea / Visual Electric /
@@ -14,15 +17,17 @@ import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as up
  * - drop pictures from history or from the computer; click / Shift-click / Shift-drag to select; drag to move;
  *   the corner handle resizes with the picture's own shape; ⌘Z / ⌘⇧Z undo and redo; Delete removes; ⌘D copies;
  * - a toolbar floats over the selection (参考图 / 看大图 / 下载 / 置顶 / 删除);
- * - new results appear next to the selected pictures as placeholders that fill in, joined to their sources by a line;
+ * - generation updates the frame that submitted it and keeps its input wires;
  * - everything is saved in this browser per account.
  */
 
 export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string; recipe?: EditablePicture };
+export type BoardJob = { gid: string; frame?: string; board?: string; failed?: boolean };
 export type BoardApi = {
   add: (gid: string) => void;
   reedit: (g: EditablePicture) => void;
   layout: () => CanvasLayout | undefined;
+  startFrame: (busy: ReadonlySet<string>, draft: CanvasDraft) => CanvasLayout | undefined;
   saveDraft: (id: string, draft: CanvasDraft) => void;
   removeInput: (slot: number) => void;
   attachFiles: (files: File[], slot?: number) => void;
@@ -34,12 +39,11 @@ export type BoardApi = {
   zoom: (to: "in" | "out" | "fit" | number) => void;
   /** Pasted pictures: placed under the mouse when it is over the board, else in the middle. */
   paste: (files: File[]) => void;
+  pasteNodes: (data: DataTransfer) => boolean;
   /** The compose box edits the selected text node. */
   setText: (text: string) => void;
   /** The board with every picture as a link (for 分享); null while a picture is still uploading. */
   snapshot: (onlySelected?: boolean) => { nodes: any[]; view: View } | null;
-  /** 生成新图: an empty 生成框 in the middle of the view, selected. */
-  addFrame: () => void;
 };
 
 type View = { x: number; y: number; s: number };
@@ -48,6 +52,15 @@ type Saved = { nodes: Node[]; view: View; updatedAt?: number };
 const MIN_S = 0.1;
 const MAX_S = 4;
 const GAP = 40;
+const typing = (target: EventTarget | null) => target instanceof HTMLElement &&
+  (target.matches("input,textarea,select") || target.isContentEditable);
+function writeNodeCopy(e: ClipboardEvent, text: string) {
+  if (!e.clipboardData) return false;
+  e.clipboardData.setData("text/plain", text);
+  try { e.clipboardData.setData(nodeMime, text); } catch { /* Plain text also works in Safari. */ }
+  e.preventDefault();
+  return true;
+}
 
 function load(key: string): Saved | null {
   try {
@@ -75,7 +88,10 @@ export function CanvasBoard({
   storageKey,
   cloudId,
   sources,
+  boardJobs,
+  onJobsPlaced,
   pendingIds,
+  frameProgress,
   loading,
   progress,
   jobAspect,
@@ -94,7 +110,6 @@ export function CanvasBoard({
   onReedit,
   onUpscale,
   onScale,
-  onCompose,
   onOpenHistory,
   onCompare,
   prefs,
@@ -102,6 +117,7 @@ export function CanvasBoard({
   summaryFor,
   onShare,
   onDescribe,
+  polishLevel, onPolishLevel, onPolish,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
@@ -113,8 +129,6 @@ export function CanvasBoard({
   onUpscale?: (gid: string) => void;
   /** When set the board hides its own zoom buttons; the page shows the level in its rail instead. */
   onScale?: (s: number) => void;
-  /** Right-click menu on empty space: open the compose box / the history list. */
-  onCompose?: () => void;
   onOpenHistory?: () => void;
   /** 对比 (用户 2026-11-11): before may be null, then the page uses the picture's saved reference (gid). */
   onCompare?: (before: string | null, after: string, gid: string | null) => void;
@@ -125,6 +139,9 @@ export function CanvasBoard({
   onShare?: (onlySelected?: boolean) => void;
   /** 图片连到文本: the page writes a description of the picture (提示词反推). */
   onDescribe?: (url: string) => Promise<string>;
+  polishLevel: CanvasDraft["polishLevel"];
+  onPolishLevel: (level: CanvasDraft["polishLevel"]) => void;
+  onPolish: (text: string, level: CanvasDraft["polishLevel"]) => Promise<string>;
   /** The settings chosen for a picture (model + short list), shown under it when it is not being edited. */
   summaryFor?: (node: Node, hasPictures: boolean) => { model: string; cover?: string; detail: string } | null;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
@@ -136,7 +153,10 @@ export function CanvasBoard({
   /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
   cloudId?: string;
   sources: Map<string, BoardSource>;
+  boardJobs: BoardJob[];
+  onJobsPlaced: (jobs: BoardJob[]) => void;
   pendingIds: string[];
+  frameProgress: ReadonlyMap<string, number>;
   loading: boolean;
   progress: number;
   jobAspect: number;
@@ -171,7 +191,6 @@ export function CanvasBoard({
     navTimer.current = setTimeout(() => setNavOn(false), 1500);
   }, []);
   navRef.current = nav;
-  const addGenRef = useRef<() => void>(() => {});
   const prefsRef = useRef(prefs ?? { snap: true, grid: true, lines: true });
   prefsRef.current = prefs ?? { snap: true, grid: true, lines: true };
   useEffect(() => {
@@ -403,6 +422,36 @@ export function CanvasBoard({
   }, [zoomAt]);
 
   const deferred = useRef<(() => void)[]>([]);
+  const selectionClip = useCallback(() => copyNodes(nodesRef.current, selRef.current), []);
+  const placeClip = useCallback((clip: ReturnType<typeof copyNodes>, at?: { x: number; y: number }) => {
+    if (!clip.selected.length) return;
+    const copies = pasteNodes(clip, nodesRef.current, at);
+    commit((list) => [...list, ...copies.nodes]);
+    setSel(copies.selected);
+  }, [commit]);
+  const pasteAt = useCallback(() => {
+    const r = boxRef.current!.getBoundingClientRect(), p = lastPointer.current;
+    return p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom
+      ? toWorld(p.x, p.y) : toWorld(r.left + r.width / 2, r.top + r.height / 2);
+  }, [toWorld]);
+  const pasteText = useCallback((text: string, at: { x: number; y: number }) => {
+    const clip = decodeNodes(text);
+    if (clip) { placeClip(clip, at); return true; }
+    const token = shareCodeIn(text), board = boxRef.current;
+    if (!token || !board) return false;
+    void (async () => {
+      try {
+        const d = await (await fetch(`/api/canvas/share?t=${encodeURIComponent(token)}`, { cache: "no-store" })).json();
+        if (!d?.ok || !Array.isArray(d.nodes) || !d.nodes.length) throw new Error(d?.error || "分享口令无效");
+        if (board !== boxRef.current) return;
+        placeClip({ selected: d.nodes.map((n: Node) => n.id), nodes: d.nodes }, at);
+        flash(`已导入 ${d.nodes.length} 个节点`);
+      } catch (e) { flash(e instanceof Error ? e.message : "导入失败"); }
+    })();
+    return true;
+  }, [placeClip, flash]);
+  const sourcesRef = useRef(sources);
+  sourcesRef.current = sources;
   const [editClick, setEditClick] = useState(0);
   const explicitEdit = useRef<string | null>(null);
   // History cards call in here: put a picture on the board, or jump to it when it is already there.
@@ -450,6 +499,18 @@ export function CanvasBoard({
         const list = nodesRef.current;
         return captureLayout(list.filter((n) => selRef.current.has(n.id)), list, urlOfRef.current);
       },
+      startFrame: (busy, draft) => {
+        const list = nodesRef.current;
+        const frame = selectedGeneration(list.filter((n) => selRef.current.has(n.id)));
+        if (!frame) return;
+        if (!busy.has(frame.id) && !frame.pendingGid) return captureLayout([frame], list, urlOfRef.current);
+        const fork: Node = { id: uid(), kind: "gen", draft: { ...draft }, x: frame.x + frame.w + 2 * GAP,
+          y: frame.y, w: frame.w, h: frame.h, from: generationInputs(frame, list).map((n) => n.id) };
+        while (list.some((m) => m.x < fork.x + fork.w && m.x + m.w > fork.x && m.y < fork.y + fork.h && m.y + m.h > fork.y))
+          fork.y += fork.h + 2 * GAP;
+        commit((ns) => [...ns, fork]);
+        return captureLayout([fork], [...list, fork], urlOfRef.current);
+      },
       reedit: (g) => {
         if (!remoteReady.current) { deferred.current.push(() => api.reedit(g)); return; }
         const restored = restoreWorkflow(nodesRef.current, g, urlOfRef.current);
@@ -461,9 +522,9 @@ export function CanvasBoard({
       },
       zoom: () => {},
       paste: () => {},
+      pasteNodes: (data) => pasteText(data.getData(nodeMime) || data.getData("text/plain"), pasteAt()),
       setText: () => {},
       snapshot: () => null,
-      addFrame: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -505,22 +566,20 @@ export function CanvasBoard({
       if (added.length) commit((l) => [...l, ...added]);
       if (refIds.length) setSel(new Set(refIds));
     };
-    api.addFrame = () => addGenRef.current();
     api.snapshot = (onlySelected) => {
       const pick = onlySelected ? nodesRef.current.filter((n) => selRef.current.has(n.id)) : nodesRef.current;
       const ids = new Set(pick.map((n) => n.id));
-      const list = pick.map((n) => ({ ...n, from: n.from?.filter((f) => ids.has(f)) })).map((n) => (n.kind === "text" ? n : { ...n, kind: isResult(n) ? "result" : n.kind, src: urlOfRef.current(n) ?? undefined, gid: undefined, editOf: undefined }));
+      const list = pick.map((n) => {
+        const recipe = sourcesRef.current.get(n.gid ?? n.editOf ?? "")?.recipe;
+        const from = isGeneration(n) ? generationInputs(n, nodesRef.current).map((m) => m.id) : n.from;
+        return { ...n, from: from?.filter((id) => ids.has(id)), kind: isResult(n) ? "result" as const : n.kind,
+          src: urlOfRef.current(n) ?? undefined, gid: undefined, editOf: undefined, pendingGid: undefined,
+          draft: n.draft ?? (isGeneration(n) && recipe ? pictureDraft(recipe) : undefined) };
+      });
       if (list.some((n) => n.src?.startsWith("data:"))) return null;
       return { nodes: list.filter((n) => n.kind === "text" || n.kind === "gen" || n.src), view: viewRef.current };
     };
-    api.paste = (files) => {
-      const r = boxRef.current?.getBoundingClientRect();
-      if (!r) return;
-      const p = lastPointer.current;
-      const inside = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
-      const at = inside ? toWorld(p.x, p.y) : toWorld(r.left + r.width / 2, r.top + r.height / 2);
-      addFilesRef.current(files, at);
-    };
+    api.paste = (files) => { void addFilesRef.current(files, pasteAt()); };
     api.setText = (text) => {
       const picked = nodesRef.current.filter((n) => selRef.current.has(n.id));
       const frame = selectedGeneration(picked);
@@ -539,7 +598,7 @@ export function CanvasBoard({
     return () => {
       apiRef.current = null;
     };
-  }, [apiRef, toWorld, commit, zoomAt, fitAll, flash]);
+  }, [apiRef, toWorld, commit, zoomAt, fitAll, flash, pasteAt, pasteText]);
   useEffect(() => {
     if (remoteReady.current) deferred.current.splice(0).forEach((run) => run());
   }, [syncTick]);
@@ -548,42 +607,42 @@ export function CanvasBoard({
     onScale?.(view.s);
   }, [view.s, onScale]);
 
-  // ---- placeholders for pictures being made: next to the selection, else in the middle of the view
-  const anchor = useRef<{ x: number; y: number; from: string[]; into?: string } | null>(null);
+  // Bind a task to the node captured when Generate was clicked, independent of the current selection.
+  // Keep the last successful preview until a replacement is ready, including across reloads.
+  const pendingKey = nodes.map((n) => n.pendingGid ?? "").filter(Boolean).join("|");
   useEffect(() => {
-    if (!loading) {
-      anchor.current = null;
-      return;
-    }
-    if (anchor.current) return;
-    const picked = nodesRef.current.filter((n) => sel.has(n.id));
-    const frame = selectedGeneration(picked);
-    if (frame) {
-      anchor.current = { x: frame.x + frame.w + GAP * 2, y: frame.y, from: generationInputs(frame, nodesRef.current).map((n) => n.id), into: frame.kind === "gen" ? frame.id : undefined };
-    } else {
-      const r = boxRef.current?.getBoundingClientRect();
-      const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
-      anchor.current = { x: c.x - 160, y: c.y - 160 / Math.max(0.2, jobAspect), from: [] };
-    }
-  }, [loading, sel, toWorld, jobAspect]);
-  useEffect(() => {
-    const missing = pendingIds.filter((id) => !nodesRef.current.some((n) => n.gid === id));
-    if (!missing.length) return;
-    const a = anchor.current ?? { x: 0, y: 0, from: [] };
-    const w = 320;
-    const h = Math.round(w / Math.max(0.2, jobAspect || 1));
-    const already = nodesRef.current.filter((n) => pendingIds.includes(n.gid ?? "")).length;
-    const into = !already && nodesRef.current.some((n) => n.id === a.into && n.kind === "gen") ? a.into : undefined;
-    const placed = new Set<number>();
-    const added: Node[] = missing.slice(into ? 1 : 0).map((gid, i) => {
-      let k = already + i;
-      const at = () => ({ x: a.x + (k % 2) * (w + GAP), y: a.y + Math.floor(k / 2) * (h + GAP) });
-      while (nodesRef.current.some((m) => m.x < at().x + w && m.x + m.w > at().x && m.y < at().y + h && m.y + m.h > at().y) || placed.has(k)) k++;
-      placed.add(k);
-      return { id: uid(), kind: "result", gid, ...at(), w, h, from: a.from, fit: true };
+    if (!remoteReady.current || !loaded.current) return;
+    const list = nodesRef.current;
+    const placed = boardJobs.filter((job) => job.board ? job.board === cloudId : list.some((n) => n.id === job.frame));
+    if (!placed.length && !pendingKey) return;
+    setNodesRaw((prev) => {
+      let next = prev;
+      const replace = (node: Node, patch: Partial<Node>) => {
+        if (next === prev) next = [...prev];
+        next[next.indexOf(node)] = { ...node, ...patch };
+      };
+      for (const job of placed) {
+        const frame = next.find((n) => n.id === job.frame);
+        if (job.failed) {
+          if (frame?.pendingGid === job.gid) replace(frame, { pendingGid: undefined });
+        } else if (job.frame) {
+          if (frame && isGeneration(frame) && frame.gid !== job.gid && frame.pendingGid !== job.gid) replace(frame, { pendingGid: job.gid });
+        } else if (!next.some((n) => n.gid === job.gid)) {
+          // A standalone operation such as upscaling a resource has no generator to update.
+          const p = pasteAt(), w = 320, h = w / Math.max(0.2, jobAspect || 1);
+          next = [...next, { id: uid(), kind: "result", gid: job.gid, x: p.x - w / 2, y: p.y - h / 2, w, h, from: [], fit: true }];
+        }
+      }
+      for (const n of next) {
+        if (!n.pendingGid) continue;
+        const src = sources.get(n.pendingGid);
+        if (src?.url) replace(n, { gid: n.pendingGid, pendingGid: undefined, kind: "result", editOf: undefined, src: undefined, nw: undefined, nh: undefined, from: n.from ?? [], fit: true });
+        else if (src?.status === "failed" || src?.status === "expired") replace(n, { pendingGid: undefined });
+      }
+      return next;
     });
-    commit((list) => [...list.map((n) => n.id === into ? { ...n, kind: "result" as const, gid: missing[0], editOf: undefined, from: a.from, fit: true } : n), ...added]);
-  }, [pendingIds, jobAspect, commit]);
+    if (placed.length) onJobsPlaced(placed);
+  }, [boardJobs, cloudId, pendingKey, sources, syncTick, pasteAt, jobAspect, onJobsPlaced]);
 
   // ---- pointer: pan, marquee, move, resize
   const drag = useRef<
@@ -764,15 +823,36 @@ export function CanvasBoard({
     setSel(new Set());
   }, [sel, commit]);
   const duplicateSel = useCallback(() => {
-    const copies = nodesRef.current.filter((n) => sel.has(n.id)).map((n) => ({ ...n, id: uid(), x: n.x + 30, y: n.y + 30, from: undefined }));
-    if (!copies.length) return;
-    commit((n) => [...n, ...copies]);
-    setSel(new Set(copies.map((c) => c.id)));
-  }, [sel, commit]);
+    placeClip(selectionClip());
+  }, [selectionClip, placeClip]);
+  const copySel = async () => {
+    const clip = selectionClip();
+    if (!clip.selected.length) return;
+    const text = encodeNodes(clip);
+    // Write in the click gesture so even an immediate Paste reads this selection.
+    let copied = false;
+    const copy = (e: ClipboardEvent) => { copied = writeNodeCopy(e, text); };
+    document.addEventListener("copy", copy, true);
+    try { document.execCommand("copy"); } catch {} finally { document.removeEventListener("copy", copy, true); }
+    try {
+      if (!copied) await navigator.clipboard.writeText(text);
+      flash("节点已复制");
+    } catch {
+      flash("请用系统复制快捷键");
+    }
+  };
+  const pasteMenu = async (at: { x: number; y: number }) => {
+    try {
+      if (!pasteText(await navigator.clipboard.readText(), at)) flash("剪贴板里没有节点或分享口令");
+    } catch { flash("请用系统粘贴快捷键"); }
+  };
   useEffect(() => {
-    const typing = (t: EventTarget | null) => {
-      const el = t as HTMLElement | null;
-      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    const copy = (e: ClipboardEvent) => {
+      if (e.defaultPrevented || typing(e.target) || window.getSelection()?.isCollapsed === false || !e.clipboardData) return;
+      const clip = selectionClip();
+      if (!clip.selected.length) return;
+      writeNodeCopy(e, encodeNodes(clip));
+      flash("节点已复制");
     };
     const down = (e: KeyboardEvent) => {
       if (typing(e.target)) return;
@@ -812,12 +892,14 @@ export function CanvasBoard({
       if (e.code === "Space") setSpaceDown(false);
     };
     window.addEventListener("keydown", down);
+    window.addEventListener("copy", copy);
     window.addEventListener("keyup", up);
     return () => {
       window.removeEventListener("keydown", down);
+      window.removeEventListener("copy", copy);
       window.removeEventListener("keyup", up);
     };
-  }, [sel, removeSel, duplicateSel, fitAll, commit]);
+  }, [sel, removeSel, duplicateSel, selectionClip, flash, fitAll, commit]);
 
   // ---- drop from history or the computer
   const onDrop = async (e: React.DragEvent) => {
@@ -945,13 +1027,7 @@ export function CanvasBoard({
       if (!m) return part;
       const p = pics.find((x) => x.n === Number(m[1]));
       if (!p) return <span key={i} className="rounded bg-[#ff3b30]/10 text-danger underline decoration-dashed underline-offset-2">{part}</span>;
-      return (
-        <span key={i} className="relative inline-block align-baseline text-transparent">
-          {part}
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="absolute left-1/2 top-1/2 h-[20px] w-[20px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-accent/70" />
-        </span>
-      );
+      return <PictureMention key={i} token={part} src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} />;
     });
   const addText = (at: { x: number; y: number }) => {
     const n: Node = { id: uid(), kind: "text", text: "", x: at.x, y: at.y, w: 320, h: 180 };
@@ -993,7 +1069,7 @@ export function CanvasBoard({
     const list = nodesRef.current;
     const src = list.find((n) => n.id === srcId), tgt = list.find((n) => n.id === tgtId);
     if (!src || !tgt || srcId === tgtId) return;
-    if (!isGeneration(tgt) && tgt.kind !== "text") return flash("请把参考图连到「图片生成」");
+    if (!isGeneration(tgt) && tgt.kind !== "text") return flash("请把参考图连到「生成图片」");
     const incoming = isGeneration(tgt) ? generationInputs(tgt, list).map((m) => m.id) : tgt.from ?? [];
     if (incoming.includes(srcId)) return flash("已经连着了");
     if (isAncestor(tgtId, srcId, list)) return flash("不能连成一圈");
@@ -1012,15 +1088,6 @@ export function CanvasBoard({
     setSel(new Set([n.id]));
     return n;
   };
-  addGenRef.current = () => {
-    const r = boxRef.current?.getBoundingClientRect();
-    if (!r) return;
-    const c = toWorld(r.left + r.width / 2, r.top + r.height * 0.4);
-    // Step aside if something already sits there.
-    let x = c.x - 160, y = c.y - 160;
-    while (nodesRef.current.some((m) => m.x < x + 320 && m.x + m.w > x && m.y < y + 320 && m.y + m.h > y)) x += 360;
-    addGen({ x, y }, []);
-  };
   const startLink = (e: React.PointerEvent, n: Node) => {
     e.stopPropagation();
     if (e.button !== 0) return;
@@ -1036,14 +1103,16 @@ export function CanvasBoard({
   const sizing = useRef(new Set<string>());
   useEffect(() => {
     for (const n of nodes) {
-      if (n.kind === "text" || n.nw || sizing.current.has(n.id)) continue;
+      if (n.kind === "text" || n.nw) continue;
       const u = urlOf(n);
       if (!u || u.startsWith("data:") || !u.startsWith("/api/")) continue;
-      sizing.current.add(n.id);
+      const key = n.id + ":" + u;
+      if (sizing.current.has(key)) continue;
+      sizing.current.add(key);
       fetch(`/api/imginfo?u=${encodeURIComponent(u.split("?")[0])}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
-          if (d?.w) setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, nw: d.w, nh: d.h } : m)));
+          if (d?.w) setNodesRaw((list) => list.map((m) => (m.id === n.id && urlOfRef.current(m) === u ? { ...m, nw: d.w, nh: d.h } : m)));
         })
         .catch(() => {});
     }
@@ -1086,9 +1155,9 @@ export function CanvasBoard({
   return (
     <div
       ref={boxRef}
-      className={`relative h-full w-full touch-none select-none overflow-hidden bg-[light-dark(#f6f6f8,#161619)] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
+      className={`relative h-full w-full touch-none select-none overflow-hidden bg-[light-dark(#f6f6f8,#27292e)] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
       style={{
-        backgroundImage: prefs?.grid === false ? "none" : "radial-gradient(circle, color-mix(in srgb, var(--color-edge) 13%, transparent) 1px, transparent 1.2px)",
+        backgroundImage: prefs?.grid === false ? "none" : `radial-gradient(circle, color-mix(in srgb, var(--color-edge) 13%, transparent) ${view.s}px, transparent ${1.2 * view.s}px)`,
         backgroundSize: `${grid}px ${grid}px`,
         backgroundPosition: `${view.x}px ${view.y}px`,
       }}
@@ -1153,7 +1222,7 @@ export function CanvasBoard({
             const fid = f.id;
             const label = n.kind === "text" ? "看图写描述" : f.kind === "text" ? "文本" : urlOf(f) ? `图${++pic}` : "图片";
             const x = (f.x + f.w + n.x) / 2, y = (f.y + f.h / 2 + n.y + n.h / 2) / 2;
-            const style = { left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` };
+            const style = { left: x, top: y, transform: "translate(-50%, -50%)" };
             return (
               <button
                 type="button"
@@ -1176,44 +1245,51 @@ export function CanvasBoard({
           const src = n.gid ? sources.get(n.gid) : undefined;
           const status = src?.status;
           const on = sel.has(n.id);
-          const k = 1 / view.s; // header and labels keep their screen size at any zoom
+          const k = 1 / view.s; // keep pointer targets usable at any zoom
           const isText = n.kind === "text";
+          const running = frameProgress.has(n.id) || (!!n.pendingGid && pendingIds.includes(n.pendingGid));
           const isGen = n.kind === "gen" && !n.gid;
-          const hintScale = Math.min(k, n.w / 128, n.h / 88);
+          const hintScale = Math.min(1, n.w / 128, n.h / 88);
           const canLinkOut = isText || !!url;
           return (
             <div
               key={n.id}
               data-node-id={n.id}
               data-node-kind={isResult(n) ? "result" : n.kind ?? "image"}
-              className={`group/node absolute rounded-[10px] ${isGen ? "border-2 border-dashed border-accent/40 bg-accent/[0.03]" : "bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on ? "ring-[3px] ring-accent" : linkHover === n.id ? "ring-[3px] ring-[#34c759]" : isGen ? "" : "ring-1 ring-edge/[0.06]"}`}
-              style={{ left: n.x, top: n.y, width: n.w, height: n.h, outlineWidth: 0 }}
+              className={`group/node absolute rounded-[10px] ${isGen && !running ? (on ? "bg-accent/[0.03]" : "border border-dashed border-accent/40 bg-accent/[0.03]") : "bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on || linkHover === n.id ? "" : isGen ? "" : "ring-1 ring-edge/[0.06]"}`}
+              style={{ left: n.x, top: n.y, width: n.w, height: n.h, boxShadow: on || linkHover === n.id ? `0 0 0 ${1.25 * k}px ${on ? "var(--color-accent)" : "#34c759"}` : undefined }}
               onPointerDown={(e) => onNodeDown(e, n)}
               onDoubleClick={() => (isText ? setEditing(n.id) : url && onView(url))}
             >
               {/* 用户 2026-11-11: what the node is and its size, above it. */}
               <div
                 className="pointer-events-none absolute left-0 flex items-center justify-between whitespace-nowrap text-muted"
-                style={{ bottom: "100%", width: n.w * view.s, transform: `scale(${k})`, transformOrigin: "bottom left", paddingBottom: 5, fontSize: 12 }}
+                style={{ bottom: "100%", width: n.w, gap: 6, paddingBottom: 5, fontSize: 12 }}
               >
-                <span className="flex items-center gap-1 font-medium text-secondary">
+                <span className="flex min-w-0 items-center gap-1 overflow-hidden font-medium text-secondary">
                   {isText ? (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4h10M3 8h10M3 12h6" /></svg>
                   ) : (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2.5 11l3.5-3.5 2.5 2.5 2-2 3 3" /></svg>
                   )}
-                  {isText ? "文本" : isGeneration(n) ? "图片生成" : "图片资源"}
+                  {isText ? "文本" : isGeneration(n) ? "生成图片" : "图片资源"}
                 </span>
                 {!isText && n.nw ? <span className="tabular-nums">{n.nw}×{n.nh}</span> : null}
               </div>
               {isText ? (
-                editing === n.id ? (
+                <div className="flex h-full w-full flex-col rounded-[10px]">
+                  <div className="relative min-h-0 flex-1">
+                  {editing === n.id ? (
                   <>
                   <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-ink">
                     {mentionTokens(n.text ?? "", picsForText(n.id))}
                     {"\n"}
                   </div>
                   <textarea
+                    onScroll={(e) => {
+                      const mirror = e.currentTarget.previousElementSibling;
+                      if (mirror) mirror.scrollTop = e.currentTarget.scrollTop;
+                    }}
                     autoFocus
                     value={n.text ?? ""}
                     placeholder="写下描述，连到图片上生成…"
@@ -1243,7 +1319,7 @@ export function CanvasBoard({
                         }
                       }
                     }}
-                    className="relative h-full w-full resize-none overflow-hidden rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-ink outline-none placeholder:text-hint"
+                    className="relative h-full w-full resize-none overflow-y-auto rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-ink outline-none placeholder:text-hint"
                   />
                   {mention?.id === n.id && (() => {
                     const pics = picsForText(n.id);
@@ -1274,7 +1350,7 @@ export function CanvasBoard({
                             </button>
                           ))
                         ) : (
-                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到「图片生成」上，就能 @ 那里的图</div>
+                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到「生成图片」上，就能 @ 那里的图</div>
                         )}
                       </div>
                     );
@@ -1283,11 +1359,21 @@ export function CanvasBoard({
                 ) : (
                   <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
                     <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-ink" : "text-hint"}`}>
-                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「图片生成」作为提示词；输入 @ 可以指定参考图"}
+                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「生成图片」作为提示词；输入 @ 可以指定参考图"}
                     </div>
-                    <div className="pt-1 text-[11px] text-hint">{(n.text ?? "").length} 字</div>
                   </div>
-                )
+                  )}
+                  </div>
+                  <TextNodeFooter text={n.text ?? ""} level={polishLevel} setLevel={onPolishLevel} polish={onPolish} flash={flash}
+                    replace={(before, after) => {
+                      const current = nodesRef.current.find((m) => m.id === n.id);
+                      if (!current || current.text !== before) return false;
+                      commit((list) => list.map((m) => m.id === n.id && m.text === before ? { ...m, text: after } : m));
+                      return true;
+                    }} />
+                </div>
+              ) : running ? (
+                <div data-node-generating="" className="h-full w-full overflow-hidden rounded-[10px]"><GeneratingView aspect={n.w / Math.max(1, n.h)} progress={frameProgress.get(n.id) ?? progress} compact fill /></div>
               ) : isGen ? (
                 <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[10px]">
                   <div className="flex shrink-0 flex-col items-center gap-1.5 px-2 text-center text-[13px] font-medium leading-[19px] text-ink"
@@ -1329,7 +1415,7 @@ export function CanvasBoard({
               ) : (
                 // The site's own generating animation, sized to the placeholder (用户: 生成动画也要同步).
                 <div className="h-full w-full overflow-hidden rounded-[10px]">
-                  <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact />
+                  <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact fill />
                 </div>
               )}
               {isGeneration(n) && (() => {
@@ -1338,7 +1424,7 @@ export function CanvasBoard({
                 return (
                   <div data-node-summary="" title={[sm.model, sm.detail].filter(Boolean).join(" · ")}
                     className="absolute left-0 top-full flex h-6 items-center gap-1.5 overflow-hidden rounded-md bg-panel px-2 text-[11px] text-secondary shadow-sm ring-1 ring-edge/10"
-                    style={{ transform: `translateY(5px) scale(${k})`, transformOrigin: "top left", width: n.w * view.s }}>
+                    style={{ transform: "translateY(5px)", width: n.w }}>
                     {sm.cover && <img src={sm.cover} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover" />}
                     <span className="max-w-[65%] shrink-0 truncate font-medium text-ink">{sm.model}</span>
                     {sm.detail && <span className="truncate border-l border-edge/15 pl-1.5">{sm.detail}</span>}
@@ -1359,8 +1445,8 @@ export function CanvasBoard({
               )}
               {on && selected.length === 1 && (url || isText) && (
                 <span
-                  className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-accent shadow"
-                  style={{ transform: `scale(${1 / view.s})`, transformOrigin: "center" }}
+                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize rounded-full border border-white bg-accent shadow"
+                  style={{ transform: `translate(50%, 50%) scale(${k})`, transformOrigin: "center" }}
                   onPointerDown={(e) => onHandleDown(e, n)}
                 />
               )}
@@ -1392,7 +1478,7 @@ export function CanvasBoard({
       </div>
 
       {/* Toolbar over the selection. */}
-      {selBox && selected.some((n) => urlOf(n)) && (
+      {selBox && selected.length > 0 && (
         <div
           className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur"
           style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(8, selBox.y - 48 - 24) }}
@@ -1404,30 +1490,20 @@ export function CanvasBoard({
               <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M10 2.5v15" /><path d="M5.5 10h2M12.5 10h2" /></svg>
             </button>
           )}
-          {selected.length === 1 && selected[0].gid && onAgain && (
-            <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!, linkedText(selected[0]), linkedRefs(selected[0]))}>
-              <svg viewBox="0 0 20 20" className={ico}><path d="M15.5 8A6 6 0 1 0 16 11" /><path d="M16 4v4h-4" /></svg>
-            </button>
-          )}
-          {selected.length === 1 && selected[0].gid && onUpscale && (
-            <button type="button" aria-label="高清放大" data-tip="高清放大 2 倍（约 ¥0.7）" className={ibtn} onClick={() => onUpscale(selected[0].gid!)}>
-              <svg viewBox="0 0 20 20" className={ico}><path d="M11.5 3.5h5v5" /><path d="M16.5 3.5L11 9" /><path d="M8.5 16.5h-5v-5" /><path d="M3.5 16.5L9 11" /></svg>
-            </button>
-          )}
-          {selected.length === 1 && (
+          {selected.length === 1 && urlOf(selected[0]) && (
             <>
-              <button type="button" aria-label="看大图" data-tip="看大图" className={ibtn} onClick={() => onView(urlOf(selected[0])!)}>
-                <svg viewBox="0 0 20 20" className={ico}><circle cx="8.8" cy="8.8" r="5.3" /><path d="M12.8 12.8L17 17" /><path d="M8.8 6.6v4.4M6.6 8.8h4.4" /></svg>
-              </button>
               <button type="button" aria-label="下载" data-tip="下载" className={ibtn} onClick={() => onDownload(selected[0].gid ?? null, urlOf(selected[0])!)}>
                 <svg viewBox="0 0 20 20" className={ico}><path d="M10 3.5v9" /><path d="M6 8.8l4 4 4-4" /><path d="M4 16.5h12" /></svg>
               </button>
             </>
           )}
           {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
-          <button type="button" aria-label="复制" data-tip="复制一份" className={ibtn} onClick={duplicateSel}>
+          <button type="button" aria-label="复制" data-tip="复制节点" className={ibtn} onClick={copySel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
+          {onShare && <button type="button" aria-label="分享选中节点" data-tip="分享选中节点（复制口令）" className={ibtn} onClick={() => onShare(true)}>
+            <svg viewBox="0 0 20 20" className={ico}><path d="M10 12V2.5M6.5 6 10 2.5 13.5 6M6.5 8.5H4v8h12v-8h-2.5" /></svg>
+          </button>}
           <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-danger hover:bg-danger/[0.08]`} onClick={removeSel}>
             <svg viewBox="0 0 20 20" className={ico}><path d="M4 6h12" /><path d="M8 6V4.5h4V6" /><path d="M5.5 6l.8 10h7.4l.8-10" /></svg>
           </button>
@@ -1447,7 +1523,7 @@ export function CanvasBoard({
           >
             <div className="px-2.5 pb-1 pt-0.5 text-[11px] text-muted">连到新节点</div>
             <button type="button" className={item} onClick={() => { close(); addGen({ x: linkMenu.wx, y: linkMenu.wy - 160 }, [linkMenu.src]); }}>
-              新建「图片生成」
+              新建「生成图片」
             </button>
             {srcNode && srcNode.kind !== "text" && (
               <button
@@ -1480,7 +1556,7 @@ export function CanvasBoard({
           <div
             data-canvas-menu=""
             className="animate-pop-in fixed z-[90] w-48 rounded-xl bg-panel/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06] backdrop-blur"
-            style={{ left: Math.min(ctx.x, W - 200), top: Math.min(ctx.y, H - (one ? 300 : 190)) }}
+            style={{ left: Math.min(ctx.x, W - 200), top: Math.min(ctx.y, H - (one ? 348 : 252)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           >
@@ -1493,13 +1569,15 @@ export function CanvasBoard({
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
                 <div className="my-1 h-px bg-edge/[0.07]" />
-                <button type="button" className={item} onClick={go(duplicateSel)}>复制一份</button>
+                <button type="button" className={item} onClick={go(copySel)}>复制节点</button>
+                <button type="button" className={item} onClick={go(duplicateSel)}>原地复制一份</button>
                 {onShare && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的{selected.length > 1 ? ` ${selected.length} 个` : "这张"}…</button>}
                 <button type="button" className={`${item} text-danger`} onClick={go(removeSel)}>移出画布</button>
               </>
             ) : (
               <>
-                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx - 160, y: ctx.wy - 160 }, []))}>生成新图</button>
+                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx - 160, y: ctx.wy - 160 }, []))}>生成图片</button>
+                <button type="button" className={item} onClick={go(() => pasteMenu({ x: ctx.wx, y: ctx.wy }))}>粘贴节点</button>
                 <button type="button" className={item} onClick={go(() => addText({ x: ctx.wx, y: ctx.wy }))}>添加文本</button>
                 <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
                 {onOpenHistory && <button type="button" className={item} onClick={go(onOpenHistory)}>从历史添加</button>}
@@ -1596,6 +1674,40 @@ export function CanvasBoard({
           松开，放到画布上
         </div>
       )}
+    </div>
+  );
+}
+
+function TextNodeFooter({ text, level, setLevel, polish, replace, flash }: {
+  text: string; level: CanvasDraft["polishLevel"]; setLevel: (v: CanvasDraft["polishLevel"]) => void;
+  polish: (text: string, level: CanvasDraft["polishLevel"]) => Promise<string>;
+  replace: (before: string, after: string) => boolean; flash: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [undo, setUndo] = useState<{ before: string; after: string } | null>(null);
+  const run = async () => {
+    if (busy || !text.trim()) return;
+    setBusy(true);
+    try {
+      const after = await polish(text, level);
+      if (after.length > 2000) throw new Error("润色结果超过 2000 字，已保留原文");
+      if (replace(text, after)) setUndo({ before: text, after });
+      else flash("文本已修改，已保留当前内容");
+    } catch (e) { flash(e instanceof Error ? e.message : "润色失败"); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2 text-[11px]"
+      onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+      <span className="mr-auto text-muted">{text.length} 字</span>
+      {undo?.after === text && <button type="button" className="text-secondary" onClick={() => { replace(text, undo.before); setUndo(null); }}>撤销润色</button>}
+      <div className="inline-flex items-center rounded-full bg-accent/10 text-accent">
+        <button type="button" onClick={run} disabled={busy || !text.trim()} className="px-2 py-1 font-medium disabled:opacity-50">{busy ? "润色中…" : "提示词润色"}</button>
+        <select aria-label="文本润色程度" value={level} onChange={(e) => setLevel(e.target.value as typeof level)}
+          className="rounded-r-full border-l border-accent/25 bg-transparent py-1 pl-1">
+          <option value="low">低</option><option value="medium">中</option><option value="high">高</option>
+        </select>
+      </div>
     </div>
   );
 }
