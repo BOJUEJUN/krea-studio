@@ -1951,13 +1951,81 @@ export default function StudioPage() {
         }}
       />
 
-      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
+      {user && (
+        // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar.
+        <div className="fixed left-4 top-[60px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
+          {([
+            ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
+            ["canvas", "自由画布", <path key="p" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />],
+          ] as const).map(([k, tip, icon]) => {
+            const on = (k === "canvas") === canvasOn;
+            return (
+              <button
+                key={k}
+                type="button"
+                data-tip={tip}
+                data-tip-start=""
+                aria-label={tip}
+                onClick={() => enterCanvas(k === "canvas")}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${on ? "bg-[#1d1d1f] text-white" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
+              </button>
+            );
+          })}
+          {canvasOn && (
+            <div className="relative">
+              <button
+                type="button"
+                data-tip={`画布列表（当前：${boards.find((b) => b.id === boardId)?.name ?? "画布1"}）`}
+                data-tip-start=""
+                aria-label="画布列表"
+                onClick={() => { setBoardMenu((v) => !v); setBoardDelArm(null); }}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${boardMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5" /></svg>
+              </button>
+              {boardMenu && (
+                <div className="animate-pop-in absolute left-11 top-0 w-56 rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
+                  <div className="px-2 pb-1 pt-0.5 text-[12px] font-semibold text-[#86868b]">画布</div>
+                  {boards.map((b) => (
+                    <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}>
+                      <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => { saveBoards(boards, b.id); setBoardMenu(false); }}>
+                        {b.name}
+                      </button>
+                      <button type="button" data-tip="改名" className="rounded-md px-1 text-[#86868b] opacity-0 hover:bg-black/[0.06] group-hover:opacity-100" onClick={() => renameBoard(b.id)}>✎</button>
+                      <button type="button" data-tip={boardDelArm === b.id ? "再点一次删除" : "删除画布"} className={`rounded-md px-1 hover:bg-black/[0.06] ${boardDelArm === b.id ? "text-[#d70015] opacity-100" : "text-[#86868b] opacity-0 group-hover:opacity-100"}`} onClick={() => deleteBoard(b.id)}>
+                        {boardDelArm === b.id ? "删除?" : "×"}
+                      </button>
+                    </div>
+                  ))}
+                  <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#0071e3] hover:bg-[#0071e3]/[0.08]">
+                    ＋ 新建画布
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="my-0.5 h-px w-5 bg-black/[0.08]" />
+          <button
+            type="button"
+            data-tip={histHidden ? "打开历史记录" : "收起历史记录"}
+            data-tip-start=""
+            aria-label="历史记录"
+            onClick={() => toggleHistory(!histHidden)}
+            className={`flex h-8 w-8 items-center justify-center rounded-full transition ${histHidden ? "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]" : "bg-[#0071e3]/10 text-[#0071e3]"}`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7.5V12l3 2" /></svg>
+          </button>
+        </div>
+      )}
+      <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 pl-14 lg:flex-row lg:gap-0 lg:overflow-hidden lg:pl-[60px]">
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
           className="apple-card stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden rounded-[22px] lg:h-auto lg:min-h-0 lg:flex-1">
                     <div
-            className={`result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3 ${canvasOn ? "" : "pt-11"}`}
+            className={`result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3`}
 
           >
             {canvasOn && user && (
@@ -1982,52 +2050,6 @@ export default function StudioPage() {
                 />
               </div>
             )}
-            {canvasOn && (
-              <div className="absolute left-16 top-2 z-30" onPointerDown={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={() => { setBoardMenu((v) => !v); setBoardDelArm(null); }}
-                  className="flex h-8 items-center gap-1 rounded-full bg-white/90 px-3 text-[12px] font-medium text-[#1d1d1f] shadow-[0_4px_16px_rgba(0,0,0,0.10)] ring-1 ring-black/[0.06] backdrop-blur"
-                >
-                  {boards.find((b) => b.id === boardId)?.name ?? "画布1"}
-                  <svg className={`h-3 w-3 text-[#86868b] transition-transform ${boardMenu ? "" : "rotate-180"}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                </button>
-                {boardMenu && (
-                  <div className="animate-pop-in absolute left-0 top-10 w-56 rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-                    {boards.map((b) => (
-                      <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}>
-                        <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => { saveBoards(boards, b.id); setBoardMenu(false); }}>
-                          {b.name}
-                        </button>
-                        <button type="button" data-tip="改名" className="rounded-md px-1 text-[#86868b] opacity-0 hover:bg-black/[0.06] group-hover:opacity-100" onClick={() => renameBoard(b.id)}>✎</button>
-                        <button type="button" data-tip={boardDelArm === b.id ? "再点一次删除" : "删除画布"} className={`rounded-md px-1 hover:bg-black/[0.06] ${boardDelArm === b.id ? "text-[#d70015] opacity-100" : "text-[#86868b] opacity-0 group-hover:opacity-100"}`} onClick={() => deleteBoard(b.id)}>
-                          {boardDelArm === b.id ? "删除?" : "×"}
-                        </button>
-                      </div>
-                    ))}
-                    <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#0071e3] hover:bg-[#0071e3]/[0.08]">
-                      ＋ 新建画布
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-            {/* 单图 / 画布 */}
-            <div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.10)] ring-1 ring-black/[0.06] backdrop-blur">
-              {([["single", "单图"], ["canvas", "画布"]] as const).map(([k, t]) => {
-                const on = (k === "canvas") === canvasOn;
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => enterCanvas(k === "canvas")}
-                    className={`rounded-full px-3 py-1 transition ${on ? "bg-[#1d1d1f] text-white" : "text-[#6e6e73] hover:text-[#1d1d1f]"}`}
-                  >
-                    {t}
-                  </button>
-                );
-              })}
-            </div>
             {loading && jobCount > 1 ? (
               // One cell per picture (2 side by side, 3 in a row, 4 as 2×2); each fills in as soon as it is ready.
               <BatchGrid
@@ -2777,8 +2799,8 @@ export default function StudioPage() {
         />
         )}
 
-        {/* Folded history: one small clock button in the corner (用户: 改成历史的图标). */}
-        <button
+        {/* Folded history: one small clock button in the corner (用户: 改成历史的图标). 2026-11-10: lives in the left rail now. */}
+        {false && <button
           type="button"
           onClick={() => toggleHistory(false)}
           data-tip="历史记录" data-tip-end=""
@@ -2791,7 +2813,7 @@ export default function StudioPage() {
             <path d="M3 4v5h5" />
             <path d="M12 7.5V12l3 2" />
           </svg>
-        </button>
+        </button>}
         <aside
           className={`apple-card stagger-3 relative w-full shrink-0 overflow-hidden rounded-[22px] lg:min-h-0 lg:w-[34vw] lg:max-w-[calc(100vw-420px)] ${histHidden ? "pointer-events-none min-h-0 max-lg:hidden" : "min-h-[40vh]"}`}
           style={
