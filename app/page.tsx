@@ -2076,7 +2076,7 @@ export default function StudioPage() {
     const h = composeRef.current?.offsetHeight || 200;
     const cx = (selBox.left + selBox.right) / 2 - col.left;
     const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
-    const below = selBox.bottom - col.top + 38;
+    const below = selBox.bottom - col.top + 14;
     if (below + h <= col.height - 12) return { left, top: Math.max(56, below), width: w };
     const above = selBox.top - col.top - 14 - h - 72; // leave room for the selection toolbar and the label row
     if (above >= 56) return { left, top: above, width: w };
@@ -2142,7 +2142,8 @@ export default function StudioPage() {
       canvasApi.current?.saveDraft(editingNode, { ...composeSnapRef.current, summary: liveSummary });
   }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn]);
   const boardSummary = (n: BoardNode, hasPictures: boolean) => {
-    const saved = n.id === editingNode ? { model, summary: liveSummary } : composeMem.current.get(n.id) ?? n.draft;
+    if (n.id === editingNode) return null;
+    const saved = composeMem.current.get(n.id) ?? n.draft;
     const g = !saved ? gallery.find((x) => x.id === (n.gid ?? n.editOf)) : undefined;
     const md = findModel(saved?.model ?? (g ? pictureParams(g).model : DEFAULT_MODEL)) ?? MODELS[0];
     const size = g && pictureParams(g);
@@ -2962,7 +2963,7 @@ export default function StudioPage() {
                     </button>
                     <span className="text-[11px] text-hint">选中画布上的图，就会拿它当参考图改图</span>
                     <div className="ml-auto">
-                      <button onClick={startOrQueue} disabled={!modelReady || !prompt.trim()} className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]">
+                      <button onClick={startOrQueue} disabled={!modelReady || !prompt.trim()} className="apple-btn-primary generate-button flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]">
                         {loading ? `${Math.floor(progress)}%` : "生成"}
                       </button>
                     </div>
@@ -3195,7 +3196,7 @@ export default function StudioPage() {
               disabled={
                 !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
               }
-              className="apple-btn-primary flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
+              className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
               {loading ? (
                 <>
@@ -3207,7 +3208,7 @@ export default function StudioPage() {
               ) : (
                 <>
                   <span>生成</span>
-                  <span className="rounded-full bg-white/20 px-1.5 py-px text-[12px] font-semibold tabular-nums">
+                  <span className="generate-price rounded-full bg-white/20 px-1.5 py-px text-[12px] font-semibold tabular-nums">
                     ¥{btnPrice}
                   </span>
                 </>

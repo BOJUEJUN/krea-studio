@@ -1179,6 +1179,7 @@ export function CanvasBoard({
           const k = 1 / view.s; // header and labels keep their screen size at any zoom
           const isText = n.kind === "text";
           const isGen = n.kind === "gen" && !n.gid;
+          const hintScale = Math.min(k, n.w / 128, n.h / 88);
           const canLinkOut = isText || !!url;
           return (
             <div
@@ -1288,9 +1289,12 @@ export function CanvasBoard({
                   </div>
                 )
               ) : isGen ? (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-6 text-center text-[12px] leading-[18px] text-muted">
-                  <svg aria-hidden="true" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.4" /><path d="m4 17 4-4 3 3 4-6 6 8" /></svg>
-                  {(n.from?.length ?? 0) ? "选中它，在输入框点生成，图就出在这里" : "把图片或文本的 + 拖到这里连上，再选中它生成"}
+                <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[10px]">
+                  <div className="flex shrink-0 flex-col items-center gap-1.5 px-2 text-center text-[13px] font-medium leading-[19px] text-ink"
+                    style={{ width: n.w / hintScale, transform: `scale(${hintScale})` }}>
+                    <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.4" /><path d="m4 17 4-4 3 3 4-6 6 8" /></svg>
+                    <span>{n.from?.length ? "点「生成」查看结果" : "拖入图片或文本的连线，再点「生成」"}</span>
+                  </div>
                 </div>
               ) : url ? (
                 // eslint-disable-next-line @next/next/no-img-element

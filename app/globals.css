@@ -261,6 +261,25 @@ input[type="range"] {
   box-shadow: none;
 }
 
+html.theme-dark .generate-button {
+  --color-accent: #104c96;
+  --color-accent-hover: #1657a4;
+  color: #fff;
+  border: 1px solid #568ecb;
+  font-weight: 600;
+}
+
+html.theme-dark .generate-button:disabled {
+  opacity: 1;
+  color: var(--color-secondary);
+  background: var(--color-well);
+  border-color: #45454b;
+}
+
+html.theme-dark .generate-price {
+  background: rgb(0 0 0 / 18%);
+}
+
 .apple-seg {
   background: rgba(118, 118, 128, 0.12);
   border-radius: 980px;
