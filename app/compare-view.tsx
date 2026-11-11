@@ -263,6 +263,10 @@ export function CompareView({
       <div
         ref={boxRef}
         {...panProps}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        }}
         onClick={() => !z.moved.current && setShowBefore((v) => !v)}
         className={`compare-toggle relative h-full w-full touch-none overflow-hidden ${z.view.s > 1 ? cursor : "cursor-pointer"}`}
         role="button"
