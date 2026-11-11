@@ -971,7 +971,7 @@ export default function StudioPage() {
     }
     // A browser that has never chosen waits briefly for the account's choice from the server.
     if (knownMode !== null) setRestored(true);
-    else window.setTimeout(() => setRestored(true), 1500);
+    else window.setTimeout(() => setRestored(true), 800);
     if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
     const pl = localStorage.getItem("ais-polish-level-v2");
     setPolishLevel(restoredPolishLevel(pl ?? localStorage.getItem("ais-polish-level"), pl ? 2 : 1));
@@ -2764,6 +2764,12 @@ export default function StudioPage() {
           </div>
           </div>}
         </nav>
+      )}
+      {!restored && (
+        // 用户 2026-11-11 (刷新后白屏太长): until 单图 / 画布 is known, a quiet placeholder instead of a blank page.
+        <div aria-hidden className="pointer-events-none fixed inset-0 z-0 flex items-center justify-center" style={{ backgroundImage: "radial-gradient(circle, rgba(127,127,127,0.18) 1px, transparent 1.2px)", backgroundSize: "24px 24px" }}>
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-accent/25 border-t-accent" />
+        </div>
       )}
       <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "p-0" : phone ? "p-2 pt-[68px]" : "p-2"}`}>
         <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">

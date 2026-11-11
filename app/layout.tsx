@@ -21,6 +21,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN">
+      <head>
+        {/* Pictures come straight from Tencent COS: open the connection while the page script loads. */}
+        <link rel="preconnect" href="https://enzoban-studio-1318245308.cos.ap-hongkong.myqcloud.com" />
+        <link rel="dns-prefetch" href="https://enzoban-studio-1318245308.cos.ap-hongkong.myqcloud.com" />
+      </head>
       <body className="relative z-10">{children}</body>
     </html>
   );
