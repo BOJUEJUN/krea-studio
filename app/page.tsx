@@ -589,6 +589,7 @@ export default function StudioPage() {
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
   const [canvasTextSel, setCanvasTextSel] = useState(false);
   const [canvasFrameSel, setCanvasFrameSel] = useState(false); // an empty 生成框 is picked
+  const [multiOnly, setMultiOnly] = useState(false);
   const textSelRef = useRef(false);
   useEffect(() => {
     if (textSelRef.current) canvasApi.current?.setText(prompt);
@@ -612,6 +613,9 @@ export default function StudioPage() {
   const [paramsOpen, setParamsOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
   const [openPanel, setOpenPanel] = useState<string | null>(null);
+  useEffect(() => {
+    if (openPanel !== "model") setMultiOnly(false);
+  }, [openPanel]);
   const [panelLeft, setPanelLeft] = useState(0);
   const chipRowRef = useRef<HTMLDivElement>(null);
   // 用户 2026-11-11 (参数不要两排): the settings row stays on one line and shrinks to fit a narrow box.
@@ -2852,7 +2856,7 @@ export default function StudioPage() {
                           {canvasOn && canvasSel.length > limit && (
                             <button
                               type="button"
-                              onClick={() => { setPanelLeft(0); setOpenPanel("model"); }}
+                              onClick={() => { setPanelLeft(0); setMultiOnly(true); setOpenPanel("model"); }}
                               className="self-center rounded-xl bg-[#fff8e6] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[#9a6700] ring-1 ring-[#f5c451]/50 hover:bg-[#fff1cc]"
                             >
                               连进来 {canvasSel.length} 张图，这个模型只能用 {limit} 张
@@ -2982,7 +2986,11 @@ export default function StudioPage() {
                     
                     {openPanel === "model" && (
                       <div className="flex flex-col">
-                        {MODELS.map((m) => {
+                        {/* 用户 2026-11-11: opened from 「换成能用多张图的模型」 → only models that take several pictures. */}
+                        {multiOnly && (
+                          <div className="px-2.5 pb-1 text-[11px] text-[#86868b]">能用 {canvasSel.length} 张参考图的模型</div>
+                        )}
+                        {MODELS.filter((m) => !multiOnly || (paramsOf(m.id).maxRefs ?? 1) > 1).map((m) => {
                           const on = model === m.id;
                           const ready = isReady(m.id);
                           return (
