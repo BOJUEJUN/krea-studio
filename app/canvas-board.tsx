@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
+import { equalSpacing, type GapGuide } from "@/lib/canvas-spacing";
 import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
 import { editAspectOf } from "@/lib/models";
 import { shareCodeIn } from "@/lib/canvas-share-code";
@@ -232,7 +233,7 @@ export function CanvasBoard({
   }, [ctx]);
   const [dropHover, setDropHover] = useState(false);
   // 2026-11-10 (用户: 自动对齐吸附，移动时有虚线): alignment guides while dragging.
-  const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
+  const [guides, setGuides] = useState<{ v: number[]; h: number[]; gaps?: GapGuide[] }>({ v: [], h: [] });
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const viewRef = useRef(view);
@@ -826,6 +827,7 @@ export function CanvasBoard({
       const others = nodesRef.current.filter((n) => !d.start.has(n.id));
       const v: number[] = [];
       const h: number[] = [];
+      const gaps: GapGuide[] = [];
       if (moving.length && others.length && !e.altKey && prefsRef.current.snap) {
         const bx0 = Math.min(...moving.map((n) => d.start.get(n.id)!.x)) + dx;
         const by0 = Math.min(...moving.map((n) => d.start.get(n.id)!.y)) + dy;
@@ -839,8 +841,15 @@ export function CanvasBoard({
           for (const m of mine) for (const t of targets) if (Math.abs(t - m) < Math.abs(off) && Math.abs(t - m) <= tol) off = t - m;
           return off;
         };
-        const ox = best([bx0, (bx0 + bx1) / 2, bx1], xs);
-        const oy = best([by0, (by0 + by1) / 2, by1], ys);
+        const box = { x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 };
+        const choose = (axis: "x" | "y", edge: number) => {
+          const spacing = equalSpacing(box, others, axis, tol);
+          if (!spacing || Math.abs(spacing.offset) > Math.abs(edge)) return edge;
+          gaps.push(...spacing.guides);
+          return spacing.offset;
+        };
+        const ox = choose("x", best([bx0, (bx0 + bx1) / 2, bx1], xs));
+        const oy = choose("y", best([by0, (by0 + by1) / 2, by1], ys));
         if (Number.isFinite(ox)) {
           dx += ox;
           for (const m of [bx0 + ox, (bx0 + bx1) / 2 + ox, bx1 + ox]) if (xs.some((t) => Math.abs(t - m) < 0.5)) v.push(m);
@@ -850,7 +859,7 @@ export function CanvasBoard({
           for (const m of [by0 + oy, (by0 + by1) / 2 + oy, by1 + oy]) if (ys.some((t) => Math.abs(t - m) < 0.5)) h.push(m);
         }
       }
-      setGuides({ v, h });
+      setGuides({ v, h, gaps });
       setNodesRaw((list) => list.map((n) => (d.start.has(n.id) ? { ...n, x: d.start.get(n.id)!.x + dx, y: d.start.get(n.id)!.y + dy } : n)));
     } else if (d.kind === "resize") {
       const w = Math.max(60, d.w + (e.clientX - d.sx) / s);
@@ -1608,8 +1617,19 @@ export function CanvasBoard({
             </div>
           );
         })}
-        {(guides.v.length > 0 || guides.h.length > 0) && (
+        {(guides.v.length > 0 || guides.h.length > 0 || !!guides.gaps?.length) && (
           <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
+            {guides.gaps?.map(({ axis, start, end, cross }, i) => {
+              const cap = 3 / view.s, mid = (start + end) / 2;
+              const d = axis === "x"
+                ? `M${start} ${cross}H${end} M${start} ${cross - cap}v${2 * cap} M${end} ${cross - cap}v${2 * cap}`
+                : `M${cross} ${start}V${end} M${cross - cap} ${start}h${2 * cap} M${cross - cap} ${end}h${2 * cap}`;
+              return <g key={axis + i} data-spacing-axis={axis}>
+                <path d={d} stroke="var(--color-accent)" strokeWidth={1.25 / view.s} fill="none" />
+                {(end - start) * view.s > 28 && <text x={axis === "x" ? mid : cross + 5} y={axis === "x" ? cross - 5 : mid}
+                  textAnchor={axis === "x" ? "middle" : "start"} fontSize={11} fill="var(--color-accent)">{Math.round(end - start)}</text>}
+              </g>;
+            })}
             {guides.v.map((x, i) => (
               <line key={"v" + i} x1={x} x2={x} y1={-100000} y2={100000} stroke="#0071e3" strokeOpacity={0.28} strokeWidth={1 / view.s} strokeDasharray={`${3 / view.s} ${4 / view.s}`} />
             ))}
