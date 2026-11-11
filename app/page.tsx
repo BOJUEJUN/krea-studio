@@ -185,6 +185,7 @@ function formatDuration(ms?: number): string | null {
 }
 
 type PendingJob = EditMetadata & {
+  renderTiming?: Timing;
   canvasBoard?: string;
   /** When 生成 was clicked (2026-11-06 用户: 用时比体感短 — it now includes 提示词优化 and the upload). */
   startedAt?: number;
@@ -803,7 +804,7 @@ export default function StudioPage() {
   const [resultKey, setResultKey] = useState(0);
   const [progress, setProgress] = useState(0);
   const frameTimes = useRef(new Map<string, Timing>());
-  const resumedFrames = useRef(new Set<string>());
+  const watchedCanvasTasks = useRef(new Set<string>());
   const [frameProgress, setFrameProgress] = useState(new Map<string, number>());
   const paintProgress = useCallback(() => {
     setFrameProgress(new Map([...frameTimes.current].map(([id, t]) => [id, progressFor(t, Date.now())])));
@@ -949,16 +950,22 @@ export default function StudioPage() {
       .catch(() => {});
     // 2026-11-06 (用户: 刷新要等几秒): show the history this browser saw last time at once, then refresh it.
     let fromCache = false;
+    const cachedDone = new Set<string>();
     try {
       const cached = JSON.parse(localStorage.getItem(HIST_CACHE_KEY) || "null");
       if (Array.isArray(cached) && cached.length) {
         fromCache = true;
+        for (const item of cached) if (item.url || item.status === "failed" || item.status === "expired") cachedDone.add(item.taskId || item.id);
         rememberDirect(cached);
         setGallery(cached);
         const first = (cached as GalleryItem[]).find((x) => x.url);
         if (first && !busyRef.current) showItem(first);
       }
     } catch {}
+    const recent = (p: PendingJob) => Date.now() - p.createdAt < 30 * 60_000;
+    const localFrames = readPending().filter((p) => p.canvasLayout?.frame.node && recent(p) && !cachedDone.has(p.taskId));
+    const earlyIds = new Set(localFrames.map((p) => p.taskId));
+    if (localFrames.length) resumePendingRef.current(localFrames);
     fetchJson("/api/history")
       .then((d) => {
         if (d?.ok && Array.isArray(d.items)) {
@@ -968,21 +975,28 @@ export default function StudioPage() {
         }
         if (d?.ok && Array.isArray(d.items) && d.items.length) {
           rememberDirect(d.items);
-          setGallery(d.items);
+          const remoteIds = new Set(d.items.map((x: GalleryItem) => x.id));
+          setGallery((cur) => [...cur.filter((x) => earlyIds.has(x.taskId ?? x.id) && x.url && !remoteIds.has(x.id)), ...d.items]);
           const first = (d.items as GalleryItem[]).find((x) => x.url);
           if (first && !busyRef.current && !fromCache) showItem(first);
         }
         // 2026-11-05 (用户: 刷新后进度没了): the server remembers every submitted task; pick unfinished ones up again.
         const local = readPending();
         const server: PendingJob[] = Array.isArray(d?.running) ? d.running.filter((p: any) => p?.taskId && p?.mode) : [];
-        const all = [...local, ...server.filter((p) => !local.some((l) => l.taskId === p.taskId))];
+        const final = new Map<string, GalleryItem>((d?.items ?? []).map((x: GalleryItem) => [x.taskId || x.id, x]));
+        const remaining = local.filter((p) => !final.has(p.taskId) && recent(p));
+        for (const p of local) {
+          const item = final.get(p.taskId);
+          if (item) placeJobs([p], !item.url);
+        }
+        const all = [...remaining, ...server.filter((p) => !final.has(p.taskId) && !remaining.some((l) => l.taskId === p.taskId))];
+        writePending(all);
         if (all.length) {
-          writePending(all);
           resumePendingRef.current?.(all);
         }
       })
       .catch(() => {
-        const local = readPending();
+        const local = readPending().filter((p) => recent(p) && !cachedDone.has(p.taskId));
         if (local.length) resumePendingRef.current?.(local);
       });
   }, []);
@@ -1595,9 +1609,29 @@ export default function StudioPage() {
     [finishPending, placeJobs]
   );
 
-  const resumePending = useCallback((pendings: PendingJob[]) => {
+  const resumePending = useCallback((jobs: PendingJob[]) => {
+    for (const p of jobs) {
+      const frame = p.canvasLayout?.frame.node;
+      if (!frame || watchedCanvasTasks.current.has(p.taskId)) continue;
+      watchedCanvasTasks.current.add(p.taskId);
+      const renderKey = `${p.model ?? "brown-dust"}:${p.mode}`;
+      const timing: Timing = p.renderTiming ?? {
+        step: "render", stepStart: p.createdAt, renderKey,
+        est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[p.mode]) },
+      };
+      frameTimes.current.set(frame, timing);
+      paintProgress();
+      placeJobs([p]);
+      void finishPending(p, null, { v: true }).catch((error) => {
+        placeJobs([p], true);
+        setError(error?.message || "查询任务失败");
+      }).finally(() => {
+        if (frameTimes.current.get(frame) === timing) frameTimes.current.delete(frame);
+        if (mounted.current) paintProgress();
+      });
+    }
+    const pendings = jobs.filter((p) => !p.canvasLayout?.frame.node);
     if (busyRef.current || !pendings.length) return;
-    resumedFrames.current = new Set(pendings.flatMap((p) => p.canvasLayout?.frame.node ?? []));
     busyRef.current = true;
     const job = ++jobRef.current;
     const first = pendings[0];
@@ -1628,12 +1662,11 @@ export default function StudioPage() {
       })
       .finally(() => {
         if (jobRef.current === job) {
-          resumedFrames.current.clear();
           busyRef.current = false;
           setLoading(false);
         }
       });
-  }, [finishBatch]);
+  }, [finishBatch, finishPending, paintProgress, placeJobs]);
 
   /** 高清放大 (用户 2026-11-10): Topaz 2× through Krea; the result lands in history and on the board like any picture. */
   const upscaleItem = useCallback(
@@ -1818,9 +1851,11 @@ export default function StudioPage() {
         refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard,
         createdAt: now + i,
         startedAt: clickedAt,
+        renderTiming: frameId ? timing : undefined,
       }));
       addPending(pendings);
       if (frameId) {
+        for (const p of pendings) watchedCanvasTasks.current.add(p.taskId);
         placeJobs(pendings);
         try {
           await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
@@ -3321,7 +3356,7 @@ ${link}`;
               }
               className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
-              {canvasOn && (frameProgress.has(editingNode) || resumedFrames.current.has(editingNode)) ? (
+              {canvasOn && frameProgress.has(editingNode) ? (
                 <><span>继续生成</span><span className="generate-price">¥{btnPrice}</span></>
               ) : loading && !(canvasOn && editingNode) ? (
                 <>

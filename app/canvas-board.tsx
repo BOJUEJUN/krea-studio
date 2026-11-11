@@ -317,13 +317,19 @@ export function CanvasBoard({
     };
   }, [nodes, view, storageKey, flash, push, cloudId, syncTick]);
   useEffect(() => {
-    const flush = () => push(true);
+    const flush = () => {
+      if (!loaded.current || !remoteReady.current) return;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({ nodes: nodesRef.current, view: viewRef.current, updatedAt: editedAt.current }));
+      } catch { /* Large uploads may only fit in the cloud copy. */ }
+      push(true);
+    };
     window.addEventListener("pagehide", flush);
     return () => {
       flush();
       window.removeEventListener("pagehide", flush);
     };
-  }, [push]);
+  }, [push, storageKey]);
 
   // Pictures from the computer go up to the server; the board then keeps only their link.
   const uploading = useRef(new Set<string>());
@@ -1247,7 +1253,8 @@ export function CanvasBoard({
           const on = sel.has(n.id);
           const k = 1 / view.s; // keep pointer targets usable at any zoom
           const isText = n.kind === "text";
-          const running = frameProgress.has(n.id) || (!!n.pendingGid && pendingIds.includes(n.pendingGid));
+          const task = n.pendingGid ?? (isGeneration(n) ? n.gid : undefined);
+          const running = frameProgress.has(n.id) || (!!task && pendingIds.includes(task) && !sources.get(task)?.url);
           const isGen = n.kind === "gen" && !n.gid;
           const hintScale = Math.min(1, n.w / 128, n.h / 88);
           const canLinkOut = isText || !!url;
@@ -1413,10 +1420,7 @@ export function CanvasBoard({
                   )}
                 </div>
               ) : (
-                // The site's own generating animation, sized to the placeholder (用户: 生成动画也要同步).
-                <div className="h-full w-full overflow-hidden rounded-[10px]">
-                  <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact fill />
-                </div>
+                <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-well text-[12px] text-muted">暂无预览</div>
               )}
               {isGeneration(n) && (() => {
                 const sm = summaryFor?.(n, (wires.get(n.id) ?? []).some((m) => !!urlOf(m)));
