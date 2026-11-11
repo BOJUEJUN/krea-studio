@@ -1690,6 +1690,7 @@ export default function StudioPage() {
   const onBoardSelection = useCallback(
     (urls: string[]) => {
       setCanvasSel(urls);
+      setComposeOpen(false); // clicking a picture (or empty space) closes the free-standing box
       if (selTimer.current) clearTimeout(selTimer.current);
       selTimer.current = setTimeout(async () => {
         if (!urls.length) {
@@ -2187,10 +2188,23 @@ export default function StudioPage() {
           )}
 
         </section>
+        {canvasOn && !canvasSel.length && !composeOpen && (
+          // 用户 2026-11-10: on the board the box only appears next to a clicked picture; this opens it for a new one.
+          <button
+            type="button"
+            onClick={() => setComposeOpen(true)}
+            className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-4 py-2.5 text-[13px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
+          >
+            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1z" /></svg>
+            生成新图
+          </button>
+        )}
         <section
           ref={composeRef}
           className={
-            canvasOn
+            canvasOn && !canvasSel.length && !composeOpen
+              ? "hidden"
+              : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
                 `absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-white shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${hugStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
               : "stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
@@ -2432,7 +2446,7 @@ export default function StudioPage() {
 
 
                 {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
-                {canvasOn && !canvasSel.length && !composeOpen && (
+                {false && (
                   <div className="flex items-center gap-2 px-2 pb-2 pt-1">
                     <button type="button" onClick={() => setComposeOpen(true)} className="flex h-8 items-center gap-1 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#6e6e73] hover:bg-black/[0.08]">
                       {(findModel(model) ?? MODELS[0]).name} · 参数
@@ -2446,7 +2460,10 @@ export default function StudioPage() {
                     </div>
                   </div>
                 )}
-                <div ref={chipRowRef} className={`relative flex-wrap items-center gap-1.5 px-2 pb-2 pt-1 ${canvasOn && !canvasSel.length && !composeOpen ? "hidden" : "flex"}`}>
+                <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                  {canvasOn && !canvasSel.length && composeOpen && (
+                    <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]">×</button>
+                  )}
                   {openPanel && (
                     <div
                       className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
