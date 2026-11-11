@@ -16,7 +16,7 @@ import { GeneratingView } from "./generating-view";
  * - everything is saved in this browser per account.
  */
 
-export type BoardSource = { id: string; url: string; status?: string; prompt?: string };
+export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string };
 export type BoardApi = {
   add: (gid: string) => void;
   has: (gid: string) => boolean;
@@ -26,6 +26,8 @@ export type BoardApi = {
   zoom: (to: "in" | "out" | "fit" | number) => void;
   /** Pasted pictures: placed under the mouse when it is over the board, else in the middle. */
   paste: (files: File[]) => void;
+  /** The compose box edits the selected text node. */
+  setText: (text: string) => void;
 };
 
 type Node = {
@@ -38,6 +40,12 @@ type Node = {
   h: number;
   from?: string[]; // node ids this one was made from
   fit?: boolean; // adopt the picture's real shape once it loads
+  /** 用户 2026-11-11: a text node; its words drive the pictures it is linked to. */
+  kind?: "text";
+  text?: string;
+  /** The original picture's pixel size, looked up once. */
+  nw?: number;
+  nh?: number;
 };
 type View = { x: number; y: number; s: number };
 type Saved = { nodes: Node[]; view: View; updatedAt?: number };
@@ -96,13 +104,14 @@ export function CanvasBoard({
   onOpenHistory,
   onCompare,
   prefs,
+  onSelectionText,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
   /** Failed placeholder → make it again; the placeholder is removed and its sources get selected. */
   onRetry?: (gid: string) => void;
   /** 再来一张 / 高清放大 for one picture from history (用户 2026-11-10). */
-  onAgain?: (gid: string) => void;
+  onAgain?: (gid: string, text?: string) => void;
   onUpscale?: (gid: string) => void;
   /** When set the board hides its own zoom buttons; the page shows the level in its rail instead. */
   onScale?: (s: number) => void;
@@ -113,6 +122,8 @@ export function CanvasBoard({
   onCompare?: (before: string | null, after: string, gid: string | null) => void;
   /** 更多设置: snapping, the dot grid and the source lines can be turned off. */
   prefs?: { snap: boolean; grid: boolean; lines: boolean };
+  /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
+  onSelectionText?: (text: string | null) => void;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
@@ -381,6 +392,7 @@ export function CanvasBoard({
       importSet: () => {},
       zoom: () => {},
       paste: () => {},
+      setText: () => {},
       has: (gid) => nodesRef.current.some((n) => n.gid === gid),
       add: (gid) => {
         const found = nodesRef.current.find((n) => n.gid === gid);
@@ -428,6 +440,11 @@ export function CanvasBoard({
       const inside = p && p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom;
       const at = inside ? toWorld(p.x, p.y) : toWorld(r.left + r.width / 2, r.top + r.height / 2);
       addFilesRef.current(files, at);
+    };
+    api.setText = (text) => {
+      const ids = new Set(nodesRef.current.filter((n) => n.kind === "text" && selRef.current.has(n.id)).map((n) => n.id));
+      if (ids.size !== 1) return;
+      setNodesRaw((list) => list.map((m) => (ids.has(m.id) && m.text !== text ? { ...m, text } : m)));
     };
     api.zoom = (to) => {
       if (to === "fit") return fitAll();
@@ -609,6 +626,11 @@ export function CanvasBoard({
 
   // ---- keyboard
   /** Two pictures: left one is "before". One picture: the picture it was made from, else its saved reference. */
+  /** Words of the text nodes a picture was made from: 再来一张 uses their current text (一个文本控制多个生图). */
+  const linkedText = (n: Node): string | undefined => {
+    const t = (n.from ?? []).map((id) => nodesRef.current.find((m) => m.id === id)).filter((m) => m?.kind === "text").map((m) => m!.text ?? "").filter(Boolean);
+    return t.length ? t.join("\n\n") : undefined;
+  };
   const compareSel = () => {
     if (!onCompare) return;
     const list = nodesRef.current.filter((n) => sel.has(n.id));
@@ -735,7 +757,7 @@ export function CanvasBoard({
     onRetry?.(n.gid);
   };
 
-  const urlOf = (n: Node): string | null => n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null);
+  const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
   const selKey = nodes.filter((n) => sel.has(n.id)).map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
   onSelRef.current = onSelectionChange;
@@ -743,6 +765,38 @@ export function CanvasBoard({
     onSelRef.current?.(selKey ? selKey.split("|") : []);
   }, [selKey]);
   const selected = nodes.filter((n) => sel.has(n.id));
+  const selRef = useRef(sel);
+  selRef.current = sel;
+  const selTexts = selected.filter((n) => n.kind === "text");
+  const selTextKey = selTexts.length ? selTexts.map((n) => n.text ?? "").join("\n\n") : null;
+  const onSelTextRef = useRef(onSelectionText);
+  onSelTextRef.current = onSelectionText;
+  useEffect(() => {
+    onSelTextRef.current?.(selTextKey);
+  }, [selTextKey]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const addText = (at: { x: number; y: number }) => {
+    const n: Node = { id: uid(), kind: "text", text: "", x: at.x, y: at.y, w: 320, h: 180 };
+    commit((list) => [...list, n]);
+    setSel(new Set([n.id]));
+    setEditing(n.id);
+  };
+  // Look up each picture's real size once (shown above it).
+  const sizing = useRef(new Set<string>());
+  useEffect(() => {
+    for (const n of nodes) {
+      if (n.kind === "text" || n.nw || sizing.current.has(n.id)) continue;
+      const u = urlOf(n);
+      if (!u || u.startsWith("data:") || !u.startsWith("/api/")) continue;
+      sizing.current.add(n.id);
+      fetch(`/api/imginfo?u=${encodeURIComponent(u.split("?")[0])}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.w) setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, nw: d.w, nh: d.h } : m)));
+        })
+        .catch(() => {});
+    }
+  });
   const selBox = useMemo(() => {
     if (!selected.length) return null;
     const x0 = Math.min(...selected.map((n) => n.x));
@@ -836,20 +890,79 @@ export function CanvasBoard({
             })
           )}
         </svg>
+        {prefs?.lines !== false && nodes.flatMap((n) => {
+          let pic = 0;
+          return (n.from ?? []).map((fid) => {
+            const f = byId.get(fid);
+            if (!f) return null;
+            const label = f.kind === "text" ? "文本" : `图片${++pic}`;
+            const x = (f.x + f.w + n.x) / 2, y = (f.y + f.h / 2 + n.y + n.h / 2) / 2;
+            return (
+              <div
+                key={"l" + fid + n.id}
+                className="pointer-events-none absolute whitespace-nowrap rounded-full bg-white px-1.5 py-px text-[10px] font-medium text-[#6e6e73] shadow-[0_1px_6px_rgba(0,0,0,0.1)] ring-1 ring-black/[0.06]"
+                style={{ left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` }}
+              >
+                {label}
+              </div>
+            );
+          });
+        })}
         {nodes.map((n) => {
           const url = urlOf(n);
-          const status = n.gid ? sources.get(n.gid)?.status : undefined;
+          const src = n.gid ? sources.get(n.gid) : undefined;
+          const status = src?.status;
           const on = sel.has(n.id);
+          const k = 1 / view.s; // header and labels keep their screen size at any zoom
+          const isText = n.kind === "text";
           return (
             <div
               key={n.id}
               data-node-id={n.id}
-              className={`absolute rounded-[10px] bg-white shadow-[0_6px_24px_rgba(0,0,0,0.12)] ${on ? "ring-[3px] ring-[#0071e3]" : "ring-1 ring-black/[0.06]"}`}
+              className={`absolute rounded-[10px] ${isText ? "bg-white" : "bg-white"} shadow-[0_6px_24px_rgba(0,0,0,0.12)] ${on ? "ring-[3px] ring-[#0071e3]" : "ring-1 ring-black/[0.06]"}`}
               style={{ left: n.x, top: n.y, width: n.w, height: n.h, outlineWidth: 0 }}
               onPointerDown={(e) => onNodeDown(e, n)}
-              onDoubleClick={() => url && onView(url)}
+              onDoubleClick={() => (isText ? setEditing(n.id) : url && onView(url))}
             >
-              {url ? (
+              {/* 用户 2026-11-11: what the node is and its size, above it. */}
+              <div
+                className="pointer-events-none absolute left-0 flex items-center justify-between whitespace-nowrap text-[#86868b]"
+                style={{ bottom: "100%", width: n.w * view.s, transform: `scale(${k})`, transformOrigin: "bottom left", paddingBottom: 5, fontSize: 12 }}
+              >
+                <span className="flex items-center gap-1 font-medium text-[#6e6e73]">
+                  {isText ? (
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4h10M3 8h10M3 12h6" /></svg>
+                  ) : (
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2.5 11l3.5-3.5 2.5 2.5 2-2 3 3" /></svg>
+                  )}
+                  {isText ? "文本" : n.gid ? "图片生成" : "图片资源"}
+                </span>
+                {!isText && n.nw ? <span className="tabular-nums">{n.nw}×{n.nh}</span> : null}
+              </div>
+              {isText ? (
+                editing === n.id ? (
+                  <textarea
+                    autoFocus
+                    value={n.text ?? ""}
+                    placeholder="写下描述，连到图片上生成…"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const v = e.target.value.slice(0, 2000);
+                      setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, text: v } : m)));
+                    }}
+                    onBlur={() => setEditing(null)}
+                    onKeyDown={(e) => e.key === "Escape" && (e.currentTarget as HTMLTextAreaElement).blur()}
+                    className="h-full w-full resize-none rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-[#1d1d1f] outline-none"
+                  />
+                ) : (
+                  <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
+                    <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-[#1d1d1f]" : "text-[#aeaeb2]"}`}>
+                      {n.text || "双击输入文字。选中它再选图片，就用这段文字生成"}
+                    </div>
+                    <div className="pt-1 text-[11px] text-[#aeaeb2]">{(n.text ?? "").length} 字</div>
+                  </div>
+                )
+              ) : url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={n.src ? n.src : thumb(url, n.w * view.s > 480 ? 1280 : 640)}
@@ -885,7 +998,18 @@ export function CanvasBoard({
                   <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact />
                 </div>
               )}
-              {on && selected.length === 1 && url && (
+              {!isText && src?.model && url && (
+                <div
+                  className="pointer-events-none absolute left-0 top-full flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white/90 px-2 py-1 text-[11px] text-[#6e6e73] shadow-[0_2px_10px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.05]"
+                  style={{ transform: `translate(0, 6px) scale(${k})`, transformOrigin: "top left", maxWidth: n.w * view.s }}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {src.cover && <img src={src.cover} alt="" className="h-4 w-4 rounded object-cover" />}
+                  <span className="truncate font-medium text-[#1d1d1f]">{src.model}</span>
+                  {src.mode && <span className="text-[#aeaeb2]">· {src.mode}</span>}
+                </div>
+              )}
+              {on && selected.length === 1 && (url || isText) && (
                 <span
                   className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-[#0071e3] shadow"
                   style={{ transform: `scale(${1 / view.s})`, transformOrigin: "center" }}
@@ -898,10 +1022,10 @@ export function CanvasBoard({
         {(guides.v.length > 0 || guides.h.length > 0) && (
           <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
             {guides.v.map((x, i) => (
-              <line key={"v" + i} x1={x} x2={x} y1={-100000} y2={100000} stroke="#ff2e93" strokeWidth={1 / view.s} strokeDasharray={`${5 / view.s} ${4 / view.s}`} />
+              <line key={"v" + i} x1={x} x2={x} y1={-100000} y2={100000} stroke="#0071e3" strokeOpacity={0.28} strokeWidth={1 / view.s} strokeDasharray={`${3 / view.s} ${4 / view.s}`} />
             ))}
             {guides.h.map((y, i) => (
-              <line key={"h" + i} y1={y} y2={y} x1={-100000} x2={100000} stroke="#ff2e93" strokeWidth={1 / view.s} strokeDasharray={`${5 / view.s} ${4 / view.s}`} />
+              <line key={"h" + i} y1={y} y2={y} x1={-100000} x2={100000} stroke="#0071e3" strokeOpacity={0.28} strokeWidth={1 / view.s} strokeDasharray={`${3 / view.s} ${4 / view.s}`} />
             ))}
           </svg>
         )}
@@ -933,7 +1057,7 @@ export function CanvasBoard({
             </button>
           )}
           {selected.length === 1 && selected[0].gid && onAgain && (
-            <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!)}>
+            <button type="button" aria-label="再来一张" data-tip="再来一张（同样设置）" className={ibtn} onClick={() => onAgain(selected[0].gid!, linkedText(selected[0]))}>
               <svg viewBox="0 0 20 20" className={ico}><path d="M15.5 8A6 6 0 1 0 16 11" /><path d="M16 4v4h-4" /></svg>
             </button>
           )}
@@ -980,7 +1104,7 @@ export function CanvasBoard({
             {one ? (
               <>
                 {onCompare && (selected.length === 2 || one.from?.length || one.gid) && <button type="button" className={item} onClick={go(compareSel)}>{selected.length === 2 ? "对比这两张" : "和原图对比"}</button>}
-                {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!))}>再来一张</button>}
+                {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!, linkedText(one)))}>再来一张</button>}
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
@@ -991,6 +1115,7 @@ export function CanvasBoard({
             ) : (
               <>
                 {onCompose && <button type="button" className={item} onClick={go(onCompose)}>生成新图</button>}
+                <button type="button" className={item} onClick={go(() => addText({ x: ctx.wx, y: ctx.wy }))}>添加文本</button>
                 <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
                 {onOpenHistory && <button type="button" className={item} onClick={go(onOpenHistory)}>从历史添加</button>}
                 <div className="my-1 h-px bg-black/[0.07]" />

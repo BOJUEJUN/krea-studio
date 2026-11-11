@@ -577,9 +577,14 @@ export default function StudioPage() {
   const [boardDelArm, setBoardDelArm] = useState<string | null>(null);
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
+  const [canvasTextSel, setCanvasTextSel] = useState(false);
+  const textSelRef = useRef(false);
+  useEffect(() => {
+    if (textSelRef.current) canvasApi.current?.setText(prompt);
+  }, [prompt]);
   const [onBoard, setOnBoard] = useState<Set<string>>(new Set());
   const [composeOpen, setComposeOpen] = useState(false);
-  const [chipsMore, setChipsMore] = useState(false);
+  const chipsMore = true; // 用户 2026-11-11 (参数不搞更多了，全部展开，自适应缩放)
   // 2026-11-10 (用户: 参数要紧贴素材): the compose box hugs the selected pictures.
   // The box follows the selection every frame by moving its own style (no page re-render while panning).
   type Box = { left: number; top: number; right: number; bottom: number };
@@ -619,7 +624,7 @@ export default function StudioPage() {
           busy = false;
           return;
         }
-        const z = Math.max(0.7, Math.min(1, room / Math.max(1, natural)));
+        const z = Math.max(0.6, Math.min(1, room / Math.max(1, natural)));
         row.style.zoom = z < 0.995 ? String(z) : "";
         if (row.style.zoom !== was) {
           // ignore the resize our own change causes
@@ -1934,7 +1939,13 @@ export default function StudioPage() {
   );
 
   const boardSources = useMemo(
-    () => new Map<string, BoardSource>(gallery.map((g) => [g.id, { id: g.id, url: g.url, status: g.status, prompt: g.prompt }])),
+    () =>
+      new Map<string, BoardSource>(
+        gallery.map((g) => {
+          const m = findModel(g.model);
+          return [g.id, { id: g.id, url: g.url, status: g.status, prompt: g.prompt, model: m?.name, cover: m?.cover, mode: g.mode === "i2i" ? "图生图" : "文生图" }];
+        })
+      ),
     [gallery]
   );
   const boardUseAsRef = useCallback(
@@ -1985,7 +1996,7 @@ export default function StudioPage() {
   };
   const hugForRef = useRef(hugFor);
   hugForRef.current = hugFor;
-  const hugStyle = hugOn && canvasSel.length ? hugFor(selBoxRef.current) : null;
+  const hugStyle = hugOn && (canvasSel.length || canvasTextSel) ? hugFor(selBoxRef.current) : null;
   const onSelectionBox = useCallback((r: Box | null) => {
     selBoxRef.current = r;
     setHugOn(!!r);
@@ -2357,10 +2368,11 @@ export default function StudioPage() {
                     reuseItem(g);
                     setTimeout(() => startOrQueueRef.current(), 600);
                   }}
-                  onAgain={(gid) => {
+                  onAgain={(gid, text) => {
                     const g = gallery.find((x) => x.id === gid);
                     if (!g) return;
                     reuseItem(g);
+                    if (text) setPrompt(text);
                     setTimeout(() => startOrQueueRef.current(), 600);
                   }}
                   onUpscale={(gid) => upscaleItem(gid)}
@@ -2380,6 +2392,12 @@ export default function StudioPage() {
                   onCompose={() => setComposeOpen(true)}
                   onOpenHistory={() => toggleHistory(false)}
                   prefs={boardPrefs}
+                  onSelectionText={(t) => {
+                    // 用户 2026-11-11 (文本节点): a selected text node is the description; the box edits it.
+                    textSelRef.current = t !== null;
+                    setCanvasTextSel(t !== null);
+                    if (t !== null) setPrompt((p) => (p === t ? p : t));
+                  }}
                   onCompare={(before, after, gid) => {
                     const ref = before ?? (gid ? gallery.find((x) => x.id === gid)?.refUrl : null);
                     if (!ref) return flash("这张没有原图可以对比");
@@ -2548,7 +2566,7 @@ export default function StudioPage() {
           )}
 
         </section>
-        {canvasOn && !canvasSel.length && !composeOpen && (
+        {canvasOn && !canvasSel.length && !canvasTextSel && !composeOpen && (
           // 用户 2026-11-10: on the board the box only appears next to a clicked picture; this opens it for a new one.
           <button
             type="button"
@@ -2562,7 +2580,7 @@ export default function StudioPage() {
         <section
           ref={composeRef}
           className={
-            canvasOn && !canvasSel.length && !composeOpen
+            canvasOn && !canvasSel.length && !canvasTextSel && !composeOpen
               ? "hidden"
               : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
@@ -2822,7 +2840,7 @@ export default function StudioPage() {
                   </div>
                 )}
                 <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
-                  {canvasOn && !canvasSel.length && composeOpen && (
+                  {canvasOn && !canvasSel.length && !canvasTextSel && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]">×</button>
                   )}
                   {openPanel && (
@@ -2956,16 +2974,6 @@ export default function StudioPage() {
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
-                  {(hiddenChipCount > 0 || mode === "i2i") && (
-                    <button
-                      type="button"
-                      onClick={() => { setChipsMore((v) => !v); setOpenPanel(null); }}
-                      className={`flex h-8 items-center gap-1 rounded-full px-3 text-[12px] transition ${chipsMore ? "bg-[#1d1d1f] text-white" : "bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]"}`}
-                    >
-                      {chipsMore ? "收起" : `更多${hiddenChipCount ? ` ${hiddenChipCount}` : ""}`}
-                      <svg className={`h-3 w-3 transition-transform ${chipsMore ? "" : "rotate-180"}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                    </button>
-                  )}
                   {chipsMore && mode === "i2i" && !findModel(model)?.billing && (
                     <div className="flex items-center gap-0.5">
                       <button
