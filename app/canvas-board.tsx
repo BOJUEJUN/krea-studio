@@ -193,6 +193,15 @@ export function CanvasBoard({
   const boxRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodesRaw] = useState<Node[]>([]);
   const [view, setView] = useState<View>({ x: 0, y: 0, s: 1 });
+  // 2026-11-11 (用户: 画布几百张图会不会卡): the board's size, so pictures far off screen are not loaded.
+  const [boxWH, setBoxWH] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setBoxWH({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
@@ -207,6 +216,14 @@ export function CanvasBoard({
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   const urlOfRef = useRef<(n: Node) => string | null>(() => null);
+  /** On screen or within half a screen of it (pictures further away show an empty frame until you get close). */
+  const nearScreen = (n: Node) => {
+    if (!boxWH) return true;
+    const mx = boxWH.w / 2 / view.s, my = boxWH.h / 2 / view.s;
+    const x0 = -view.x / view.s - mx, y0 = -view.y / view.s - my;
+    const x1 = x0 + boxWH.w / view.s + mx * 2, y1 = y0 + boxWH.h / view.s + my * 2;
+    return n.x + n.w >= x0 && n.x <= x1 && n.y + n.h >= y0 && n.y <= y1;
+  };
   // 用户 2026-11-11: the minimap shows only while moving around zoomed far out, then fades.
   const [navOn, setNavOn] = useState(false);
   const [mapHold, setMapHold] = useState(false); // the pointer is on the minimap
@@ -1661,7 +1678,8 @@ export function CanvasBoard({
                   </div>
                 </div>
               ) : url ? (
-                <NodePicture key={url} url={url} backup={archivedPicture(n.gid)} thumb={thumb(url, n.w * view.s > 480 ? 1600 : 640)}
+                !nearScreen(n) ? <div className="h-full w-full rounded-[10px] bg-edge/[0.06]" /> :
+                <NodePicture key={url} url={url} backup={archivedPicture(n.gid)} thumb={thumb(url, n.w * view.s > 480 ? 1600 : n.w * view.s > 200 ? 640 : n.w * view.s > 100 ? 320 : 160)}
                   onLoad={(image) => {
                     if (!n.fit || !image.naturalWidth) return;
                     const h = n.w * image.naturalHeight / image.naturalWidth;
