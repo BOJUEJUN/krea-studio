@@ -1175,7 +1175,8 @@ export function CanvasBoard({
               )}
               {!isText && url && !on && (() => {
                 // Only the settings someone chose for this picture (用户 2026-11-11: 生成记录那条不用显示).
-                const sm = summaryFor?.(n.id) ?? null;
+                // 用户 2026-11-11 (这个参数不用显示了): the chip is off for now.
+                const sm = false ? summaryFor?.(n.id) ?? null : null;
                 if (!sm?.model) return null;
                 return (
                 <div
