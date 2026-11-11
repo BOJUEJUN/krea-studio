@@ -1723,7 +1723,7 @@ export default function StudioPage() {
     const firstFile = fileBlobRef.current, extraFiles = extraRefs.map((r) => r.file);
     if (mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
     const canvasLayout = hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
-      { ...composeSnapRef.current, summary: liveSummaryRef.current }) : undefined;
+      { ...composeSnapRef.current, summary: liveSummaryRef.current }, preview ? previewAspect : undefined) : undefined;
     const frameId = canvasLayout?.frame.node;
     const job = frameId ? null : ++jobRef.current;
     if (!frameId) busyRef.current = true;

@@ -27,7 +27,7 @@ export type BoardApi = {
   add: (gid: string) => void;
   reedit: (g: EditablePicture) => void;
   layout: () => CanvasLayout | undefined;
-  startFrame: (busy: ReadonlySet<string>, draft: CanvasDraft) => CanvasLayout | undefined;
+  startFrame: (busy: ReadonlySet<string>, draft: CanvasDraft, previewAspect?: number) => CanvasLayout | undefined;
   saveDraft: (id: string, draft: CanvasDraft) => void;
   removeInput: (slot: number) => void;
   attachFiles: (files: File[], slot?: number) => void;
@@ -505,13 +505,25 @@ export function CanvasBoard({
         const list = nodesRef.current;
         return captureLayout(list.filter((n) => selRef.current.has(n.id)), list, urlOfRef.current);
       },
-      startFrame: (busy, draft) => {
+      startFrame: (busy, draft, previewAspect) => {
         const list = nodesRef.current;
         const frame = selectedGeneration(list.filter((n) => selRef.current.has(n.id)));
         if (!frame) return;
-        if (!busy.has(frame.id) && !frame.pendingGid) return captureLayout([frame], list, urlOfRef.current);
+        const inputs = generationInputs(frame, list);
+        const source = inputs.find((n) => urlOfRef.current(n));
+        let aspect = (Number(draft.widthText) || draft.width) / (Number(draft.heightText) || draft.height);
+        if (source) {
+          aspect = source.nw && source.nh ? source.nw / source.nh : source.w / source.h;
+          if (source.fit && !source.nw && previewAspect) aspect = previewAspect;
+        }
+        const height = aspect > 0 && Number.isFinite(aspect) ? frame.w / aspect : frame.h;
+        const geometry = { h: height, y: frame.y + (frame.h - height) / 2 };
+        if (!busy.has(frame.id) && !frame.pendingGid) {
+          if (height !== frame.h) setNodesRaw((ns) => ns.map((n) => n.id === frame.id ? { ...n, ...geometry, fit: true } : n));
+          return captureLayout([{ ...frame, ...geometry }], list, urlOfRef.current);
+        }
         const fork: Node = { id: uid(), kind: "gen", draft: { ...draft }, x: frame.x + frame.w + 2 * GAP,
-          y: frame.y, w: frame.w, h: frame.h, from: generationInputs(frame, list).map((n) => n.id) };
+          ...geometry, w: frame.w, from: inputs.map((n) => n.id) };
         while (list.some((m) => m.x < fork.x + fork.w && m.x + m.w > fork.x && m.y < fork.y + fork.h && m.y + m.h > fork.y))
           fork.y += fork.h + 2 * GAP;
         commit((ns) => [...ns, fork]);
