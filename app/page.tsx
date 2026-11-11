@@ -2618,7 +2618,7 @@ export default function StudioPage() {
                       ) : (
                         <svg className="h-3.5 w-3.5 text-[#0071e3]" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1zm4.5 8l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></svg>
                       )}
-                      {polishing ? "润色中…" : "润色"}
+                      {polishing ? "润色中…" : "提示词润色"}
                     </button>
                     <button
                       type="button"
