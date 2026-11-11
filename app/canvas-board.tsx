@@ -198,7 +198,9 @@ export function CanvasBoard({
   useEffect(() => {
     const el = boxRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => setBoxWH({ w: el.clientWidth, h: el.clientHeight }));
+    const measure = () => setBoxWH({ w: el.clientWidth, h: el.clientHeight });
+    measure();
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -218,7 +220,7 @@ export function CanvasBoard({
   const urlOfRef = useRef<(n: Node) => string | null>(() => null);
   /** On screen or within half a screen of it (pictures further away show an empty frame until you get close). */
   const nearScreen = (n: Node) => {
-    if (!boxWH) return true;
+    if (!boxWH || !boxWH.w) return true;
     const mx = boxWH.w / 2 / view.s, my = boxWH.h / 2 / view.s;
     const x0 = -view.x / view.s - mx, y0 = -view.y / view.s - my;
     const x1 = x0 + boxWH.w / view.s + mx * 2, y1 = y0 + boxWH.h / view.s + my * 2;

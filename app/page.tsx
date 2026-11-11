@@ -194,6 +194,7 @@ if (typeof window !== "undefined") {
 
 /** Small WebP for grids; originals stay for the big view and downloads. */
 function thumbOf(url: string, w: number): string {
+  if (url.startsWith("/api/ref/") && w <= 640 && !url.includes("?")) return `${url}?w=${w}`;
   return url.startsWith("/api/img/") ? viaDirect(url, String(w), `${url}?w=${w}`) : url;
 }
 async function polishText(prompt: string, level: CanvasDraft["polishLevel"]): Promise<string> {

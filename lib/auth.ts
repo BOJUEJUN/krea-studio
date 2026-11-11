@@ -31,12 +31,31 @@ async function readUsers(): Promise<UserFile> {
 async function readUsersFresh(): Promise<UserFile> {
   const bytes = await storeGet("users.json");
   if (!bytes) return { users: [] };
-  try {
-    const data = JSON.parse(bytes.toString("utf8"));
-    return Array.isArray(data?.users) ? data : { users: [] };
-  } catch {
-    return { users: [] };
+  // 2026-11-11: a damaged file must stop sign-ins, never count as "no accounts" (the next sign-up would wipe all).
+  const data = JSON.parse(bytes.toString("utf8"));
+  if (!Array.isArray(data?.users)) throw new Error("账号数据读取失败");
+  return data;
+}
+
+/**
+ * 2026-11-11 (用户: 用户多了会有什么问题): the accounts live in one file, so two sign-ups at the same moment
+ * could each write their own copy and drop the other. After writing, read it back; if someone else wrote in
+ * between, put this account's record into their copy and write again.
+ */
+async function commitUsers(file: UserFile, record: UserRecord): Promise<void> {
+  let next = file;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const text = JSON.stringify(next);
+    await storePut("users.json", text, "application/json");
+    await new Promise((r) => setTimeout(r, 150 + Math.random() * 250));
+    const now = await readUsersFresh();
+    if (JSON.stringify(now) === text) break;
+    const i = now.users.findIndex((u) => u.name.toLowerCase() === record.name.toLowerCase());
+    if (i >= 0) now.users[i] = { ...record, owner: now.users[i].owner };
+    else now.users.push({ ...record, owner: false });
+    next = now;
   }
+  usersCache = { at: Date.now(), data: structuredClone(next) };
 }
 
 function safeEqual(a: string, b: string): boolean {
@@ -62,8 +81,7 @@ export async function registerUser(name: string, password: string, invite: strin
   const salt = randomBytes(16).toString("hex");
   const user: UserRecord = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
   file.users.push(user);
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, user);
   return user;
 }
 
@@ -90,8 +108,7 @@ export async function enterByName(name: string, invite?: string): Promise<UserRe
   if (found) return found;
   const user: UserRecord = { name, salt: "", hash: "", owner: file.users.length === 0, createdAt: Date.now() };
   file.users.push(user);
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, user);
   return user;
 }
 
@@ -167,8 +184,7 @@ export async function signIn(rawName: string, password: string, invite = ""): Pr
     user = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
     file.users.push(user);
   }
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, user);
   return user;
 }
 
@@ -218,8 +234,7 @@ export async function registerWithInvite(rawName: string, password: string, invi
     user = { name, salt, hash: hashPassword(password, salt), owner: file.users.length === 0, createdAt: Date.now() };
     file.users.push(user);
   }
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, user);
   return user;
 }
 
@@ -231,8 +246,7 @@ export async function changePassword(name: string, oldPassword: string, newPassw
   if (user.hash && !passwordOk(user, oldPassword)) throw new Error("原密码不对");
   user.salt = randomBytes(16).toString("hex");
   user.hash = hashPassword(newPassword, user.salt);
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, user);
 }
 
 /** Accounts (no password data) for the owner's admin page. */
@@ -246,8 +260,7 @@ export async function setDisabled(name: string, disabled: boolean): Promise<void
   const u = file.users.find((x) => x.name === name);
   if (!u || u.owner) throw new Error("不能停用这个账号");
   u.disabled = disabled;
-  await storePut("users.json", JSON.stringify(file), "application/json");
-  usersCache = { at: Date.now(), data: structuredClone(file) };
+  await commitUsers(file, u);
 }
 
 export async function isOwner(name: string): Promise<boolean> {

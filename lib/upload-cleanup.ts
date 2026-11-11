@@ -29,7 +29,7 @@ export type CleanupReport = { ok: true; uploads: number; uploadBytes: number; or
 
 export async function cleanupUploads(apply: boolean): Promise<CleanupReport> {
   if (storeKind() !== "cos") return { ok: false, error: "只有腾讯云存储需要清理" };
-  const [uploads, docs, history] = await Promise.all([cosList("ref-cv"), cosList("canvas-"), readHistory()]);
+  const [uploads, docs, history, smalls] = await Promise.all([cosList("ref-cv"), cosList("canvas-"), readHistory(), cosList("rthumb-")]);
   // An empty history means it could not be read, not that nothing uses the uploads.
   if (!history.length) return { ok: false, error: "历史没读到，这次不清理" };
   const used = new Set<string>();
@@ -61,8 +61,11 @@ export async function cleanupUploads(apply: boolean): Promise<CleanupReport> {
   });
   let deleted = 0;
   let failed = 0;
+  // Their small copies (rthumb-<w>-<id>) go with them.
+  const gone = new Set(orphans.map((u) => u.key.slice("ref-".length)));
+  const extra = smalls.filter((t) => gone.has(t.key.replace(/^rthumb-\d+-/, "")));
   if (apply) {
-    await mapLimit(orphans, 6, async (u) => {
+    await mapLimit([...orphans, ...extra], 6, async (u) => {
       try {
         await cosDelete(u.key);
         deleted++;
@@ -76,7 +79,7 @@ export async function cleanupUploads(apply: boolean): Promise<CleanupReport> {
     uploads: uploads.length,
     uploadBytes: uploads.reduce((a, u) => a + u.size, 0),
     orphans: orphans.length,
-    orphanBytes: orphans.reduce((a, u) => a + u.size, 0),
+    orphanBytes: [...orphans, ...extra].reduce((a, u) => a + u.size, 0),
     deleted,
     failed,
   };
