@@ -55,6 +55,8 @@ const GAP = 40;
 // Finished pictures are archived under the task id, even when the history list is still loading.
 const archivedPicture = (gid?: string) => gid && /^[0-9A-Za-z_-]{1,64}$/.test(gid) ? `/api/img/${gid}` : null;
 
+const isResource = (n: Node) => n.kind !== "text" && !isGeneration(n);
+
 function NodePicture({ url, thumb, backup, onLoad }: {
   url: string; thumb: string; backup: string | null; onLoad: (image: HTMLImageElement) => void;
 }) {
@@ -194,6 +196,10 @@ export function CanvasBoard({
   /** Right-click menu: where it opens (board pixels), the world point, and the picture under it. */
   const [ctx, setCtx] = useState<{ x: number; y: number; wx: number; wy: number; node: string | null } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const replacePicker = useRef<HTMLInputElement>(null);
+  const replaceId = useRef<string | null>(null);
+  const replacing = useRef(new Map<string, symbol>());
+  const [dropResource, setDropResource] = useState<string | null>(null);
   const fileAt = useRef<{ x: number; y: number } | null>(null);
   const lastPointer = useRef<{ x: number; y: number } | null>(null);
   const urlOfRef = useRef<(n: Node) => string | null>(() => null);
@@ -444,6 +450,39 @@ export function CanvasBoard({
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
+  const replaceResource = useCallback(async (id: string, input: File | { gid: string; url: string }) => {
+    const target = nodesRef.current.find((n) => n.id === id);
+    if (!target || !isResource(target)) return;
+    const request = Symbol();
+    replacing.current.set(id, request);
+    try {
+      let patch: Partial<Node>;
+      if (input instanceof File) {
+        if (!input.type.startsWith("image/")) return;
+        const decoded = await fileToDataUrl(input);
+        let src = decoded.url;
+        if (cloudId) {
+          const form = new FormData();
+          const bytes = await (await fetch(src)).blob();
+          form.append("image", bytes, bytes.type === "image/png" ? "canvas.png" : "canvas.jpg");
+          const result = await (await fetch("/api/canvas/upload", { method: "POST", body: form })).json();
+          if (!result.ok || !result.url) throw new Error(result.error || "替换失败");
+          src = result.url;
+        }
+        patch = { src, gid: undefined, nw: decoded.w, nh: decoded.h, fit: false };
+      } else {
+        patch = { src: input.url, gid: input.gid, nw: undefined, nh: undefined, fit: true };
+      }
+      if (replacing.current.get(id) !== request || !boxRef.current) return;
+      commit((nodes) => nodes.map((n) => n.id === id && isResource(n)
+        ? { ...n, ...patch, kind: "image", h: patch.nw && patch.nh ? n.w * patch.nh / patch.nw : n.h } : n));
+    } catch (error) {
+      if (replacing.current.get(id) === request) flash(error instanceof Error ? error.message : "无法读取这张图片");
+    } finally {
+      if (replacing.current.get(id) === request) replacing.current.delete(id);
+    }
+  }, [cloudId, commit, flash]);
+
   const deferred = useRef<(() => void)[]>([]);
   const selectionClip = useCallback(() => copyNodes(nodesRef.current, selRef.current), []);
   const placeClip = useCallback((clip: ReturnType<typeof copyNodes>, at?: { x: number; y: number }) => {
@@ -614,7 +653,12 @@ export function CanvasBoard({
       if (list.some((n) => n.src?.startsWith("data:"))) return null;
       return { nodes: list.filter((n) => n.kind === "text" || n.kind === "gen" || n.src), view: viewRef.current };
     };
-    api.paste = (files) => { void addFilesRef.current(files, pasteAt()); };
+    api.paste = (files) => {
+      const picked = nodesRef.current.filter((n) => selRef.current.has(n.id));
+      if (files.length === 1 && picked.length === 1 && isResource(picked[0])) {
+        void replaceResource(picked[0].id, files[0]);
+      } else void addFilesRef.current(files, pasteAt());
+    };
     api.setText = (text) => {
       const picked = nodesRef.current.filter((n) => selRef.current.has(n.id));
       const frame = selectedGeneration(picked);
@@ -633,7 +677,7 @@ export function CanvasBoard({
     return () => {
       apiRef.current = null;
     };
-  }, [apiRef, toWorld, commit, zoomAt, fitAll, flash, pasteAt, pasteText]);
+  }, [apiRef, toWorld, commit, zoomAt, fitAll, flash, pasteAt, pasteText, replaceResource]);
   useEffect(() => {
     if (remoteReady.current) deferred.current.splice(0).forEach((run) => run());
   }, [syncTick]);
@@ -998,17 +1042,25 @@ export function CanvasBoard({
     e.preventDefault();
     e.stopPropagation();
     setDropHover(false);
+    setDropResource(null);
     const at = toWorld(e.clientX, e.clientY);
     const frameId = (e.target as Element).closest?.("[data-node-id]")?.getAttribute("data-node-id");
-    const frame = frameId ? nodesRef.current.find((m) => m.id === frameId && isGeneration(m)) : undefined;
+    const target = frameId ? nodesRef.current.find((n) => n.id === frameId) : undefined;
+    const frame = target && isGeneration(target) ? target : undefined;
     const gid = e.dataTransfer.getData(dragType);
     if (gid) {
       const src = sources.get(gid);
       if (!src?.url) return;
+      if (target && isResource(target)) return replaceResource(target.id, { gid, url: src.url });
       if (frame && apiRef?.current) return apiRef.current.attachHistory(gid, frame.id);
       const n: Node = { id: uid(), kind: "image", gid, x: at.x - 160, y: at.y - 160, w: 320, h: 320, fit: true };
       commit((list) => [...list, n]);
       setSel(new Set([n.id]));
+      return;
+    }
+    if (target && isResource(target)) {
+      const image = Array.from(e.dataTransfer.files).find((f) => f.type.startsWith("image/"));
+      if (image) await replaceResource(target.id, image);
       return;
     }
     if (frame) {
@@ -1281,10 +1333,13 @@ export function CanvasBoard({
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = "copy";
+        const id = (e.target as Element).closest("[data-node-id]")?.getAttribute("data-node-id");
+        const resource = nodesRef.current.find((n) => n.id === id && isResource(n));
+        setDropResource(resource?.id ?? null);
         if (!dropHover) setDropHover(true);
       }}
       onDragLeave={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) setDropHover(false);
+        if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) { setDropHover(false); setDropResource(null); }
       }}
       onDrop={onDrop}
     >
@@ -1521,6 +1576,12 @@ export function CanvasBoard({
                   </div>
                 );
               })()}
+              {isResource(n) && <button type="button" aria-label="更换图片"
+                className={`absolute right-1.5 top-1.5 rounded-full bg-panel/95 px-2 py-1 text-[11px] font-medium text-ink shadow-sm transition-opacity focus-visible:opacity-100 ${dropResource === n.id ? "opacity-100" : "opacity-0 group-hover/node:opacity-100"}`}
+                onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); replaceId.current = n.id; replacePicker.current?.click(); }}>
+                更换图片
+              </button>}
               {canLinkOut && (
                 <span
                   role="button"
@@ -1683,6 +1744,13 @@ export function CanvasBoard({
           document.body
         );
       })()}
+      <input ref={replacePicker} type="file" accept="image/*" className="hidden" aria-label="选择替换图片"
+        onChange={(e) => {
+          const file = e.currentTarget.files?.[0], id = replaceId.current;
+          e.currentTarget.value = "";
+          replaceId.current = null;
+          if (file && id) void replaceResource(id, file);
+        }} />
       <input
         ref={fileRef}
         type="file"
