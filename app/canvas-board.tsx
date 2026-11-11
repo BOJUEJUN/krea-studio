@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GeneratingView } from "./generating-view";
 
 /**
  * 2026-11-10 (用户: 页面可以切换成自由画布). An infinite board, modelled on what makes Krea / Visual Electric /
@@ -72,7 +73,10 @@ export function CanvasBoard({
   flash,
   apiRef,
   onSelectionChange,
+  onSelectionBox,
 }: {
+  /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
+  onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
   /** The selected pictures' urls (in canvas mode they become the reference images). */
   onSelectionChange?: (urls: string[]) => void;
@@ -468,6 +472,24 @@ export function CanvasBoard({
     return { x: view.x + ((x0 + x1) / 2) * view.s, y: view.y + y0 * view.s };
   }, [selected, view]);
   const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const onBoxRef = useRef(onSelectionBox);
+  onBoxRef.current = onSelectionBox;
+  const selRect = selected.length
+    ? [
+        Math.min(...selected.map((n) => n.x)),
+        Math.min(...selected.map((n) => n.y)),
+        Math.max(...selected.map((n) => n.x + n.w)),
+        Math.max(...selected.map((n) => n.y + n.h)),
+      ].join(",")
+    : "";
+  useEffect(() => {
+    const cb = onBoxRef.current;
+    if (!cb) return;
+    const r = boxRef.current?.getBoundingClientRect();
+    if (!selRect || !r) return cb(null);
+    const [x0, y0, x1, y1] = selRect.split(",").map(Number);
+    cb({ left: r.left + view.x + x0 * view.s, top: r.top + view.y + y0 * view.s, right: r.left + view.x + x1 * view.s, bottom: r.top + view.y + y1 * view.s });
+  }, [selRect, view]);
   const grid = 24 * view.s;
 
   const btn = "flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.06]";
@@ -548,9 +570,9 @@ export function CanvasBoard({
               ) : status === "failed" || status === "expired" ? (
                 <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-[#fff1f1] text-[13px] text-[#d70015]">没有生成成功</div>
               ) : (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden rounded-[10px] bg-gradient-to-br from-[#eef4ff] to-[#f7eefe]">
-                  <span className="animate-spin-slow h-6 w-6 rounded-full border-2 border-[#0071e3]/25 border-t-[#0071e3]" />
-                  <span className="text-[12px] tabular-nums text-[#0071e3]">{loading ? `${Math.floor(progress)}%` : "等待中"}</span>
+                // The site's own generating animation, sized to the placeholder (用户: 生成动画也要同步).
+                <div className="h-full w-full overflow-hidden rounded-[10px]">
+                  <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact />
                 </div>
               )}
               {on && selected.length === 1 && url && (

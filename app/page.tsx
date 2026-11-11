@@ -503,6 +503,10 @@ export default function StudioPage() {
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
   const [composeOpen, setComposeOpen] = useState(false);
+  // 2026-11-10 (用户: 参数要紧贴素材): the compose box hugs the selected pictures.
+  const [selBox, setSelBox] = useState<{ left: number; top: number; right: number; bottom: number } | null>(null);
+  const leftColRef = useRef<HTMLDivElement>(null);
+  const composeRef = useRef<HTMLElement>(null);
   const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
@@ -707,7 +711,7 @@ export default function StudioPage() {
     const pl = localStorage.getItem("ais-polish-level");
     if (pl === "low" || pl === "medium" || pl === "high") setPolishLevel(pl);
     const savedCount = Number(localStorage.getItem(COUNT_KEY));
-    if (savedCount >= 1 && savedCount <= 4) setCount(savedCount);
+    void savedCount; // 张数 removed 2026-11-10: always one picture per click
     fetchJson("/api/status")
       .then((d) => {
         if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
@@ -891,14 +895,15 @@ export default function StudioPage() {
   const replaceSlot = useRef<number | null>(null);
   const refLimitRef = useRef(1);
   const addRefs = useCallback(
-    (files: File[]) => {
+    (files: File[], quiet = false) => {
       if (!files.length) return;
       setReverse(localStorage.getItem(REVERSE_KEY) !== "off");
       const limit = refLimitRef.current;
       if (limit <= 1) {
         onPickFile(files[0]);
         setExtraRefs([]);
-        flash(fileBlobRef.current && files.length >= 1 ? (files.length > 1 ? "这个模型只用 1 张参考图，已用第一张" : "已换成新的参考图") : "已放入参考图");
+        if (!quiet || files.length > 1)
+          flash(fileBlobRef.current && files.length >= 1 ? (files.length > 1 ? "这个模型只用 1 张参考图，已用第一张" : "已换成新的参考图") : "已放入参考图");
         return;
       }
       let rest = files;
@@ -1656,7 +1661,7 @@ export default function StudioPage() {
           );
           onPickFile(null);
           setExtraRefs([]);
-          addRefs(files);
+          addRefs(files, true);
           setMode("i2i");
         } catch {
           flash("图片读取失败，请稍后重试");
@@ -1701,6 +1706,22 @@ export default function StudioPage() {
     [gallery, downloadItem]
   );
 
+  // Under the selection when it fits, else above it, else at the bottom; always inside the board.
+  const hugStyle: React.CSSProperties | null = (() => {
+    if (!canvasOn || !canvasSel.length || !selBox) return null;
+    const col = leftColRef.current?.getBoundingClientRect();
+    if (!col) return null;
+    const w = Math.min(640, col.width - 32);
+    const h = composeRef.current?.offsetHeight || 200;
+    const cx = (selBox.left + selBox.right) / 2 - col.left;
+    const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
+    const below = selBox.bottom - col.top + 14;
+    if (below + h <= col.height - 12) return { left, top: Math.max(56, below), width: w };
+    const above = selBox.top - col.top - 14 - h - 48; // leave room for the selection toolbar
+    if (above >= 56) return { left, top: above, width: w };
+    return { left, top: col.height - h - 16, width: w };
+  })();
+
   const runPolish = async () => {
     const before = prompt;
     if (!before.trim() || polishing) return;
@@ -1736,7 +1757,7 @@ export default function StudioPage() {
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
     // 2026-11-05 (用户: 随机种子去掉吧，没什么人用): every picture gets a random seed.
     // 不想要 removed (用户 2026-11-06: 去掉).
-    { key: "count", label: `${count} 张` },
+    // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
   ];
   /** One line for the folded 参数 row: 1:1 · 2K · 标准 · 深度思考 … */
   const paramSummary = [
@@ -1859,12 +1880,12 @@ export default function StudioPage() {
       />
 
       <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
-        <div className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
+        <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
           className="apple-card stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden rounded-[22px] lg:h-auto lg:min-h-0 lg:flex-1">
                     <div
-            className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
+            className={`result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3 ${canvasOn ? "" : "pt-11"}`}
 
           >
             {canvasOn && user && (
@@ -1873,6 +1894,7 @@ export default function StudioPage() {
                   key={boardId}
                   storageKey={boardKey(boardId)}
                   onSelectionChange={onBoardSelection}
+                  onSelectionBox={setSelBox}
                   sources={boardSources}
                   pendingIds={loading ? batch : []}
                   loading={loading}
@@ -2095,12 +2117,14 @@ export default function StudioPage() {
 
         </section>
         <section
+          ref={composeRef}
           className={
             canvasOn
-              ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能).
-                "absolute bottom-4 left-1/2 z-40 m-0 flex w-[min(860px,calc(100%-32px))] -translate-x-1/2 flex-col overflow-visible rounded-[22px] shadow-[0_18px_50px_rgba(0,0,0,0.18)]"
+              ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
+                `absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-white shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${hugStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
               : "stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
           }
+          style={hugStyle ?? undefined}
         >
 
           <div className="min-h-0">
