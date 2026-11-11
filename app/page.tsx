@@ -2474,8 +2474,14 @@ export default function StudioPage() {
   }
   // 2026-11-05 (用户: 历史上下页怎么设计): no pages — more pictures load as you scroll down.
   const HIST_PAGE_SIZE = 30;
-  const pageItems = visibleHistory.slice(0, (histPage + 1) * HIST_PAGE_SIZE);
-  const histHasMore = pageItems.length < visibleHistory.length;
+  // 用户 2026-11-11 (手机历史不能无限往下拉): phones get real pages of 12 with 上一页 / 下一页.
+  const PHONE_PAGE = 12;
+  const phonePages = Math.max(1, Math.ceil(visibleHistory.length / PHONE_PAGE));
+  const phonePage = Math.min(histPage, phonePages - 1);
+  const pageItems = phone
+    ? visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE)
+    : visibleHistory.slice(0, (histPage + 1) * HIST_PAGE_SIZE);
+  const histHasMore = !phone && pageItems.length < visibleHistory.length;
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
   const pickModel = (id: ModelId) => {
@@ -4023,6 +4029,34 @@ export default function StudioPage() {
                   <button type="button" onClick={() => setHistPage((p) => p + 1)} className="mx-auto mt-1 block rounded-full px-3 py-1 text-[11px] text-muted hover:bg-edge/[0.04]">
                     加载更多
                   </button>
+                )}
+                {phone && phonePages > 1 && (
+                  <div className="mt-3 flex items-center justify-between gap-2 px-1 pb-1">
+                    {(["上一页", "下一页"] as const).map((label, i) => {
+                      const to = phonePage + (i ? 1 : -1);
+                      const off = to < 0 || to >= phonePages;
+                      const btn = (
+                        <button
+                          key={label}
+                          type="button"
+                          disabled={off}
+                          onClick={(e) => {
+                            setHistPage(to);
+                            (e.currentTarget.closest("aside, section") as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
+                          }}
+                          className="h-11 min-w-[88px] rounded-full bg-edge/[0.05] px-4 text-[14px] font-medium text-ink active:scale-[0.97] disabled:opacity-35"
+                        >
+                          {label}
+                        </button>
+                      );
+                      return i === 0 ? (
+                        <Fragment key="prev">
+                          {btn}
+                          <span className="text-[13px] tabular-nums text-secondary">第 {phonePage + 1} / {phonePages} 页</span>
+                        </Fragment>
+                      ) : btn;
+                    })}
+                  </div>
                 )}
               </div>
             )}
