@@ -887,16 +887,19 @@ export function CanvasBoard({
     return list.map((m, i) => ({ n: i + 1, url: urlOf(m) ?? "" })).filter((x) => x.url);
   };
   const [mention, setMention] = useState<{ id: string; at: number } | null>(null);
+  // Each "@图N" shows that picture's thumbnail but keeps the hidden text's width, so the caret of the textarea
+  // on top stays where the eye expects it (用户 2026-11-11: 输入编辑的时候也要显示图片).
   const mentionTokens = (text: string, pics: { n: number; url: string }[]) =>
     text.split(/(@图\d+)/g).map((part, i) => {
       const m = part.match(/^@图(\d+)$/);
       if (!m) return part;
       const p = pics.find((x) => x.n === Number(m[1]));
+      if (!p) return <span key={i} className="rounded bg-[#ff3b30]/10 text-[#d70015] underline decoration-dashed underline-offset-2">{part}</span>;
       return (
-        <span key={i} className={`mx-0.5 inline-flex items-center gap-0.5 rounded-md px-1 align-middle text-[12px] ${p ? "bg-[#0071e3]/10 text-[#0071e3]" : "bg-[#d70015]/10 text-[#d70015]"}`}>
+        <span key={i} className="relative inline-block align-baseline text-transparent">
+          {part}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          {p && <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="h-4 w-4 rounded object-cover" />}
-          图{m[1]}
+          <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="absolute left-1/2 top-1/2 h-[20px] w-[20px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-[#0071e3]/70" />
         </span>
       );
     });
@@ -1153,6 +1156,10 @@ export function CanvasBoard({
               {isText ? (
                 editing === n.id ? (
                   <>
+                  <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-[#1d1d1f]">
+                    {mentionTokens(n.text ?? "", picsForText(n.id))}
+                    {"\n"}
+                  </div>
                   <textarea
                     autoFocus
                     value={n.text ?? ""}
@@ -1170,8 +1177,20 @@ export function CanvasBoard({
                         if (mention) setMention(null);
                         else (e.currentTarget as HTMLTextAreaElement).blur();
                       }
+                      if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
+                        const el = e.currentTarget;
+                        const at = el.selectionStart ?? 0;
+                        const t = n.text ?? "";
+                        const m = at === el.selectionEnd ? /@图\d+ ?$/.exec(t.slice(0, at)) : null;
+                        if (m && m[0].length > 2) {
+                          e.preventDefault();
+                          const v = t.slice(0, at - m[0].length) + t.slice(at);
+                          setNodesRaw((list) => list.map((x) => (x.id === n.id ? { ...x, text: v } : x)));
+                          requestAnimationFrame(() => el.setSelectionRange(at - m[0].length, at - m[0].length));
+                        }
+                      }
                     }}
-                    className="h-full w-full resize-none rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-[#1d1d1f] outline-none"
+                    className="relative h-full w-full resize-none overflow-hidden rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2]"
                   />
                   {mention?.id === n.id && (() => {
                     const pics = picsForText(n.id);
