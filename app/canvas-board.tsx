@@ -689,13 +689,16 @@ export function CanvasBoard({
     | null
   >(null);
 
+  const dragPointer = useRef<number | null>(null);
+
   // 用户 2026-11-10: left drag on empty space = box select, wheel-button (middle) drag = pan, wheel = zoom,
   // right click = menu. Space + left drag still pans (Figma habit).
   const onBgDown = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
     setCtx(null);
     setLinkMenu(null);
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragPointer.current = e.pointerId;
+    boxRef.current?.setPointerCapture(e.pointerId);
     if (e.button === 0 && !spaceDown) {
       const w = toWorld(e.clientX, e.clientY);
       drag.current = { kind: "marquee", x0: w.x, y0: w.y, add: e.shiftKey ? new Set(sel) : new Set() };
@@ -711,7 +714,11 @@ export function CanvasBoard({
     setCtx(null);
     e.stopPropagation();
     if (spaceDown) return onBgDown(e);
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (!e.shiftKey && (e.target as Element).closest("[data-node-summary]")) {
+      setSel(new Set([n.id]));
+      return;
+    }
+    dragPointer.current = e.pointerId;
     let next = sel;
     if (e.shiftKey) {
       next = new Set(sel);
@@ -730,14 +737,22 @@ export function CanvasBoard({
     drag.current = { kind: "move", sx: e.clientX, sy: e.clientY, start, before: nodesRef.current, moved: false };
   };
   const onHandleDown = (e: React.PointerEvent, n: Node) => {
+    if (e.button !== 0) return;
     e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragPointer.current = e.pointerId;
+    boxRef.current?.setPointerCapture(e.pointerId);
     drag.current = { kind: "resize", id: n.id, sx: e.clientX, w: n.w, h: n.h, before: nodesRef.current };
   };
   const onMove = (e: React.PointerEvent) => {
     lastPointer.current = { x: e.clientX, y: e.clientY };
     const d = drag.current;
-    if (!d) return;
+    if (!d || e.pointerId !== dragPointer.current) return;
+    if (!(e.buttons & (d.kind === "pan" ? 5 : 1))) { finishDrag(false); return; }
+    if (d.kind === "move" && !d.moved) {
+      if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 4) return;
+      d.moved = true;
+      boxRef.current?.setPointerCapture(e.pointerId);
+    }
     moving.current = true;
     const s = viewRef.current.s;
     if (d.kind === "link") {
@@ -760,7 +775,6 @@ export function CanvasBoard({
     } else if (d.kind === "move") {
       let dx = (e.clientX - d.sx) / s;
       let dy = (e.clientY - d.sy) / s;
-      if (Math.abs(dx) + Math.abs(dy) > 2 / s) d.moved = true;
       // Snap the moving group's edges / centre to the other pictures' edges / centres (Alt turns it off).
       const moving = nodesRef.current.filter((n) => d.start.has(n.id));
       const others = nodesRef.current.filter((n) => !d.start.has(n.id));
@@ -797,8 +811,9 @@ export function CanvasBoard({
       setNodesRaw((list) => list.map((n) => (n.id === d.id ? { ...n, w, h: (w * d.h) / d.w, fit: false } : n)));
     }
   };
-  const onUp = () => {
+  const finishDrag = (completed: boolean) => {
     const d = drag.current;
+    dragPointer.current = null;
     drag.current = null;
     if (moving.current) {
       moving.current = false;
@@ -809,6 +824,7 @@ export function CanvasBoard({
       const end = linkToRef.current;
       setLinkTo(null);
       setLinkHover(null);
+      if (!completed) return;
       const p = lastPointer.current;
       const hit = p ? (document.elementFromPoint(p.x, p.y) as Element | null)?.closest?.("[data-node-id]")?.getAttribute("data-node-id") : null;
       if (hit && hit !== d.src) link(d.src, hit);
@@ -819,7 +835,7 @@ export function CanvasBoard({
       return;
     }
     if (d.kind === "pan") setPanning(false);
-    if (d.kind === "pan" && !d.moved && !spaceDown) setSel(new Set());
+    if (completed && d.kind === "pan" && !d.moved && !spaceDown) setSel(new Set());
     if (d.kind === "marquee") setMarquee(null);
     setGuides({ v: [], h: [] });
     if ((d.kind === "move" && d.moved) || d.kind === "resize") {
@@ -827,6 +843,28 @@ export function CanvasBoard({
       redo.current = [];
     }
   };
+
+  const finishDragRef = useRef(finishDrag);
+  finishDragRef.current = finishDrag;
+  useEffect(() => {
+    const finish = (e: PointerEvent) => {
+      if (dragPointer.current !== e.pointerId) return;
+      lastPointer.current = { x: e.clientX, y: e.clientY };
+      finishDragRef.current(e.type === "pointerup");
+    };
+    const blur = () => {
+      if (dragPointer.current !== null) finishDragRef.current(false);
+      setSpaceDown(false);
+    };
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
 
   // ---- keyboard
   /** Two pictures: left one is "before". One picture: the picture it was made from, else its saved reference. */
@@ -1154,6 +1192,7 @@ export function CanvasBoard({
     if (e.button !== 0) return;
     setCtx(null);
     setLinkMenu(null);
+    dragPointer.current = e.pointerId;
     boxRef.current?.setPointerCapture(e.pointerId);
     drag.current = { kind: "link", src: n.id };
     const w = toWorld(e.clientX, e.clientY);
@@ -1235,8 +1274,9 @@ export function CanvasBoard({
         setCtx({ x: e.clientX, y: e.clientY, wx: w.x, wy: w.y, node });
       }}
       onPointerMove={onMove}
-      onPointerUp={onUp}
-      onPointerCancel={onUp}
+      onLostPointerCapture={(e) => {
+        if (e.target === boxRef.current && dragPointer.current === e.pointerId) finishDrag(false);
+      }}
       onDragOver={(e) => {
         e.preventDefault();
         e.stopPropagation();
