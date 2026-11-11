@@ -1,6 +1,6 @@
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
-import { deleteBoard, readBoard, writeBoard } from "@/lib/canvas-store";
+import { BoardConflict, deleteBoard, readBoard, writeBoard } from "@/lib/canvas-store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,9 +22,10 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   const who = await activeUser(req);
   if ("res" in who) return who.res;
   try {
-    await writeBoard(who.user, (await params).id, await req.json());
-    return NextResponse.json({ ok: true });
+    const rev = await writeBoard(who.user, (await params).id, await req.json());
+    return NextResponse.json({ ok: true, rev });
   } catch (e: any) {
+    if (e instanceof BoardConflict) return NextResponse.json({ ok: false, conflict: true, board: e.board }, { status: 409 });
     return NextResponse.json({ ok: false, error: e?.message || "保存失败" }, { status: 400 });
   }
 }

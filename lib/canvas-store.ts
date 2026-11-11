@@ -42,15 +42,26 @@ export async function writeCanvasIndex(user: string, idx: CanvasIndex): Promise<
   await storePut(idxKey(user), JSON.stringify({ boards, current, updatedAt: Number(idx.updatedAt) || Date.now(), ...(typeof canvas === "boolean" ? { canvas } : {}) }), "application/json");
 }
 
-export async function readBoard(user: string, id: string): Promise<{ nodes: any[]; view: any; updatedAt: number } | null> {
+export async function readBoard(user: string, id: string): Promise<{ nodes: any[]; view: any; updatedAt: number; rev?: number } | null> {
   return readJson(boardKeyFor(user, id));
 }
 const MAX_BOARD = 1_500_000; // pictures are links, so a board is small; this stops a data URL sneaking in
-export async function writeBoard(user: string, id: string, data: { nodes: any[]; view: any; updatedAt: number }): Promise<void> {
+/** 用户 2026-11-11 (两边同时改会互相覆盖): every save bumps `rev`; a save made from an older `baseRev` is refused
+ *  with the current board, so the page can merge both sides instead of overwriting. */
+export class BoardConflict extends Error {
+  constructor(public board: any) {
+    super("画布在别处改过了");
+  }
+}
+export async function writeBoard(user: string, id: string, data: { nodes: any[]; view: any; updatedAt: number; baseRev?: number }): Promise<number> {
   const nodes = (Array.isArray(data.nodes) ? data.nodes : []).filter((n) => !(typeof n?.src === "string" && n.src.startsWith("data:")));
-  const body = JSON.stringify({ nodes, view: data.view ?? null, updatedAt: Number(data.updatedAt) || Date.now() });
+  const current = await readBoard(user, id).catch(() => null);
+  const rev = Number(current?.rev) || 0;
+  if (typeof data.baseRev === "number" && current && rev !== data.baseRev) throw new BoardConflict(current);
+  const body = JSON.stringify({ nodes, view: data.view ?? null, updatedAt: Number(data.updatedAt) || Date.now(), rev: rev + 1 });
   if (body.length > MAX_BOARD) throw new Error("画布太大了");
   await storePut(boardKeyFor(user, id), body, "application/json");
+  return rev + 1;
 }
 export async function deleteBoard(user: string, id: string): Promise<void> {
   // The store has no delete for every backend; an empty board is the same to the page.

@@ -262,6 +262,32 @@ export function CanvasBoard({
   const editedAt = useRef(0);
   const remoteReady = useRef(!cloudId);
   const lastPushed = useRef("");
+  // 用户 2026-11-11 (两边同时改会互相覆盖): the server copy this browser last agreed with. Saves name its `rev`;
+  // when another device saved in between, both sides' changes are merged node by node instead of overwriting.
+  const base = useRef<{ rev: number; nodes: Map<string, string> }>({ rev: -1, nodes: new Map() });
+  const setBase = (rev: number, list: Node[]) => {
+    base.current = { rev, nodes: new Map(list.map((n) => [n.id, JSON.stringify(n)])) };
+  };
+  const mergeWith = (server: Node[]): Node[] => {
+    const local = nodesRef.current;
+    const L = new Map(local.map((n) => [n.id, n]));
+    const S = new Set(server.map((n) => n.id));
+    const known = base.current.nodes;
+    const changedHere = (n: Node) => known.get(n.id) !== JSON.stringify(n);
+    const out: Node[] = [];
+    for (const sv of server) {
+      const l = L.get(sv.id);
+      if (l) out.push(changedHere(l) ? l : sv);
+      else if (!known.has(sv.id)) out.push(sv); // added on the other device
+      // else: removed here
+    }
+    for (const l of local) {
+      if (S.has(l.id)) continue;
+      if (!known.has(l.id) || changedHere(l)) out.push(l); // added (or still being edited) here
+      // else: removed on the other device
+    }
+    return out;
+  };
   useEffect(() => {
     const saved = load(storageKey);
     if (saved) {
@@ -281,6 +307,8 @@ export function CanvasBoard({
       .then((d) => {
         if (!alive) return;
         const b = d?.board;
+        if (b && Array.isArray(b.nodes)) setBase(Number(b.rev) || 0, b.nodes);
+        else base.current = { rev: 0, nodes: new Map() };
         if (b && Array.isArray(b.nodes) && (b.updatedAt ?? 0) > editedAt.current) {
           setNodesRaw(b.nodes);
           if (b.view) setView(b.view);
@@ -306,17 +334,64 @@ export function CanvasBoard({
       const body = JSON.stringify({ nodes: nodesNow, view: viewRef.current });
       if (body === lastPushed.current) return;
       lastPushed.current = body;
+      const baseRev = base.current.rev >= 0 ? base.current.rev : undefined;
       fetch(`/api/canvas/${encodeURIComponent(cloudId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nodes: nodesNow, view: viewRef.current, updatedAt: editedAt.current || Date.now() }),
+        body: JSON.stringify({ nodes: nodesNow, view: viewRef.current, updatedAt: editedAt.current || Date.now(), baseRev }),
         keepalive,
-      }).catch(() => {
-        lastPushed.current = "";
-      });
+      })
+        .then(async (r) => {
+          const d = await r.json().catch(() => null);
+          if (r.ok && d?.ok) return setBase(Number(d.rev) || 0, nodesNow);
+          if (r.status === 409 && d?.board) {
+            // Someone saved from another device: keep both sides' changes, then save the merge.
+            const server: Node[] = Array.isArray(d.board.nodes) ? d.board.nodes : [];
+            const merged = mergeWith(server);
+            setBase(Number(d.board.rev) || 0, server);
+            lastPushed.current = "";
+            setNodesRaw(merged);
+            return;
+          }
+          lastPushed.current = "";
+        })
+        .catch(() => {
+          lastPushed.current = "";
+        });
     },
     [cloudId]
   );
+  // Pick up what other devices saved: on focus and every 15 s while the page is visible.
+  useEffect(() => {
+    if (!cloudId) return;
+    let busy = false;
+    const check = async () => {
+      if (busy || document.hidden || !remoteReady.current || drag.current) return;
+      busy = true;
+      try {
+        const d = await fetch(`/api/canvas/${encodeURIComponent(cloudId)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null));
+        const b = d?.board;
+        if (!b || !Array.isArray(b.nodes) || (Number(b.rev) || 0) <= base.current.rev) return;
+        const merged = mergeWith(b.nodes);
+        setBase(Number(b.rev) || 0, b.nodes);
+        lastPushed.current = JSON.stringify({ nodes: merged.filter((n) => !n.src?.startsWith("data:")), view: viewRef.current });
+        setNodesRaw(merged);
+      } catch {
+        /* try again next time */
+      } finally {
+        busy = false;
+      }
+    };
+    const t = setInterval(check, 15000);
+    const onFocus = () => check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [cloudId]);
   const firstSave = useRef(true);
   const [syncTick, setSyncTick] = useState(0);
   useEffect(() => {
@@ -1272,7 +1347,7 @@ export function CanvasBoard({
     const list = nodesRef.current;
     const src = list.find((n) => n.id === srcId), tgt = list.find((n) => n.id === tgtId);
     if (!src || !tgt || srcId === tgtId) return;
-    if (!isGeneration(tgt) && tgt.kind !== "text") return flash("请把参考图连到「生成图片」");
+    if (!isGeneration(tgt) && tgt.kind !== "text") return flash("请把参考图连到「图片生成」");
     const incoming = isGeneration(tgt) ? generationInputs(tgt, list).map((m) => m.id) : tgt.from ?? [];
     if (incoming.includes(srcId)) return flash("已经连着了");
     if (isAncestor(tgtId, srcId, list)) return flash("不能连成一圈");
@@ -1475,7 +1550,7 @@ export function CanvasBoard({
                   ) : (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2.5 11l3.5-3.5 2.5 2.5 2-2 3 3" /></svg>
                   )}
-                  {isText ? "文本" : isGeneration(n) ? "生成图片" : "图片资源"}
+                  {isText ? "文本" : isGeneration(n) ? "图片生成" : "图片资源"}
                 </span>
                 {!isText && n.nw ? <span className="tabular-nums">{n.nw}×{n.nh}</span> : null}
               </div>
@@ -1553,7 +1628,7 @@ export function CanvasBoard({
                             </button>
                           ))
                         ) : (
-                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到「生成图片」上，就能 @ 那里的图</div>
+                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到「图片生成」上，就能 @ 那里的图</div>
                         )}
                       </div>
                     );
@@ -1562,7 +1637,7 @@ export function CanvasBoard({
                 ) : (
                   <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
                     <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-ink" : "text-hint"}`}>
-                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「生成图片」作为提示词；输入 @ 可以指定参考图"}
+                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「图片生成」作为提示词；输入 @ 可以指定参考图"}
                     </div>
                   </div>
                   )}
@@ -1756,7 +1831,7 @@ export function CanvasBoard({
           >
             <div className="px-2.5 pb-1 pt-0.5 text-[11px] text-muted">连到新节点</div>
             <button type="button" className={item} onClick={() => { close(); addGen({ x: linkMenu.wx, y: linkMenu.wy - 160 }, [linkMenu.src]); }}>
-              新建「生成图片」
+              新建「图片生成」
             </button>
             {srcNode && srcNode.kind !== "text" && (
               <button
@@ -1809,7 +1884,7 @@ export function CanvasBoard({
               </>
             ) : (
               <>
-                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx - 160, y: ctx.wy - 160 }, []))}>生成图片</button>
+                <button type="button" className={item} onClick={go(() => addGen({ x: ctx.wx - 160, y: ctx.wy - 160 }, []))}>图片生成</button>
                 <button type="button" className={item} onClick={go(() => pasteMenu({ x: ctx.wx, y: ctx.wy }))}>粘贴节点</button>
                 <button type="button" className={item} onClick={go(() => addText({ x: ctx.wx, y: ctx.wy }))}>添加文本</button>
                 <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
