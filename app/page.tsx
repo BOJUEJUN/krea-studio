@@ -22,6 +22,7 @@ import {
   type Quality,
 } from "@/lib/models";
 
+import type { BoardNode, CanvasDraft } from "@/lib/canvas-workflow";
 import { pictureParams, pictureRefs, type EditMetadata } from "@/lib/edit-recipe";
 
 type Readiness = Record<string, Record<Mode, boolean>>;
@@ -589,13 +590,13 @@ export default function StudioPage() {
   const [boardDelArm, setBoardDelArm] = useState<string | null>(null);
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
-  const [canvasTextSel, setCanvasTextSel] = useState(false);
-  const [canvasFrameSel, setCanvasFrameSel] = useState(false); // an empty 生成框 is picked
+  const [editingNode, setEditingNode] = useState("");
   const [multiOnly, setMultiOnly] = useState(false);
   const textSelRef = useRef(false);
-  useEffect(() => {
-    if (textSelRef.current) canvasApi.current?.setText(prompt);
-  }, [prompt]);
+  const editPrompt = (value: string) => {
+    setPrompt(value);
+    if (canvasOnRef.current && textSelRef.current) canvasApi.current?.setText(value);
+  };
   const [onBoard, setOnBoard] = useState<Set<string>>(new Set());
   const [composeOpen, setComposeOpen] = useState(false);
   const chipsMore = true; // 用户 2026-11-11 (参数不搞更多了，全部展开，自适应缩放)
@@ -1004,7 +1005,7 @@ export default function StudioPage() {
     // When opened by typing "@", replace that "@".
     const from = replaceAt && prompt[start - 1] === "@" ? start - 1 : start;
     const next = prompt.slice(0, from) + tag + prompt.slice(end);
-    setPrompt(next);
+    editPrompt(next);
     setMentionOpen(false);
     requestAnimationFrame(() => {
       el?.focus();
@@ -1320,6 +1321,7 @@ export default function StudioPage() {
   const useAsReference = useCallback(
     async (g: GalleryItem) => {
       try {
+        if (canvasOnRef.current && canvasApi.current) return canvasApi.current.attachHistory(g.id);
         const res = await fetch(rawOf(g.url));
         if (!res.ok) throw new Error();
         const blob = await res.blob();
@@ -1749,7 +1751,7 @@ export default function StudioPage() {
       const described = await fetchJson("/api/describe", { method: "POST", body: fd });
       if (!described?.ok || !described?.prompt) throw new Error(described?.error || "提示词反推失败");
       const mine = prompt.trim();
-      setPrompt([String(described.prompt).trim(), mine].filter(Boolean).join("\n"));
+      editPrompt([String(described.prompt).trim(), mine].filter(Boolean).join("\n"));
       reversedForRef.current = preview;
       flash("已反推到提示词框，改好后再点生成");
     } catch (e: any) {
@@ -1978,20 +1980,21 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, summary: "" };
+  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, thinking, regional, background, complexity, reverseOn, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
   const composeKey = useRef("");
   const liveSummaryRef = useRef("");
-  const switchCompose = (key: string, editOf?: string, restore = false) => {
+  const switchCompose = (key: string, editOf?: string, restore = false, draft?: CanvasDraft) => {
     if (key === composeKey.current && !restore) return;
     composeMem.current.set(composeKey.current, { ...composeSnapRef.current, summary: liveSummaryRef.current });
     composeKey.current = key;
-    const original = editOf && (restore || !composeMem.current.has(key)) ? gallery.find((g) => g.id === editOf) : undefined;
+    const remembered = composeMem.current.get(key) ?? draft;
+    const original = editOf && (restore || !remembered) ? gallery.find((g) => g.id === editOf) : undefined;
     if (original) return restorePictureParams(original);
     const cur = composeSnapRef.current;
-    const v = composeMem.current.get(key) ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
+    const v = remembered ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
     setPrompt(v.prompt);
     setPolishUndo(null);
     if (v.model !== cur.model && findModel(v.model)) setModel(v.model);
@@ -2011,11 +2014,12 @@ export default function StudioPage() {
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
-    (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean) => {
+    (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean, draft?: CanvasDraft) => {
       if (!canvasOnRef.current) return;
-      switchComposeRef.current(nodeKey ?? urls.join("|"), editOf, restore);
+      const key = frame ? nodeKey ?? "" : "";
+      switchComposeRef.current(key, editOf, restore, draft);
+      setEditingNode(key);
       setCanvasSel(urls);
-      setCanvasFrameSel(!!frame);
       setComposeOpen(false);
       replaceReferenceUrls(urls);
     },
@@ -2027,7 +2031,7 @@ export default function StudioPage() {
       new Map<string, BoardSource>(
         gallery.map((g) => {
           const m = findModel(g.model);
-          return [g.id, { id: g.id, url: g.url, status: g.status, prompt: g.prompt, model: m?.name, cover: m?.cover, mode: g.mode === "i2i" ? "图生图" : "文生图" }];
+          return [g.id, { id: g.id, recipe: g, url: g.url, status: g.status, prompt: g.prompt, model: m?.name, cover: m?.cover, mode: g.mode === "i2i" ? "图生图" : "文生图" }];
         })
       ),
     [gallery]
@@ -2072,7 +2076,7 @@ export default function StudioPage() {
     const h = composeRef.current?.offsetHeight || 200;
     const cx = (selBox.left + selBox.right) / 2 - col.left;
     const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
-    const below = selBox.bottom - col.top + 14;
+    const below = selBox.bottom - col.top + 38;
     if (below + h <= col.height - 12) return { left, top: Math.max(56, below), width: w };
     const above = selBox.top - col.top - 14 - h - 72; // leave room for the selection toolbar and the label row
     if (above >= 56) return { left, top: above, width: w };
@@ -2080,7 +2084,7 @@ export default function StudioPage() {
   };
   const hugForRef = useRef(hugFor);
   hugForRef.current = hugFor;
-  const hugStyle = hugOn && (canvasSel.length || canvasTextSel || canvasFrameSel) ? hugFor(selBoxRef.current) : null;
+  const hugStyle = hugOn && editingNode ? hugFor(selBoxRef.current) : null;
   const onSelectionBox = useCallback((r: Box | null) => {
     selBoxRef.current = r;
     setHugOn(!!r);
@@ -2105,7 +2109,7 @@ export default function StudioPage() {
       });
       const json = await res.json().catch(() => null);
       if (!res.ok || !json?.ok) throw new Error(json?.error || "提示词优化失败");
-      setPrompt(json.prompt);
+      editPrompt(json.prompt);
       setPolishUndo({ before, after: json.prompt });
     } catch (e: any) {
       flash(e?.message || "提示词优化失败");
@@ -2133,14 +2137,20 @@ export default function StudioPage() {
   // 用户 2026-11-11 (小预览跟随我选择的参数): the short line under a picture on the board.
   const liveSummary = chips.filter((c) => c.key !== "model").map((c) => c.label).join(" · ");
   liveSummaryRef.current = liveSummary;
-  const boardSummary = (nodeId: string) => {
-    const key = nodeId;
-    const m = key === composeKey.current ? { model, summary: liveSummary } : composeMem.current.get(key);
-    if (!m) return null;
-    const md = findModel(m.model);
-    return { model: md?.name ?? "", cover: md?.cover, detail: m.summary };
+  useEffect(() => {
+    if (canvasOn && editingNode && editingNode === composeKey.current)
+      canvasApi.current?.saveDraft(editingNode, { ...composeSnapRef.current, summary: liveSummary });
+  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn]);
+  const boardSummary = (n: BoardNode, hasPictures: boolean) => {
+    const saved = n.id === editingNode ? { model, summary: liveSummary } : composeMem.current.get(n.id) ?? n.draft;
+    const g = !saved ? gallery.find((x) => x.id === (n.gid ?? n.editOf)) : undefined;
+    const md = findModel(saved?.model ?? (g ? pictureParams(g).model : DEFAULT_MODEL)) ?? MODELS[0];
+    const size = g && pictureParams(g);
+    const ratio = size ? RATIOS.find((r) => r.w === size.width && r.h === size.height)?.label ?? `${size.width}×${size.height}` : "1:1";
+    const s = g?.settings;
+    const detail = saved?.summary || [hasPictures ? (paramsOf(md.id).denoise ? `重绘 ${s?.["重绘幅度"] ?? "0.50"}` : "自适应") : ratio, s?.["清晰度"], s?.["画质"]].filter(Boolean).join(" · ");
+    return { model: md.name, cover: md.cover, detail };
   };
-  // 2026-11-10 (用户: 参数最多显示两个最重要的，多的收起来): model + one key setting; the rest behind 更多.
   // 用户 2026-11-10: 模型 + 两个参数 + 更多.
   const primaryChips = [
     "model",
@@ -2480,7 +2490,7 @@ export default function StudioPage() {
                   onAgain={(gid, text, refs) => {
                     const g = gallery.find((x) => x.id === gid);
                     if (!g) return;
-                    reuseItem(g, refs?.length ? refs : pictureRefs(g));
+                    reuseItem(g, refs ?? pictureRefs(g));
                     if (text) setPrompt(text);
                     setTimeout(() => startOrQueueRef.current(), 0);
                   }}
@@ -2498,7 +2508,7 @@ export default function StudioPage() {
                   flash={flash}
                   apiRef={canvasApi}
                   onScale={setCanvasScale}
-                  onCompose={() => setComposeOpen(true)}
+                  onCompose={() => canvasApi.current?.addFrame()}
                   onOpenHistory={() => toggleHistory(false)}
                   onShare={shareBoard}
                   prefs={boardPrefs}
@@ -2506,7 +2516,6 @@ export default function StudioPage() {
                   onSelectionText={(t) => {
                     // 用户 2026-11-11 (文本节点): a selected text node is the description; the box edits it.
                     textSelRef.current = t !== null;
-                    setCanvasTextSel(t !== null);
                     if (t !== null) setPrompt((p) => (p === t ? p : t));
                   }}
                   onCompare={(before, after, gid) => {
@@ -2677,7 +2686,7 @@ export default function StudioPage() {
           )}
 
         </section>
-        {canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && !composeOpen && (
+        {canvasOn && !editingNode && !composeOpen && (
           // 用户 2026-11-11: 生成新图 puts an empty 生成框 on the board (upload into it or link pictures / text to it).
           <button
             type="button"
@@ -2691,7 +2700,7 @@ export default function StudioPage() {
         <section
           ref={composeRef}
           className={
-            canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && !composeOpen
+            canvasOn && !editingNode && !composeOpen
               ? "hidden"
               : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
@@ -2719,6 +2728,7 @@ export default function StudioPage() {
                   const sid = e.dataTransfer.getData(HIST_DRAG);
                   const fromHistory = sid ? gallery.find((x) => x.id === sid) : undefined;
                   if (fromHistory?.url) {
+                    if (canvasOn && editingNode) return canvasApi.current?.attachHistory(fromHistory.id);
                     // History pictures load from COS, so fetch the bytes through the site.
                     fetch(rawOf(fromHistory.url))
                       .then((r) => (r.ok ? r.blob() : Promise.reject()))
@@ -2731,7 +2741,8 @@ export default function StudioPage() {
                     if (e.dataTransfer.files?.length) setError("请拖入图片文件（JPG / PNG / WEBP）");
                     return;
                   }
-                  addRefs(files);
+                  if (canvasOn && editingNode) canvasApi.current?.attachFiles(files);
+                  else addRefs(files);
                 }}
                 data-drag={dragState}
                 className={`apple-card relative rounded-[22px] border bg-panel transition focus-within:border-[rgba(0,113,227,0.45)] ${
@@ -2756,8 +2767,8 @@ export default function StudioPage() {
                 )}
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
-                    {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
-                      <span key={r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
+                    {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => (
+                      <span key={i + ":" + r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={r.url}
@@ -2807,11 +2818,11 @@ export default function StudioPage() {
                           </button>
                         ) : (
                           // One-picture models don't take @, so the label is only a label.
-                          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white">参考图</span>
+                          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white">{canvasOn ? `图${i + 1}` : "参考图"}</span>
                         )}
                         <button
                           type="button"
-                          onClick={() => (i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
+                          onClick={() => (canvasOn && editingNode ? canvasApi.current?.removeInput(i) : i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
                           className="absolute right-0.5 top-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
                           aria-label={`删除图${i + 1}`}
                         >
@@ -2874,7 +2885,7 @@ export default function StudioPage() {
                     value={prompt}
                     onChange={(e) => {
                       const v = e.target.value;
-                      setPrompt(v);
+                      editPrompt(v);
                       const at = e.target.selectionStart ?? v.length;
                       const open = !!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@";
                       if (open) setMentionAt(caretXY(e.target, at));
@@ -2891,7 +2902,7 @@ export default function StudioPage() {
                           if (m && m[0].length > 1) {
                             e.preventDefault();
                             const next = prompt.slice(0, at - m[0].length) + prompt.slice(at);
-                            setPrompt(next);
+                            editPrompt(next);
                             requestAnimationFrame(() => el.setSelectionRange(at - m[0].length, at - m[0].length));
                           }
                         }
@@ -2958,7 +2969,7 @@ export default function StudioPage() {
                   </div>
                 )}
                 <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
-                  {canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && composeOpen && (
+                  {canvasOn && !editingNode && composeOpen && (
                     <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-edge/[0.04] text-secondary hover:bg-edge/[0.08]">×</button>
                   )}
                   {openPanel && (
@@ -3172,7 +3183,7 @@ export default function StudioPage() {
                   {polishUndo && polishUndo.after === prompt && (
                     <button
                       type="button"
-                      onClick={() => { setPrompt(polishUndo.before); setPolishUndo(null); }}
+                      onClick={() => { editPrompt(polishUndo.before); setPolishUndo(null); }}
                       className="rounded-full px-2 py-1 text-[12px] text-accent hover:bg-accent/10"
                     >
                       撤销润色
@@ -3257,6 +3268,7 @@ export default function StudioPage() {
                   const slot = replaceSlot.current;
                   replaceSlot.current = null;
                   e.target.value = "";
+                  if (canvasOn && editingNode) return canvasApi.current?.attachFiles(files, slot ?? undefined);
                   if (slot != null && files[0]) {
                     // 换图 on a picture swaps just that one.
                     if (slot === 0) onPickFile(files[0]);

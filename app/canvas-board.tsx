@@ -4,8 +4,8 @@ import { createPortal } from "react-dom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GeneratingView } from "./generating-view";
-import type { CanvasLayout, EditablePicture } from "@/lib/edit-recipe";
-import { captureLayout, isResult, inputsOf as upstreamOf, restoreWorkflow, selectionInputs, uid, type BoardNode as Node } from "@/lib/canvas-workflow";
+import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
+import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, restoreWorkflow, selectedGeneration, uid, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
 
 /**
  * 2026-11-10 (用户: 页面可以切换成自由画布). An infinite board, modelled on what makes Krea / Visual Electric /
@@ -18,11 +18,15 @@ import { captureLayout, isResult, inputsOf as upstreamOf, restoreWorkflow, selec
  * - everything is saved in this browser per account.
  */
 
-export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string };
+export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string; recipe?: EditablePicture };
 export type BoardApi = {
   add: (gid: string) => void;
   reedit: (g: EditablePicture) => void;
   layout: () => CanvasLayout | undefined;
+  saveDraft: (id: string, draft: CanvasDraft) => void;
+  removeInput: (slot: number) => void;
+  attachFiles: (files: File[], slot?: number) => void;
+  attachHistory: (gid: string, targetId?: string) => void;
   has: (gid: string) => boolean;
   /** References (data URLs) on the left, the result they made on the right, linked; the references end up selected. */
   importSet: (refs: string[], resultGid: string | null) => void;
@@ -122,12 +126,12 @@ export function CanvasBoard({
   /** 图片连到文本: the page writes a description of the picture (提示词反推). */
   onDescribe?: (url: string) => Promise<string>;
   /** The settings chosen for a picture (model + short list), shown under it when it is not being edited. */
-  summaryFor?: (nodeId: string) => { model: string; cover?: string; detail: string } | null;
+  summaryFor?: (node: Node, hasPictures: boolean) => { model: string; cover?: string; detail: string } | null;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
   /** The selected pictures' urls (in canvas mode they become the reference images). */
-  onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean) => void;
+  onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean, draft?: CanvasDraft) => void;
   storageKey: string;
   /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
   cloudId?: string;
@@ -406,6 +410,42 @@ export function CanvasBoard({
     if (!apiRef) return;
     const api: BoardApi = {
       importSet: () => {},
+      saveDraft: (id, draft) => {
+        setNodesRaw((list) => {
+          const n = list.find((m) => m.id === id);
+          if (!n || !isGeneration(n) || JSON.stringify(n.draft) === JSON.stringify(draft)) return list;
+          return list.map((m) => m === n ? { ...n, draft } : m);
+        });
+      },
+      removeInput: (slot) => {
+        const list = nodesRef.current;
+        const n = selectedGeneration(list.filter((m) => selRef.current.has(m.id)));
+        if (!n) return;
+        const inputs = generationInputs(n, list);
+        const removed = inputs.filter((m) => urlOfRef.current(m))[slot];
+        if (removed) commit(list.map((m) => m.id === n.id ? { ...m, from: inputs.filter((p) => p.id !== removed.id).map((p) => p.id) } : m));
+      },
+      attachHistory: (gid, targetId) => {
+        const list = nodesRef.current;
+        const target = targetId ? list.find((n) => n.id === targetId && isGeneration(n)) : selectedGeneration(list.filter((n) => selRef.current.has(n.id)));
+        if (target?.gid === gid) return flash("生成结果不能连回自己");
+        const r = boxRef.current?.getBoundingClientRect();
+        if (!r) return;
+        const c = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+        const frame: Node = target ?? { id: uid(), kind: "gen", x: c.x + 40, y: c.y - 160, w: 320, h: 320 };
+        const incoming = generationInputs(frame, list);
+        if (incoming.some((n) => n.gid === gid)) return flash("这张已经连上了");
+        const ref = list.find((n) => n.kind === "image" && n.gid === gid && !isAncestor(frame.id, n.id, list)) ??
+          { id: uid(), gid, kind: "image" as const, x: frame.x - 400, y: Math.max(frame.y, ...incoming.map((n) => n.y + n.h + GAP)), w: 320, h: 320, fit: true };
+        const next = { ...frame, from: [...incoming.map((n) => n.id), ref.id] };
+        commit([...list.map((n) => n.id === frame.id ? next : n), ...(list.includes(ref) ? [] : [ref]), ...(target ? [] : [next])]);
+        setSel(new Set([frame.id]));
+      },
+      attachFiles: (files, slot) => {
+        const list = nodesRef.current;
+        const n = selectedGeneration(list.filter((m) => selRef.current.has(m.id)));
+        if (n) void attachFilesRef.current(n, files, slot);
+      },
       layout: () => {
         const list = nodesRef.current;
         return captureLayout(list.filter((n) => selRef.current.has(n.id)), list, urlOfRef.current);
@@ -483,12 +523,8 @@ export function CanvasBoard({
     };
     api.setText = (text) => {
       const picked = nodesRef.current.filter((n) => selRef.current.has(n.id));
-      const ids = new Set(
-        picked
-          .flatMap((n) => (n.kind === "gen" ? (n.from ?? []).map((id) => nodesRef.current.find((m) => m.id === id)).filter((m): m is Node => !!m) : [n]))
-          .filter((n) => n.kind === "text")
-          .map((n) => n.id)
-      );
+      const frame = selectedGeneration(picked);
+      const ids = new Set(frame ? generationInputs(frame, nodesRef.current).filter((n) => n.kind === "text").map((n) => n.id) : []);
       if (ids.size !== 1) return;
       setNodesRaw((list) => list.map((m) => (ids.has(m.id) && m.text !== text ? { ...m, text } : m)));
     };
@@ -503,7 +539,7 @@ export function CanvasBoard({
     return () => {
       apiRef.current = null;
     };
-  }, [apiRef, toWorld, commit, zoomAt, fitAll]);
+  }, [apiRef, toWorld, commit, zoomAt, fitAll, flash]);
   useEffect(() => {
     if (remoteReady.current) deferred.current.splice(0).forEach((run) => run());
   }, [syncTick]);
@@ -513,7 +549,7 @@ export function CanvasBoard({
   }, [view.s, onScale]);
 
   // ---- placeholders for pictures being made: next to the selection, else in the middle of the view
-  const anchor = useRef<{ x: number; y: number; from: string[] } | null>(null);
+  const anchor = useRef<{ x: number; y: number; from: string[]; into?: string } | null>(null);
   useEffect(() => {
     if (!loading) {
       anchor.current = null;
@@ -521,12 +557,9 @@ export function CanvasBoard({
     }
     if (anchor.current) return;
     const picked = nodesRef.current.filter((n) => sel.has(n.id));
-    if (picked.length === 1 && picked[0].kind === "gen" && !picked[0].gid) {
-      anchor.current = { x: picked[0].x + picked[0].w + GAP * 2, y: picked[0].y, from: [picked[0].id] };
-    } else if (picked.length) {
-      const x = Math.max(...picked.map((n) => n.x + n.w)) + GAP * 2;
-      const y = Math.min(...picked.map((n) => n.y));
-      anchor.current = { x, y, from: [...new Set(picked.flatMap((n) => isResult(n) ? n.from ?? [] : [n.id]))] };
+    const frame = selectedGeneration(picked);
+    if (frame) {
+      anchor.current = { x: frame.x + frame.w + GAP * 2, y: frame.y, from: generationInputs(frame, nodesRef.current).map((n) => n.id), into: frame.kind === "gen" ? frame.id : undefined };
     } else {
       const r = boxRef.current?.getBoundingClientRect();
       const c = r ? toWorld(r.left + r.width / 2, r.top + r.height / 2) : { x: 0, y: 0 };
@@ -540,16 +573,16 @@ export function CanvasBoard({
     const w = 320;
     const h = Math.round(w / Math.max(0.2, jobAspect || 1));
     const already = nodesRef.current.filter((n) => pendingIds.includes(n.gid ?? "")).length;
+    const into = !already && nodesRef.current.some((n) => n.id === a.into && n.kind === "gen") ? a.into : undefined;
     const placed = new Set<number>();
-    const added: Node[] = missing.map((gid, i) => {
+    const added: Node[] = missing.slice(into ? 1 : 0).map((gid, i) => {
       let k = already + i;
       const at = () => ({ x: a.x + (k % 2) * (w + GAP), y: a.y + Math.floor(k / 2) * (h + GAP) });
       while (nodesRef.current.some((m) => m.x < at().x + w && m.x + m.w > at().x && m.y < at().y + h && m.y + m.h > at().y) || placed.has(k)) k++;
       placed.add(k);
       return { id: uid(), kind: "result", gid, ...at(), w, h, from: a.from, fit: true };
     });
-    commit((list) => [...list, ...added]);
-    setSel(new Set(added.map((n) => n.id)));
+    commit((list) => [...list.map((n) => n.id === into ? { ...n, kind: "result" as const, gid: missing[0], editOf: undefined, from: a.from, fit: true } : n), ...added]);
   }, [pendingIds, jobAspect, commit]);
 
   // ---- pointer: pan, marquee, move, resize
@@ -704,11 +737,11 @@ export function CanvasBoard({
   // ---- keyboard
   /** Two pictures: left one is "before". One picture: the picture it was made from, else its saved reference. */
   /** Words of the text nodes a picture was made from: 再来一张 uses their current text (一个文本控制多个生图). */
-  const sourceNodes = (n: Node) => upstreamOf(n, nodesRef.current).flatMap((p) => p.kind === "gen" ? upstreamOf(p, nodesRef.current) : [p]);
+  const sourceNodes = (n: Node) => generationInputs(n, nodesRef.current);
   const linkedText = (n: Node) => sourceNodes(n).filter((m) => m.kind === "text").map((m) => m.text).filter(Boolean).join("\n\n") || undefined;
   const linkedRefs = (n: Node) => {
     const urls = sourceNodes(n).map((m) => urlOf(m)).filter((u): u is string => !!u);
-    return urls.length ? urls : undefined;
+    return urls.length || (isGeneration(n) && n.from !== undefined) ? urls : undefined;
   };
   const compareSel = () => {
     if (!onCompare) return;
@@ -792,23 +825,21 @@ export function CanvasBoard({
     e.stopPropagation();
     setDropHover(false);
     const at = toWorld(e.clientX, e.clientY);
+    const frameId = (e.target as Element).closest?.("[data-node-id]")?.getAttribute("data-node-id");
+    const frame = frameId ? nodesRef.current.find((m) => m.id === frameId && isGeneration(m)) : undefined;
     const gid = e.dataTransfer.getData(dragType);
     if (gid) {
       const src = sources.get(gid);
       if (!src?.url) return;
+      if (frame && apiRef?.current) return apiRef.current.attachHistory(gid, frame.id);
       const n: Node = { id: uid(), kind: "image", gid, x: at.x - 160, y: at.y - 160, w: 320, h: 320, fit: true };
       commit((list) => [...list, n]);
       setSel(new Set([n.id]));
       return;
     }
-    const frameId = (document.elementFromPoint(e.clientX, e.clientY) as Element | null)?.closest?.("[data-node-id]")?.getAttribute("data-node-id");
-    const frame = frameId ? nodesRef.current.find((m) => m.id === frameId && m.kind === "gen" && !m.gid) : undefined;
     if (frame) {
-      const made = await addFiles(Array.from(e.dataTransfer.files ?? []), { x: frame.x - 400 + 160, y: frame.y + 160 }, true);
-      if (made.length) {
-        commit((l) => l.map((m) => (m.id === frame.id ? { ...m, from: [...(m.from ?? []), ...made] } : m)));
-        setSel(new Set([frame.id]));
-      }
+      setSel(new Set([frame.id]));
+      await attachFiles(frame, Array.from(e.dataTransfer.files ?? []));
       return;
     }
     await addFiles(Array.from(e.dataTransfer.files ?? []), at);
@@ -828,10 +859,24 @@ export function CanvasBoard({
     }
     if (added.length) {
       commit((list) => [...list, ...added]);
-      setSel(new Set(added.map((n) => n.id)));
+      if (!stack) setSel(new Set(added.map((n) => n.id)));
     }
     return added.map((n) => n.id);
   };
+
+  const attachFiles = async (frame: Node, files: File[], slot?: number) => {
+    const inputs = generationInputs(frame, nodesRef.current);
+    const replace = slot === undefined ? undefined : inputs.filter((m) => urlOfRef.current(m))[slot];
+    const y = slot !== undefined ? replace?.y ?? frame.y : Math.max(frame.y, ...inputs.map((n) => n.y + n.h + GAP));
+    const made = await addFiles(slot === undefined ? files : files.slice(0, 1), { x: frame.x - 240, y: y + 160 }, true);
+    if (made.length) commit((list) => list.map((m) => {
+      if (m.id !== frame.id) return m;
+      const ids = generationInputs(m, list).map((n) => n.id);
+      return { ...m, from: replace && ids.includes(replace.id) ? ids.map((id) => id === replace.id ? made[0] : id) : [...ids, ...made] };
+    }));
+  };
+  const attachFilesRef = useRef(attachFiles);
+  attachFilesRef.current = attachFiles;
 
   const addFilesRef = useRef(addFiles);
   addFilesRef.current = addFiles;
@@ -844,18 +889,17 @@ export function CanvasBoard({
   }, [gidKey]);
   const retry = (n: Node) => {
     if (!n.gid) return;
-    const from = n.from ?? [];
-    commit((list) => list.filter((m) => m.id !== n.id));
-    setSel(new Set(from));
+    commit((list) => list.map((m) => m.id === n.id ? { ...m, gid: undefined, kind: "gen", editOf: n.gid, from: generationInputs(n, list).map((p) => p.id) } : m));
+    setSel(new Set([n.id]));
     onRetry?.(n.gid);
   };
 
   const urlOf = (n: Node): string | null => (n.kind === "text" ? null : n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null));
   urlOfRef.current = urlOf;
-  // Previews carry lineage for display. Only an explicit outgoing connection uses a preview as input.
-  const inputsOf = (n: Node) => upstreamOf(n, nodes);
+  // The generated picture itself only becomes input through an explicit outgoing wire.
   const selected = nodes.filter((n) => sel.has(n.id));
-  const selFlat = selectionInputs(selected, nodes);
+  const frame = selectedGeneration(selected);
+  const selFlat = frame ? generationInputs(frame, nodes) : [];
   const selKey = selFlat.map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
   const onSelRef = useRef(onSelectionChange);
   onSelRef.current = onSelectionChange;
@@ -863,31 +907,34 @@ export function CanvasBoard({
   const selIdKey = [...sel].sort().join("|");
   const selIdRef = useRef(selIdKey);
   selIdRef.current = selIdKey;
-  const frame = selected.find((n) => n.kind === "gen");
+  const recipeId = frame && (isResult(frame) ? frame.gid : frame.editOf);
+  const original = recipeId ? sources.get(recipeId)?.recipe : undefined;
+  const orphan = !!(frame && isResult(frame) && frame.from === undefined && original && pictureRefs(original).length);
+  const ready = !!frame && !orphan && (!recipeId || !!original || !!frame.draft);
   useEffect(() => {
+    if (orphan && original) {
+      const current = nodesRef.current;
+      commit(restoreWorkflow(current, original, urlOfRef.current).list);
+      return;
+    }
     const restore = !!frame && explicitEdit.current === frame.id;
     explicitEdit.current = null;
-    onSelRef.current?.(selKey ? selKey.split("|") : [], selIdRef.current, !!frame, frame?.editOf, restore);
-  }, [selKey, selIdKey, frame?.id, frame?.editOf, editClick]);
+    onSelRef.current?.(ready && selKey ? selKey.split("|") : [], selIdRef.current, ready, recipeId, restore, frame?.draft);
+  }, [selKey, selIdKey, frame?.id, recipeId, ready, orphan, editClick, commit]);
   const selRef = useRef(sel);
   selRef.current = sel;
   const selTexts = selFlat.filter((n) => n.kind === "text");
-  // 用户 2026-11-11: a text node on its own is just text (no compose box); with a picture or a 生成框 it is the description.
-  const withPicture = selected.some((n) => n.kind !== "text" && !isResult(n));
-  const selTextKey = selTexts.length && withPicture ? selTexts.map((n) => n.text ?? "").join("\n\n") : null;
+  const selTextKey = selTexts.length ? selTexts.map((n) => n.text ?? "").join("\n\n") : null;
   const onSelTextRef = useRef(onSelectionText);
   onSelTextRef.current = onSelectionText;
   useEffect(() => {
     onSelTextRef.current?.(selTextKey);
-  }, [selTextKey]);
+  }, [selTextKey, selIdKey]);
   const [editing, setEditing] = useState<string | null>(null);
-  /** 用户 2026-11-11 (文本里输入@要能@图片): the pictures a text node can name, numbered as the model will see them —
-   *  the picture it is linked into is 图1 and that picture's other linked pictures follow; a 生成框 starts at its inputs. */
   const picsForText = (textId: string): { n: number; url: string }[] => {
-    const target = nodes.find((m) => m.from?.includes(textId) && m.kind !== "text" && !isResult(m));
+    const target = nodes.find((n) => isGeneration(n) && generationInputs(n, nodes).some((m) => m.id === textId));
     if (!target) return [];
-    const list = [...(target.kind === "gen" && !target.gid ? [] : [target]), ...inputsOf(target).filter((m) => m.kind !== "text")];
-    return list.map((m, i) => ({ n: i + 1, url: urlOf(m) ?? "" })).filter((x) => x.url);
+    return generationInputs(target, nodes).flatMap((m) => urlOf(m) ?? []).map((url, i) => ({ n: i + 1, url }));
   };
   const [mention, setMention] = useState<{ id: string; at: number } | null>(null);
   // Each "@图N" shows that picture's thumbnail but keeps the hidden text's width, so the caret of the textarea
@@ -946,17 +993,18 @@ export function CanvasBoard({
     const list = nodesRef.current;
     const src = list.find((n) => n.id === srcId), tgt = list.find((n) => n.id === tgtId);
     if (!src || !tgt || srcId === tgtId) return;
-    if (isResult(tgt)) return flash("这是效果图，请把参考图连到生成框");
-    if (tgt.from?.includes(srcId)) return flash("已经连着了");
+    if (!isGeneration(tgt) && tgt.kind !== "text") return flash("请把参考图连到「图片生成」");
+    const incoming = isGeneration(tgt) ? generationInputs(tgt, list).map((m) => m.id) : tgt.from ?? [];
+    if (incoming.includes(srcId)) return flash("已经连着了");
     if (isAncestor(tgtId, srcId, list)) return flash("不能连成一圈");
     if (src.kind === "text" && tgt.kind === "text") return flash("文本不能连文本");
     if (src.kind !== "text" && !urlOf(src)) return flash("这张还没有图");
-    commit((l) => l.map((m) => (m.id === tgtId ? { ...m, from: [...(m.from ?? []), srcId] } : m)));
+    commit((l) => l.map((m) => (m.id === tgtId ? { ...m, from: [...incoming, srcId] } : m)));
     if (tgt.kind === "text") describeInto(srcId, tgtId);
-    else if (tgt.kind !== "gen") flash(src.kind === "text" ? "已连上：再来一张会用这段文字" : "已连上：再来一张会带上这张参考图");
+
   };
   const unlink = (srcId: string, tgtId: string) => {
-    commit((l) => l.map((m) => (m.id === tgtId ? { ...m, from: (m.from ?? []).filter((f) => f !== srcId) } : m)));
+    commit((l) => l.map((m) => (m.id === tgtId ? { ...m, from: (isGeneration(m) ? generationInputs(m, l).map((p) => p.id) : m.from ?? []).filter((f) => f !== srcId) } : m)));
   };
   const addGen = (at: { x: number; y: number }, from: string[]) => {
     const n: Node = { id: uid(), kind: "gen", x: at.x, y: at.y, w: 320, h: 320, from: from.length ? from : undefined };
@@ -1007,7 +1055,7 @@ export function CanvasBoard({
     const x1 = Math.max(...selected.map((n) => n.x + n.w));
     return { x: view.x + ((x0 + x1) / 2) * view.s, y: view.y + y0 * view.s };
   }, [selected, view]);
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes]);
+  const wires = useMemo(() => new Map(nodes.map((n) => [n.id, isGeneration(n) ? generationInputs(n, nodes) : upstreamOf(n, nodes)])), [nodes]);
   const onBoxRef = useRef(onSelectionBox);
   onBoxRef.current = onSelectionBox;
   const selRect = selected.length
@@ -1074,9 +1122,8 @@ export function CanvasBoard({
         {/* Lines from each source picture to what was made from it. */}
         <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
           {prefs?.lines !== false && nodes.flatMap((n) =>
-            (n.from ?? []).map((fid) => {
-              const f = byId.get(fid);
-              if (!f) return null;
+            (wires.get(n.id) ?? []).map((f) => {
+              const fid = f.id;
               const x0 = f.x + f.w, y0 = f.y + f.h / 2, x1 = n.x, y1 = n.y + n.h / 2;
               const c = Math.max(40, (x1 - x0) / 2);
               return (
@@ -1093,7 +1140,7 @@ export function CanvasBoard({
             })
           )}
           {linkTo && drag.current?.kind === "link" && (() => {
-            const f = byId.get((drag.current as { src: string }).src);
+            const f = nodes.find((node) => node.id === (drag.current as { src: string }).src);
             if (!f) return null;
             const x0 = f.x + f.w, y0 = f.y + f.h / 2, x1 = linkTo.x, y1 = linkTo.y;
             const c = Math.max(40, Math.abs(x1 - x0) / 2);
@@ -1101,19 +1148,17 @@ export function CanvasBoard({
           })()}
         </svg>
         {prefs?.lines !== false && nodes.flatMap((n) => {
-          // A picture is 图1 itself, so what is linked into it counts from 图2.
-          let pic = n.kind === "gen" && !n.gid ? 0 : 1;
-          return (n.from ?? []).map((fid) => {
-            const f = byId.get(fid);
-            if (!f) return null;
-            const label = isResult(n) ? "效果图" : n.kind === "text" ? "看图写描述" : f.kind === "text" ? "文本" : `图片${++pic}`;
+          let pic = 0;
+          return (wires.get(n.id) ?? []).map((f) => {
+            const fid = f.id;
+            const label = n.kind === "text" ? "看图写描述" : f.kind === "text" ? "文本" : urlOf(f) ? `图${++pic}` : "图片";
             const x = (f.x + f.w + n.x) / 2, y = (f.y + f.h / 2 + n.y + n.h / 2) / 2;
             const style = { left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` };
-            if (isResult(n)) return <span key={"l" + fid + n.id} data-tip="这条线表示生成结果" className="pointer-events-none absolute whitespace-nowrap rounded-full bg-panel px-1.5 py-px text-[10px] text-secondary ring-1 ring-edge/10" style={style}>{label}</span>;
             return (
               <button
                 type="button"
                 key={"l" + fid + n.id}
+                aria-label={`断开${label}`}
                 data-tip="点一下断开这根线"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => unlink(fid, n.id)}
@@ -1156,7 +1201,7 @@ export function CanvasBoard({
                   ) : (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><rect x="2" y="3" width="12" height="10" rx="2" /><path d="M2.5 11l3.5-3.5 2.5 2.5 2-2 3 3" /></svg>
                   )}
-                  {isText ? "文本" : isGen ? "生成框" : isResult(n) ? "效果图" : "图片资源"}
+                  {isText ? "文本" : isGeneration(n) ? "图片生成" : "图片资源"}
                 </span>
                 {!isText && n.nw ? <span className="tabular-nums">{n.nw}×{n.nh}</span> : null}
               </div>
@@ -1228,7 +1273,7 @@ export function CanvasBoard({
                             </button>
                           ))
                         ) : (
-                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到图片或生成框上，就能 @ 那里的图</div>
+                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到「图片生成」上，就能 @ 那里的图</div>
                         )}
                       </div>
                     );
@@ -1237,14 +1282,14 @@ export function CanvasBoard({
                 ) : (
                   <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
                     <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-ink" : "text-hint"}`}>
-                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字。连到图片上，选中图片就用这段文字生成；输入 @ 可以指定图片"}
+                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「图片生成」作为提示词；输入 @ 可以指定参考图"}
                     </div>
                     <div className="pt-1 text-[11px] text-hint">{(n.text ?? "").length} 字</div>
                   </div>
                 )
               ) : isGen ? (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-6 text-center text-[12px] leading-[18px] text-muted">
-                  <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" className="text-accent/70"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
+                  <svg aria-hidden="true" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="9" cy="9" r="1.4" /><path d="m4 17 4-4 3 3 4-6 6 8" /></svg>
                   {(n.from?.length ?? 0) ? "选中它，在输入框点生成，图就出在这里" : "把图片或文本的 + 拖到这里连上，再选中它生成"}
                 </div>
               ) : url ? (
@@ -1283,21 +1328,17 @@ export function CanvasBoard({
                   <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact />
                 </div>
               )}
-              {!isText && url && !on && (() => {
-                // Only the settings someone chose for this picture (用户 2026-11-11: 生成记录那条不用显示).
-                // 用户 2026-11-11 (这个参数不用显示了): the chip is off for now.
-                const sm = false ? summaryFor?.(n.id) ?? null : null;
-                if (!sm?.model) return null;
+              {isGeneration(n) && (() => {
+                const sm = summaryFor?.(n, (wires.get(n.id) ?? []).some((m) => !!urlOf(m)));
+                if (!sm) return null;
                 return (
-                <div
-                  className="pointer-events-none absolute left-0 top-full flex items-center gap-1.5 whitespace-nowrap rounded-full bg-panel/90 px-2 py-1 text-[11px] text-secondary shadow-[0_2px_10px_rgba(0,0,0,0.08)] ring-1 ring-edge/[0.05]"
-                  style={{ transform: `translate(0, 6px) scale(${k})`, transformOrigin: "top left", maxWidth: n.w * view.s }}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {sm.cover && <img src={sm.cover} alt="" className="h-4 w-4 shrink-0 rounded object-cover" />}
-                  <span className="shrink-0 font-medium text-ink">{sm.model}</span>
-                  {sm.detail && <span className="truncate text-hint">· {sm.detail}</span>}
-                </div>
+                  <div data-node-summary="" title={[sm.model, sm.detail].filter(Boolean).join(" · ")}
+                    className="absolute left-0 top-full flex h-6 items-center gap-1.5 overflow-hidden rounded-md bg-panel px-2 text-[11px] text-secondary shadow-sm ring-1 ring-edge/10"
+                    style={{ transform: `translateY(5px) scale(${k})`, transformOrigin: "top left", width: n.w * view.s }}>
+                    {sm.cover && <img src={sm.cover} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover" />}
+                    <span className="max-w-[65%] shrink-0 truncate font-medium text-ink">{sm.model}</span>
+                    {sm.detail && <span className="truncate border-l border-edge/15 pl-1.5">{sm.detail}</span>}
+                  </div>
                 );
               })()}
               {canLinkOut && (
@@ -1402,7 +1443,7 @@ export function CanvasBoard({
           >
             <div className="px-2.5 pb-1 pt-0.5 text-[11px] text-muted">连到新节点</div>
             <button type="button" className={item} onClick={() => { close(); addGen({ x: linkMenu.wx, y: linkMenu.wy - 160 }, [linkMenu.src]); }}>
-              生成新图（建一个生成框）
+              新建「图片生成」
             </button>
             {srcNode && srcNode.kind !== "text" && (
               <button
