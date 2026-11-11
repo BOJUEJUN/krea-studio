@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
@@ -8,6 +8,7 @@ import { BatchGrid } from "./batch-grid";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
+import { CanvasBoard, type BoardApi, type BoardSource } from "./canvas-board";
 import {
   DEFAULT_MODEL,
   RES_PIXELS,
@@ -41,32 +42,51 @@ type GalleryItem = {
   fav?: boolean;
 };
 
-/** Text with every "@图N" in blue (the description box and history). */
-function withMentions(text: string) {
-  return text.split(/(@图\d+)/g).map((part, i) =>
-    /^@图\d+$/.test(part) ? (
-      <span key={i} className="rounded bg-[#0071e3]/10 text-[#0071e3]">
+/**
+ * Text with every "@图N" marked. 2026-11-10 (用户: @图片不要显示文字，要显示图片的小图): when picture N is known
+ * the token shows that picture's thumbnail. The chip keeps the exact width of the hidden "@图N" text, so the
+ * textarea underneath (which holds the real text) keeps its caret where the eye expects it.
+ */
+function withMentions(text: string, thumbs: (string | null | undefined)[] = []) {
+  return text.split(/(@图\d+)/g).map((part, i) => {
+    if (!/^@图\d+$/.test(part)) return part;
+    const src = thumbs[Number(part.slice(2)) - 1];
+    if (!src)
+      return (
+        <span key={i} className="rounded bg-[#0071e3]/10 text-[#0071e3]">
+          {part}
+        </span>
+      );
+    return (
+      <span key={i} className="relative inline-block align-baseline text-transparent" title={part.slice(1)}>
         {part}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={part.slice(1)}
+          className="absolute left-1/2 top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-[#0071e3]/70"
+        />
       </span>
-    ) : (
-      part
-    )
-  );
+    );
+  });
 }
 
 /** A row of choices for one setting (shown when its chip is opened). */
-function Choice({ options, value, onPick, note }: { options: [string, string][]; value: string; onPick: (v: string) => void; note?: string }) {
+function Choice({ options, value, onPick, note }: { options: ([string, string] | [string, string, string])[]; value: string; onPick: (v: string) => void; note?: string }) {
   return (
     <div className="flex flex-col">
       {note && <div className="max-w-[200px] px-2.5 pb-1 text-[11px] text-[#86868b]">{note}</div>}
-      {options.map(([v, t]) => (
+      {options.map(([v, t, sub]) => (
         <button
           key={v}
           type="button"
           onClick={() => onPick(v)}
           className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-left text-[13px] transition ${value === v ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}
         >
-          {t}
+          <span className="flex flex-col">
+            {t}
+            {sub && <span className="text-[11px] text-[#86868b]">{sub}</span>}
+          </span>
           {value === v && <span>✓</span>}
         </button>
       ))}
@@ -466,6 +486,13 @@ export default function StudioPage() {
   const [lora, setLora] = useState(2);
   const [background, setBackground] = useState<"auto" | "transparent" | "opaque">("auto");
   const [complexity, setComplexity] = useState<"auto" | "low" | "medium" | "high">("auto");
+  // 2026-11-10 (用户: 提示词润色，默认低): rewrite the current prompt; 撤销 brings the old text back.
+  // 2026-11-10 (用户: 页面可以切换成自由画布): 单图 / 画布.
+  const [canvasOn, setCanvasOn] = useState(false);
+  const canvasApi = useRef<BoardApi | null>(null);
+  const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
+  const [polishing, setPolishing] = useState(false);
+  const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
   const [regional, setRegional] = useState(false);
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -659,6 +686,9 @@ export default function StudioPage() {
   useEffect(() => {
     // 2026-11-06 (用户: 每次刷新默认 LOL 2.36MP V1.1): the last-used model is not restored.
     if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
+    if (localStorage.getItem("ais-canvas-on") === "1") setCanvasOn(true);
+    const pl = localStorage.getItem("ais-polish-level");
+    if (pl === "low" || pl === "medium" || pl === "high") setPolishLevel(pl);
     const savedCount = Number(localStorage.getItem(COUNT_KEY));
     if (savedCount >= 1 && savedCount <= 4) setCount(savedCount);
     fetchJson("/api/status")
@@ -1514,14 +1544,70 @@ export default function StudioPage() {
   refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
   const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : resultRef ? [resultRef] : [];
+  const boardSources = useMemo(
+    () => new Map<string, BoardSource>(gallery.map((g) => [g.id, { id: g.id, url: g.url, status: g.status, prompt: g.prompt }])),
+    [gallery]
+  );
+  const boardUseAsRef = useCallback(
+    async (urls: string[]) => {
+      try {
+        const files = await Promise.all(
+          urls.map(async (u, i) => {
+            const r = await fetch(u.startsWith("data:") ? u : rawOf(u));
+            if (!r.ok) throw new Error();
+            const b = await r.blob();
+            return new File([b], `canvas-${i + 1}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/jpeg" });
+          })
+        );
+        addRefs(files);
+        setMode("i2i");
+      } catch {
+        flash("图片读取失败，请稍后重试");
+      }
+    },
+    [addRefs, flash]
+  );
+  const boardDownload = useCallback(
+    (id: string | null, url: string) => {
+      const g = id ? gallery.find((x) => x.id === id) : undefined;
+      if (g) return void downloadItem(g);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "canvas.jpg";
+      a.click();
+    },
+    [gallery, downloadItem]
+  );
+
+  const runPolish = async () => {
+    const before = prompt;
+    if (!before.trim() || polishing) return;
+    setPolishing(true);
+    try {
+      const res = await fetch("/api/polish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: before, level: polishLevel }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) throw new Error(json?.error || "提示词优化失败");
+      setPrompt(json.prompt);
+      setPolishUndo({ before, after: json.prompt });
+    } catch (e: any) {
+      flash(e?.message || "提示词优化失败");
+    } finally {
+      setPolishing(false);
+    }
+  };
+
   const chips: { key: string; label: string }[] = [
     { key: "model", label: (findModel(model) ?? MODELS[0]).name },
     ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }] : []),
     ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
-    ...(modelParams.quality ? [{ key: "quality", label: QUALITY_LABELS[quality] }] : []),
+    ...(modelParams.quality ? [{ key: "quality", label: `画质 ${QUALITY_LABELS[quality]}` }] : []),
     ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
-    ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "低", medium: "中", high: "高" }[complexity]}` }] : []),
+    ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "快", medium: "标准", high: "精细" }[complexity]}` }] : []),
     // 2026-11-06 (用户: "整体改"听不懂): say what gets changed.
     ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
@@ -1659,6 +1745,45 @@ export default function StudioPage() {
             className="result-box relative m-2 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[16px] sm:m-3"
 
           >
+            {canvasOn && user && (
+              <div className="absolute inset-0 z-20">
+                <CanvasBoard
+                  storageKey={`ais-canvas-v1:${user}`}
+                  sources={boardSources}
+                  pendingIds={loading ? batch : []}
+                  loading={loading}
+                  progress={progress}
+                  jobAspect={jobVisual.aspect}
+                  dragType={HIST_DRAG}
+                  thumb={thumbOf}
+                  onUseAsRef={boardUseAsRef}
+                  onView={(u) => setViewer(u)}
+                  onDownload={boardDownload}
+                  flash={flash}
+                  apiRef={canvasApi}
+                />
+              </div>
+            )}
+            {/* 单图 / 画布 */}
+            <div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.10)] ring-1 ring-black/[0.06] backdrop-blur">
+              {([["single", "单图"], ["canvas", "画布"]] as const).map(([k, t]) => {
+                const on = (k === "canvas") === canvasOn;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => {
+                      const next = k === "canvas";
+                      setCanvasOn(next);
+                      try { localStorage.setItem("ais-canvas-on", next ? "1" : "0"); } catch {}
+                    }}
+                    className={`rounded-full px-3 py-1 transition ${on ? "bg-[#1d1d1f] text-white" : "text-[#6e6e73] hover:text-[#1d1d1f]"}`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
             {loading && jobCount > 1 ? (
               // One cell per picture (2 side by side, 3 in a row, 4 as 2×2); each fills in as soon as it is ready.
               <BatchGrid
@@ -1760,7 +1885,7 @@ export default function StudioPage() {
             })()}
           </div>
           {/* Under the picture: only 对比 (when there was a reference) and 下载, centred (用户 2026-11-05). */}
-          {resultUrl && (!loading || showingPartial) && !(batchGrid && batch.length > 1) && (
+          {!canvasOn && resultUrl && (!loading || showingPartial) && !(batchGrid && batch.length > 1) && (
             <div className="flex shrink-0 flex-wrap items-center justify-center gap-1.5 px-3 pb-3">
               {compareRefs.length > 0 && (
                 <button
@@ -1976,7 +2101,7 @@ export default function StudioPage() {
                       aria-hidden
                       className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f]"
                     >
-                      {withMentions(prompt)}
+                      {withMentions(prompt, [preview, ...extraRefs.map((r) => r.url)])}
                       {"\n"}
                     </div>
                   )}
@@ -1996,6 +2121,20 @@ export default function StudioPage() {
                     }}
                     onKeyDown={(e) => {
                       if (mentionOpen && e.key === "Escape") setMentionOpen(false);
+                      // A picture token deletes as one piece (it shows as one thumbnail).
+                      if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
+                        const el = e.currentTarget;
+                        const at = el.selectionStart ?? 0;
+                        if (at === el.selectionEnd) {
+                          const m = /@图\d+$/.exec(prompt.slice(0, at));
+                          if (m && m[0].length > 1) {
+                            e.preventDefault();
+                            const next = prompt.slice(0, at - m[0].length) + prompt.slice(at);
+                            setPrompt(next);
+                            requestAnimationFrame(() => el.setSelectionRange(at - m[0].length, at - m[0].length));
+                          }
+                        }
+                      }
                       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
                         e.preventDefault();
                         startOrQueue();
@@ -2050,7 +2189,7 @@ export default function StudioPage() {
                       style={{ left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
-                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数" } as Record<string, string>)[openPanel]}
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度" } as Record<string, string>)[openPanel]}
                       </div>}
                     
                     {openPanel === "model" && (
@@ -2106,7 +2245,8 @@ export default function StudioPage() {
                     {openPanel === "quality" && <Choice options={(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => [q, QUALITY_LABELS[q]])} value={quality} onPick={(v) => { setQuality(v as Quality); setOpenPanel(null); }} />}
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
-                    {openPanel === "complexity" && <Choice note="越高，复杂画面越准；不影响价格" options={[["auto", "自动"], ["low", "低"], ["medium", "中"], ["high", "高"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
+                    {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低（推荐）", "只理顺语句、改错字，几乎不改内容"], ["medium", "中", "说得更清楚具体，不加新东西"], ["high", "高", "扩写成完整的专业提示词"]]} value={polishLevel} onPick={(v) => { setPolishLevel(v as typeof polishLevel); try { localStorage.setItem("ais-polish-level", v); } catch {} setOpenPanel(null); }} />}
+                    {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
                     {openPanel === "denoise" && (
@@ -2189,6 +2329,45 @@ export default function StudioPage() {
                       <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
                         <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
                       </span>
+                    </button>
+                  )}
+                  <div className="flex h-8 items-center overflow-hidden rounded-full bg-black/[0.04] text-[12px] text-[#1d1d1f]">
+                    <button
+                      type="button"
+                      onClick={runPolish}
+                      disabled={!prompt.trim() || polishing}
+                      data-tip="按当前提示词润色，@图 原样保留"
+                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-black/[0.06] disabled:opacity-40"
+                    >
+                      {polishing ? (
+                        <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-[#0071e3]/30 border-t-[#0071e3]" />
+                      ) : (
+                        <svg className="h-3.5 w-3.5 text-[#0071e3]" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1zm4.5 8l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></svg>
+                      )}
+                      {polishing ? "润色中…" : "润色"}
+                    </button>
+                    <button
+                      type="button"
+                      aria-expanded={openPanel === "polish"}
+                      onClick={(e) => {
+                        const row = chipRowRef.current;
+                        const x = (e.currentTarget.parentElement as HTMLElement).offsetLeft;
+                        setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
+                        setOpenPanel((v) => (v === "polish" ? null : "polish"));
+                      }}
+                      className={`flex h-full items-center gap-1 border-l border-black/[0.06] pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-[#0071e3]/10 text-[#0071e3]" : "hover:bg-black/[0.06]"}`}
+                    >
+                      {{ low: "低", medium: "中", high: "高" }[polishLevel]}
+                      <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                    </button>
+                  </div>
+                  {polishUndo && polishUndo.after === prompt && (
+                    <button
+                      type="button"
+                      onClick={() => { setPrompt(polishUndo.before); setPolishUndo(null); }}
+                      className="rounded-full px-2 py-1 text-[12px] text-[#0071e3] hover:bg-[#0071e3]/10"
+                    >
+                      撤销润色
                     </button>
                   )}
                   <div className="ml-auto">
@@ -2496,6 +2675,11 @@ export default function StudioPage() {
                           toggleSel(g.id);
                           return;
                         }
+                        if (g.url && canvasOn && canvasApi.current) {
+                          // 画布模式: the picture goes onto the board (or the board jumps to it).
+                          canvasApi.current.add(g.id);
+                          return;
+                        }
                         if (g.url) {
                           setError(null);
                           setCompareOn(false);
@@ -2537,7 +2721,9 @@ export default function StudioPage() {
                         <>
                           <span className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/70 transition-opacity duration-300 ${show}`} />
                           {/* 2026-11-05 (用户: 四个按钮并排在左上角，不要底框). */}
-                          <span className="absolute left-1 top-1 flex items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                          {/* 2026-11-10 (用户: 看不到看大图了): narrow cards wrap the buttons onto a second row instead of
+                              hiding 下载 / 看大图 under the 删除 button. */}
+                          <span className="absolute left-1 top-1 flex max-w-[calc(100%-2.5rem)] flex-wrap items-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
                           <button
                             type="button"
                             aria-label={g.fav ? "取消收藏" : "收藏"}
@@ -2560,6 +2746,11 @@ export default function StudioPage() {
                             <button type="button" data-tip="下载" aria-label="下载" onClick={(e) => act(e, () => downloadItem(g))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
                               <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></svg>
                             </button>
+                            {canvasOn && (
+                              <button type="button" data-tip="放到画布" aria-label="放到画布" onClick={(e) => act(e, () => canvasApi.current?.add(g.id))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
+                                <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M12 8v8M8 12h8" /></svg>
+                              </button>
+                            )}
                             <button type="button" data-tip="看大图" aria-label="看大图" onClick={(e) => act(e, () => setViewer(g.url))} className={`${iconBtn} transition-opacity duration-300 ${show}`}>
                               <svg viewBox="0 0 24 24" className="h-[14px] w-[14px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
                             </button>

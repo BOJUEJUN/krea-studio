@@ -99,3 +99,59 @@ export async function describeImage(image: Blob): Promise<string> {
   const { prompt, realistic } = parseReply(content);
   return ((realistic ? "anime style, " : "") + prompt).slice(0, 2000);
 }
+
+/**
+ * 2026-11-10 (用户: 提示词优化，默认不改太多只让提示词更顺畅，润色程度 低/中/高): rewrites the user's own prompt in
+ * its own language. Every "@图N" picture token must survive exactly (the box shows them as thumbnails).
+ */
+export type PolishLevel = "low" | "medium" | "high";
+
+const POLISH_RULES: Record<PolishLevel, string> = {
+  low: "只做最小改动：理顺语句、改正错别字和语病、去掉重复，让意思表达得更清楚。不要增加任何新内容、新细节或风格词，不要删掉任何要求，长度和原文差不多。",
+  medium: "在保留全部原意和所有要求的前提下，把描述写得更清楚、更有条理：可以把含糊的地方说具体一些（比如动作、位置关系、主次），可以调整语序，但不要加入原文没有暗示的新元素。",
+  high: "在保留全部原意和所有要求的前提下，扩写成一段专业、完整的生图提示词：补充构图、姿态、细节、光影和氛围等有助于出图的描述，让画面更丰富，但不能改变主体、人物设定和原文的任何要求。",
+};
+
+export async function polishPrompt(prompt: string, level: PolishLevel): Promise<string> {
+  const key = process.env.DEEPSEEK_API_KEY;
+  if (!key) throw new Error("未配置提示词优化");
+  const tokens = (prompt.match(/@图\d+/g) || []).sort();
+  const ask = async (extra: string) => {
+    const res = await fetch(DEEPSEEK_URL, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: DEEPSEEK_MODEL,
+        max_tokens: 4000,
+        reasoning_effort: level === "low" ? "low" : "medium",
+        messages: [
+          {
+            role: "system",
+            content: [
+              "你是生图提示词润色助手。用户给你一段 AI 生图/改图的提示词，你按要求润色后只输出润色后的提示词本身，不要解释、不要加引号、不要加标题。",
+              "保持原文语言（中文就写中文，英文就写英文）。",
+              "像「@图1」「@图2」这样的标记代表用户上传的参考图，必须原样保留，每个标记出现的次数和它在句子里指代的对象都不能变，不能改写成别的说法。",
+              POLISH_RULES[level],
+              extra,
+            ].join("\n"),
+          },
+          { role: "user", content: prompt },
+        ],
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(25_000),
+    });
+    const json: any = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(json?.error?.message || `提示词优化失败 (${res.status})`);
+    return String(json?.choices?.[0]?.message?.content || "")
+      .replace(/^\s*(润色后的?)?提示词\s*[:：]\s*/, "")
+      .replace(/^[`"“'「\s]+|[`"”'」\s]+$/g, "")
+      .trim();
+  };
+  const same = (text: string) => JSON.stringify((text.match(/@图\d+/g) || []).sort()) === JSON.stringify(tokens);
+  let out = await ask("");
+  if (!out || !same(out)) out = await ask("上一次的结果丢失或改动了 @图 标记。这次务必把每个 @图N 标记原样、按原来的次数保留。");
+  if (!out) throw new Error("提示词优化没有返回内容");
+  if (!same(out)) throw new Error("优化结果弄丢了 @图 标记，请再试一次");
+  return out.slice(0, 4000);
+}
