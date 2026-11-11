@@ -59,6 +59,7 @@ export type ModelParams = {
   customSize: boolean;
   /** Ratio labels offered for 文生图 (all presets when omitted). */
   ratios?: string[];
+  editRatio?: boolean;
   /** 画质 choice and the estimated ¥ per image for each offered level. */
   quality?: Partial<Record<Quality, number>>;
   /**
@@ -166,6 +167,7 @@ export const MODELS: ModelInfo[] = [
       ratios: ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9", "1:4", "4:1", "1:8", "8:1"],
       resolutions: { "1K": 0.22, "2K": 0.22, "4K": 0.43 },
       maxRefs: 8,
+      editRatio: true,
     },
   },
   {
@@ -183,6 +185,7 @@ export const MODELS: ModelInfo[] = [
       thinking: 0.15,
       refPrice: 0.15,
       maxRefs: 8,
+      editRatio: true,
       seed: true,
       negative: true,
       regional: true,
@@ -202,6 +205,7 @@ export const MODELS: ModelInfo[] = [
       quality: GPT_PRICE,
       resolutions: { "1K": 1, "2K": 4, "4K": 7.9 },
       maxRefs: 8,
+      editRatio: true,
       background: true,
       complexity: true,
       pricePerMegapixel: true,
@@ -221,6 +225,7 @@ export const MODELS: ModelInfo[] = [
       quality: GPT_PRICE,
       resolutions: { "1K": 1, "2K": 4, "4K": 7.9 },
       maxRefs: 8,
+      editRatio: true,
       background: true,
       complexity: true,
       pricePerMegapixel: true,
@@ -277,4 +282,12 @@ export function settingsOf(model: string, mode: "t2i" | "i2i", get: (k: string) 
   if (get("count")) out["张数"] = get("count");
   if (get("optimized") === "1") out["提示词优化"] = "开";
   return out;
+}
+
+/** Explicit edit geometry, when the model accepts this particular ratio. */
+export function editAspectOf(model: string, label: unknown): number | undefined {
+  const p = paramsOf(model);
+  if (!p.editRatio || typeof label !== "string" || !p.ratios?.includes(label)) return;
+  const [w, h] = label.split(":").map(Number);
+  return w / h;
 }

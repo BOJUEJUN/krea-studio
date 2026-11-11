@@ -64,7 +64,8 @@ export async function createKreaTask(opts: {
   if (refs.length) {
     body.image_urls = refs.slice(0, 8).map((r) => `data:${r.mime};base64,${r.bytes.toString("base64")}`);
     if (opts.regional) body.regional_edit = true;
-  } else if (opts.width && opts.height) {
+  }
+  if (opts.width && opts.height) {
     body.aspect_ratio = nearestRatio(opts.width, opts.height);
   }
   if (opts.seed != null && Number.isFinite(opts.seed)) body.seed = Math.floor(opts.seed);

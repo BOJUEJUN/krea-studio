@@ -7,7 +7,7 @@ import {
   createCustomTask,
   uploadInputForWorkflow,
 } from "@/lib/runninghub";
-import { GPT_IMAGE_MODELS, LEGACY_MODEL, expandImageMentions, findModel, settingsOf } from "@/lib/models";
+import { GPT_IMAGE_MODELS, LEGACY_MODEL, editAspectOf, expandImageMentions, findModel, settingsOf } from "@/lib/models";
 import { createGptTask, gptSize } from "@/lib/openai";
 import { RH_HOSTED_MODELS, createRhHostedTask } from "@/lib/rh-models";
 import { createKreaTask } from "@/lib/krea";
@@ -80,6 +80,11 @@ export async function POST(req: NextRequest) {
     const modelPrompt = expandImageMentions(prompt, images?.length ?? 1);
     const text = (k: string) => String(form.get(k) || "");
     const loraRaw = Number(form.get("lora"));
+    const ratioLabel = text("editRatio");
+    const editAspect = editAspectOf(model.id, ratioLabel);
+    if (ratioLabel && ratioLabel !== "auto" && !editAspect)
+      return NextResponse.json({ ok: false, error: "这个模型不支持所选比例" }, { status: 400 });
+    const shape = editAspect ? { width: editAspect * 1024, height: 1024 } : {};
 
     const tasks: { taskId: string; seed: number }[] = [];
     for (let i = 0; i < count; i++) {
@@ -90,11 +95,11 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ ...shape, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ ...shape, model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });
@@ -120,6 +125,7 @@ export async function POST(req: NextRequest) {
     if (typeof draft === "string" && draft.length < 40_000) {
       try { editorDraft = readDraft(JSON.parse(draft)); } catch {}
     }
+    if (ratioLabel) settings["改图比例"] = editAspect ? ratioLabel : "自适应";
     const encodedLayout = form.get("canvasLayout");
     let canvasLayout;
     if (typeof encodedLayout === "string" && encodedLayout.length < 100_000) {

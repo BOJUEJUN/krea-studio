@@ -57,7 +57,7 @@ export function pictureParams(g: EditablePicture) {
 }
 
 export type CanvasDraft = ReturnType<typeof pictureParams> & {
-  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; polishVersion?: number; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
+  widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; polishVersion?: number; editRatio?: string; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
 };
 export function restoredPolishLevel(level: unknown, version: unknown): CanvasDraft["polishLevel"] {
   if (level === "high") return "high";
@@ -65,7 +65,7 @@ export function restoredPolishLevel(level: unknown, version: unknown): CanvasDra
 }
 export function pictureDraft(g: EditablePicture): CanvasDraft {
   const p = pictureParams(g);
-  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "low", polishVersion: 2, reverseOn: false, reverseMode: "direct", summary: "" };
+  return { ...p, widthText: String(p.width), heightText: String(p.height), polishLevel: "low", polishVersion: 2, editRatio: g.settings?.["改图比例"] || "auto", reverseOn: false, reverseMode: "direct", summary: "" };
 }
 /** Share only editor fields, never account or task metadata. */
 export function readDraft(v: unknown): CanvasDraft | undefined {

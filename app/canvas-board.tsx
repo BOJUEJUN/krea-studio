@@ -7,6 +7,7 @@ import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
 import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
+import { editAspectOf } from "@/lib/models";
 import { shareCodeIn } from "@/lib/canvas-share-code";
 import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, pictureDraft, restoreWorkflow, selectedGeneration, uid, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
 
@@ -571,6 +572,7 @@ export function CanvasBoard({
         if (source) {
           aspect = source.nw && source.nh ? source.nw / source.nh : source.w / source.h;
           if (source.fit && !source.nw && previewAspect) aspect = previewAspect;
+          aspect = editAspectOf(draft.model, draft.editRatio) ?? aspect;
         }
         const height = aspect > 0 && Number.isFinite(aspect) ? frame.w / aspect : frame.h;
         const geometry = { h: height, y: frame.y + (frame.h - height) / 2 };

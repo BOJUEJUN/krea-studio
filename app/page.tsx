@@ -12,6 +12,7 @@ import { PictureMention } from "./picture-mention";
 import { CanvasBoard, type BoardApi, type BoardJob, type BoardSource } from "./canvas-board";
 import {
   DEFAULT_MODEL,
+  editAspectOf,
   RES_PIXELS,
   type Res,
   MODELS,
@@ -792,6 +793,8 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 多张生成后并排显示，点开看大图可切换，关掉回到并排): after a batch, the grid first.
   const [batchGrid, setBatchGrid] = useState(false);
   const showingPartial = loading && jobCount <= 1 && batchDone > 0 && batchDone < batchTotal;
+  const [editRatio, setEditRatio] = useState("auto");
+  const fixedEditAspect = editAspectOf(model, editRatio);
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -1327,6 +1330,7 @@ export default function StudioPage() {
     setBackground(v.background);
     setComplexity(v.complexity);
     setReverse(v.reverseOn);
+    setEditRatio(v.editRatio ?? "auto");
     if (v.reverseMode) setReverseMode(v.reverseMode);
     setPolishUndo(null);
     setError(null);
@@ -1352,6 +1356,7 @@ export default function StudioPage() {
     const ratios = p.customSize ? [] : RATIOS.filter((r) => p.ratios?.includes(r.label));
     const nearest = ratios.sort((a, b) => Math.abs(Math.log((a.w / a.h) / (v.width / v.height))) - Math.abs(Math.log((b.w / b.h) / (v.width / v.height))))[0];
     applyRatio(nearest?.w ?? v.width, nearest?.h ?? v.height);
+    setEditRatio(g.settings?.["改图比例"] ?? "auto");
     setReverse(false); // The saved prompt already includes any reverse description.
     setPolishUndo(null);
     setError(null);
@@ -1784,7 +1789,7 @@ export default function StudioPage() {
     else {
       timingRef.current = timing;
       setJobVisual({
-        aspect: mode === "i2i" && preview ? previewAspect : width / height,
+        aspect: mode === "i2i" && preview ? fixedEditAspect ?? previewAspect : width / height,
         reference: mode === "i2i" ? preview : null,
       });
       setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : []);
@@ -1861,8 +1866,9 @@ export default function StudioPage() {
         fd.append("denoise", String(denoise));
         fd.append("quality", quality);
         fd.append("res", res);
+        if (paramsOf(model).editRatio) fd.append("editRatio", fixedEditAspect ? editRatio : "auto");
         if (paramsOf(model).pricePerMegapixel) {
-          const sz = sizeFor(previewAspect || 1);
+          const sz = sizeFor(fixedEditAspect ?? (previewAspect || 1));
           fd.append("width", String(sz.width));
           fd.append("height", String(sz.height));
         }
@@ -1920,7 +1926,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending]);
+  }, [mode, model, reverse, readiness, preview, previewAspect, startStep, count, prompt, width, height, widthText, heightText, denoise, quality, res, thinking, seedText, negative, lora, background, complexity, regional, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending, editRatio, fixedEditAspect]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
@@ -2164,7 +2170,7 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2288,7 +2294,8 @@ export default function StudioPage() {
 
   const chips: { key: string; label: string }[] = [
     { key: "model", label: (findModel(model) ?? MODELS[0]).name },
-    ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }] : []),
+    ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }]
+      : modelParams.editRatio ? [{ key: "ratio", label: fixedEditAspect ? editRatio : "自适应" }] : []),
     ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
     ...(modelParams.quality ? [{ key: "quality", label: `画质 ${QUALITY_LABELS[quality]}` }] : []),
     ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
@@ -2308,7 +2315,7 @@ export default function StudioPage() {
   useEffect(() => {
     if (canvasOn && editingNode && editingNode === composeKey.current)
       canvasApi.current?.saveDraft(editingNode, { ...composeSnapRef.current, summary: liveSummary });
-  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode]);
+  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode, editRatio]);
   const boardSummary = (n: BoardNode, hasPictures: boolean) => {
     if (n.id === editingNode) return null;
     const saved = composeMem.current.get(n.id) ?? n.draft;
@@ -2317,7 +2324,7 @@ export default function StudioPage() {
     const size = g && pictureParams(g);
     const ratio = size ? RATIOS.find((r) => r.w === size.width && r.h === size.height)?.label ?? `${size.width}×${size.height}` : "1:1";
     const s = g?.settings;
-    const detail = saved?.summary || [hasPictures ? (paramsOf(md.id).denoise ? `重绘 ${s?.["重绘幅度"] ?? "0.50"}` : "自适应") : ratio, s?.["清晰度"], s?.["画质"]].filter(Boolean).join(" · ");
+    const detail = saved?.summary || [hasPictures ? (paramsOf(md.id).denoise ? `重绘 ${s?.["重绘幅度"] ?? "0.50"}` : s?.["改图比例"] || "自适应") : ratio, s?.["清晰度"], s?.["画质"]].filter(Boolean).join(" · ");
     return { model: md.name, cover: md.cover, detail };
   };
   // 用户 2026-11-10: 模型 + 两个参数 + 更多.
@@ -3195,12 +3202,15 @@ export default function StudioPage() {
                     {openPanel === "ratio" && (
                       <div>
                         <div className="grid grid-cols-5 gap-1.5">
+                          {mode === "i2i" && modelParams.editRatio && <button type="button" aria-pressed={!fixedEditAspect}
+                            onClick={() => { setEditRatio("auto"); setOpenPanel(null); }}
+                            className={`rounded-lg px-1 py-1.5 text-[12px] font-medium ${!fixedEditAspect ? "bg-accent text-panel" : "bg-edge/[0.04]"}`}>自适应</button>}
                           {RATIOS.filter((r) => !modelParams.ratios || modelParams.ratios.includes(r.label)).map((r) => (
                             <button
                               key={r.label}
                               type="button"
-                              onClick={() => { applyRatio(r.w, r.h); setOpenPanel(null); }}
-                              className={`rounded-lg py-1.5 text-[12px] font-medium transition ${width === r.w && height === r.h ? "bg-accent text-panel" : "bg-edge/[0.04] text-ink hover:bg-edge/[0.08]"}`}
+                              onClick={() => { if (mode === "i2i") setEditRatio(r.label); else applyRatio(r.w, r.h); setOpenPanel(null); }}
+                              className={`rounded-lg py-1.5 text-[12px] font-medium transition ${(mode === "i2i" ? editRatio === r.label : width === r.w && height === r.h) ? "bg-accent text-panel" : "bg-edge/[0.04] text-ink hover:bg-edge/[0.08]"}`}
                             >
                               {r.label}
                             </button>
