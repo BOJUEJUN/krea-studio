@@ -3175,7 +3175,7 @@ export default function StudioPage() {
               disabled={
                 !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
               }
-              className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]"
+              className="apple-btn-primary flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
               {loading ? (
                 <>
@@ -3187,7 +3187,7 @@ export default function StudioPage() {
               ) : (
                 <>
                   <span>生成</span>
-                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[13px] font-semibold tabular-nums">
+                  <span className="rounded-full bg-white/20 px-1.5 py-px text-[12px] font-semibold tabular-nums">
                     ¥{btnPrice}
                   </span>
                 </>
