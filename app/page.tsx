@@ -2848,6 +2848,18 @@ export default function StudioPage() {
                               <span className="text-[18px] leading-none">+</span>
                             </button>
                           )}
+                          {/* 用户 2026-11-11 (怎么没有显示连进来的内容): say plainly when this model cannot take every linked picture. */}
+                          {canvasOn && canvasSel.length > limit && (
+                            <button
+                              type="button"
+                              onClick={() => { setPanelLeft(0); setOpenPanel("model"); }}
+                              className="self-center rounded-xl bg-[#fff8e6] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[#9a6700] ring-1 ring-[#f5c451]/50 hover:bg-[#fff1cc]"
+                            >
+                              连进来 {canvasSel.length} 张图，这个模型只能用 {limit} 张
+                              <br />
+                              <span className="font-medium text-[#0071e3]">换成能用多张图的模型 →</span>
+                            </button>
+                          )}
                         </>
                       );
                     })()}
