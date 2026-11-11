@@ -70,6 +70,13 @@ export async function cosGet(key: string, timeoutMs = 15_000): Promise<Buffer | 
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** Removes one object; a missing one counts as removed. */
+export async function cosDelete(key: string): Promise<void> {
+  const c = cosConf()!;
+  const res = await fetch(url(c, "delete", key), { method: "DELETE", cache: "no-store", signal: AbortSignal.timeout(10_000) });
+  if (!res.ok && res.status !== 404) throw new Error(`存储删除失败 (${res.status})`);
+}
+
 export async function cosHas(key: string): Promise<boolean> {
   const c = cosConf()!;
   const res = await fetch(url(c, "head", key), { method: "HEAD", cache: "no-store", signal: AbortSignal.timeout(8000) });
@@ -93,9 +100,9 @@ export async function cosKeys(prefix: string): Promise<string[]> {
 }
 
 /** Keys with their last-change time (ms). */
-export async function cosList(prefix: string): Promise<{ key: string; mtime: number }[]> {
+export async function cosList(prefix: string): Promise<{ key: string; mtime: number; size: number }[]> {
   const c = cosConf()!;
-  const keys: { key: string; mtime: number }[] = [];
+  const keys: { key: string; mtime: number; size: number }[] = [];
   let marker = "";
   for (let page = 0; page < 50; page++) {
     const params: Record<string, string> = { prefix: c.prefix + prefix, "max-keys": "1000" };
@@ -112,7 +119,11 @@ export async function cosList(prefix: string): Promise<{ key: string; mtime: num
     const found = blocks.map((b) => b.match(/<Key>([^<]+)<\/Key>/)?.[1] ?? "").filter(Boolean);
     for (const b of blocks) {
       const k = b.match(/<Key>([^<]+)<\/Key>/)?.[1];
-      if (k) keys.push({ key: k.slice(c.prefix.length), mtime: Date.parse(b.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1] ?? "") || 0 });
+      if (k) keys.push({
+        key: k.slice(c.prefix.length),
+        mtime: Date.parse(b.match(/<LastModified>([^<]+)<\/LastModified>/)?.[1] ?? "") || 0,
+        size: Number(b.match(/<Size>(\d+)<\/Size>/)?.[1]) || 0,
+      });
     }
     if (!/<IsTruncated>true<\/IsTruncated>/.test(xml) || !found.length) break;
     marker = xml.match(/<NextMarker>([^<]+)<\/NextMarker>/)?.[1] || found[found.length - 1];
