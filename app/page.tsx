@@ -1887,14 +1887,15 @@ export default function StudioPage() {
   const selTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel };
+  const composeSnap = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
   const composeKey = useRef("");
+  const liveSummaryRef = useRef("");
   const switchCompose = (key: string) => {
     if (key === composeKey.current) return;
-    composeMem.current.set(composeKey.current, composeSnapRef.current);
+    composeMem.current.set(composeKey.current, { ...composeSnapRef.current, summary: liveSummaryRef.current });
     composeKey.current = key;
     const cur = composeSnapRef.current;
     const v = composeMem.current.get(key) ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
@@ -2057,6 +2058,16 @@ export default function StudioPage() {
     // 不想要 removed (用户 2026-11-06: 去掉).
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
   ];
+  // 用户 2026-11-11 (小预览跟随我选择的参数): the short line under a picture on the board.
+  const liveSummary = chips.filter((c) => c.key !== "model").map((c) => c.label).join(" · ");
+  liveSummaryRef.current = liveSummary;
+  const boardSummary = (url: string) => {
+    const key = url;
+    const m = key === composeKey.current ? { model, summary: liveSummary } : composeMem.current.get(key);
+    if (!m) return null;
+    const md = findModel(m.model);
+    return { model: md?.name ?? "", cover: md?.cover, detail: m.summary };
+  };
   // 2026-11-10 (用户: 参数最多显示两个最重要的，多的收起来): model + one key setting; the rest behind 更多.
   // 用户 2026-11-10: 模型 + 两个参数 + 更多.
   const primaryChips = [
@@ -2404,6 +2415,7 @@ export default function StudioPage() {
                   onCompose={() => setComposeOpen(true)}
                   onOpenHistory={() => toggleHistory(false)}
                   prefs={boardPrefs}
+                  summaryFor={boardSummary}
                   onSelectionText={(t) => {
                     // 用户 2026-11-11 (文本节点): a selected text node is the description; the box edits it.
                     textSelRef.current = t !== null;
@@ -2738,11 +2750,6 @@ export default function StudioPage() {
                             >
                               <span className="text-[18px] leading-none">+</span>
                             </button>
-                          )}
-                          {preview && limit > 1 && (
-                            <span className="self-end pb-0.5 text-[11px] tabular-nums text-[#aeaeb2]">
-                              {used}/{limit}
-                            </span>
                           )}
                         </>
                       );

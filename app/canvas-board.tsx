@@ -105,6 +105,7 @@ export function CanvasBoard({
   onCompare,
   prefs,
   onSelectionText,
+  summaryFor,
 }: {
   /** History ids currently on this board (history cards mark them). */
   onGidsChange?: (gids: string[]) => void;
@@ -124,6 +125,8 @@ export function CanvasBoard({
   prefs?: { snap: boolean; grid: boolean; lines: boolean; map?: boolean };
   /** Selected text nodes' words (null when none is selected), so the compose box can edit them. */
   onSelectionText?: (text: string | null) => void;
+  /** The settings chosen for a picture (model + short list), shown under it when it is not being edited. */
+  summaryFor?: (url: string) => { model: string; cover?: string; detail: string } | null;
   /** Where the selection sits on screen (client px), so the compose box can hug it; null when nothing is selected. */
   onSelectionBox?: (r: { left: number; top: number; right: number; bottom: number } | null) => void;
   apiRef?: React.MutableRefObject<BoardApi | null>;
@@ -998,17 +1001,21 @@ export function CanvasBoard({
                   <GeneratingView aspect={n.w / Math.max(1, n.h)} progress={loading ? progress : 0} compact />
                 </div>
               )}
-              {!isText && src?.model && url && (
+              {!isText && url && !on && (() => {
+                const sm = summaryFor?.(url) ?? (src?.model ? { model: src.model, cover: src.cover, detail: src.mode ?? "" } : null);
+                if (!sm?.model) return null;
+                return (
                 <div
                   className="pointer-events-none absolute left-0 top-full flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white/90 px-2 py-1 text-[11px] text-[#6e6e73] shadow-[0_2px_10px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.05]"
                   style={{ transform: `translate(0, 6px) scale(${k})`, transformOrigin: "top left", maxWidth: n.w * view.s }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {src.cover && <img src={src.cover} alt="" className="h-4 w-4 rounded object-cover" />}
-                  <span className="truncate font-medium text-[#1d1d1f]">{src.model}</span>
-                  {src.mode && <span className="text-[#aeaeb2]">· {src.mode}</span>}
+                  {sm.cover && <img src={sm.cover} alt="" className="h-4 w-4 shrink-0 rounded object-cover" />}
+                  <span className="shrink-0 font-medium text-[#1d1d1f]">{sm.model}</span>
+                  {sm.detail && <span className="truncate text-[#aeaeb2]">· {sm.detail}</span>}
                 </div>
-              )}
+                );
+              })()}
               {on && selected.length === 1 && (url || isText) && (
                 <span
                   className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-[#0071e3] shadow"
