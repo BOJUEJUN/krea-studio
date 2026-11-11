@@ -52,8 +52,9 @@ function withMentions(text: string, thumbs: (string | null | undefined)[] = []) 
     if (!/^@图\d+$/.test(part)) return part;
     const src = thumbs[Number(part.slice(2)) - 1];
     if (!src)
+      // No picture N uploaded yet: say so instead of looking broken (用户: 怎么只有图1是图片).
       return (
-        <span key={i} className="rounded bg-[#0071e3]/10 text-[#0071e3]">
+        <span key={i} className="rounded bg-[#ff3b30]/10 text-[#d70015] underline decoration-dashed underline-offset-2" title={`还没放${part.slice(1)}，点 + 加图`}>
           {part}
         </span>
       );
@@ -488,8 +489,20 @@ export default function StudioPage() {
   const [complexity, setComplexity] = useState<"auto" | "low" | "medium" | "high">("auto");
   // 2026-11-10 (用户: 提示词润色，默认低): rewrite the current prompt; 撤销 brings the old text back.
   // 2026-11-10 (用户: 页面可以切换成自由画布): 单图 / 画布.
+  // 2026-11-10 (用户: 提示词反推可选 直接反推 / 先反推到提示词框，默认直接).
+  const [reverseMode, setReverseMode] = useState<"direct" | "fill">("direct");
+  const [reversing, setReversing] = useState(false);
+  const reversedForRef = useRef<string | null>(null);
   const [canvasOn, setCanvasOn] = useState(false);
   const canvasApi = useRef<BoardApi | null>(null);
+  // 2026-11-10 (用户: 画布要能新建 画布1 2 3): several boards per account, kept in this browser.
+  const [boards, setBoards] = useState<{ id: string; name: string }[]>([{ id: "1", name: "画布1" }]);
+  const [boardId, setBoardId] = useState("1");
+  const [boardMenu, setBoardMenu] = useState(false);
+  const [boardDelArm, setBoardDelArm] = useState<string | null>(null);
+  // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
+  const [canvasSel, setCanvasSel] = useState<string[]>([]);
+  const [composeOpen, setComposeOpen] = useState(false);
   const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
@@ -686,7 +699,11 @@ export default function StudioPage() {
   useEffect(() => {
     // 2026-11-06 (用户: 每次刷新默认 LOL 2.36MP V1.1): the last-used model is not restored.
     if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
-    if (localStorage.getItem("ais-canvas-on") === "1") setCanvasOn(true);
+    if (localStorage.getItem("ais-canvas-on") === "1") {
+      setCanvasOn(true);
+      setHistHidden(true);
+    }
+    if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
     const pl = localStorage.getItem("ais-polish-level");
     if (pl === "low" || pl === "medium" || pl === "high") setPolishLevel(pl);
     const savedCount = Number(localStorage.getItem(COUNT_KEY));
@@ -1370,7 +1387,7 @@ export default function StudioPage() {
     busyRef.current = true;
     const job = ++jobRef.current;
     const clickedAt = Date.now();
-    const useReverse = mode === "i2i" && reverse;
+    const useReverse = mode === "i2i" && reverse && reversedForRef.current !== preview;
     const renderKey = `${model}:${mode}`;
     timingRef.current = {
       step: useReverse ? "describe" : "submit",
@@ -1402,7 +1419,7 @@ export default function StudioPage() {
       let data: any;
       const userPrompt = prompt.trim();
       let finalPrompt = userPrompt;
-      if (mode === "i2i" && reverse) {
+      if (useReverse) {
         // Reverse a prompt from the reference first; the user's text is kept as an extra request.
         try {
           const fd = new FormData();
@@ -1500,7 +1517,32 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
   const [queued, setQueued] = useState(0);
+  /** 先反推到提示词框: describe the reference into the box; the next 生成 uses the box as it is. */
+  const reverseToBox = async () => {
+    const file = fileBlobRef.current;
+    if (!file || reversing) return;
+    setReversing(true);
+    try {
+      const fd = new FormData();
+      fd.append("image", await describeCopy(file), "reference.jpg");
+      const described = await fetchJson("/api/describe", { method: "POST", body: fd });
+      if (!described?.ok || !described?.prompt) throw new Error(described?.error || "提示词反推失败");
+      const mine = prompt.trim();
+      setPrompt([String(described.prompt).trim(), mine].filter(Boolean).join("\n"));
+      reversedForRef.current = preview;
+      flash("已反推到提示词框，改好后再点生成");
+    } catch (e: any) {
+      flash(e?.message || "提示词反推失败");
+    } finally {
+      setReversing(false);
+    }
+  };
+
   const startOrQueue = () => {
+    if (mode === "i2i" && reverse && reverseMode === "fill" && preview && reversedForRef.current !== preview && !busyRef.current) {
+      reverseToBox();
+      return;
+    }
     if (busyRef.current) {
       setQueued((n) => Math.min(9, n + 1));
       flash("已排队，这张画完就开始");
@@ -1544,6 +1586,86 @@ export default function StudioPage() {
   refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
   const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : resultRef ? [resultRef] : [];
+  useEffect(() => {
+    if (!user) return;
+    try {
+      const raw = localStorage.getItem(`ais-canvas-boards:${user}`);
+      const list = raw ? JSON.parse(raw) : null;
+      if (Array.isArray(list) && list.length) setBoards(list);
+      const cur = localStorage.getItem(`ais-canvas-current:${user}`);
+      if (cur) setBoardId(cur);
+    } catch {}
+  }, [user]);
+  const saveBoards = (list: { id: string; name: string }[], current: string) => {
+    setBoards(list);
+    setBoardId(current);
+    try {
+      localStorage.setItem(`ais-canvas-boards:${user}`, JSON.stringify(list));
+      localStorage.setItem(`ais-canvas-current:${user}`, current);
+    } catch {}
+  };
+  const boardKey = (id: string) => (id === "1" ? `ais-canvas-v1:${user}` : `ais-canvas-v1:${user}:${id}`);
+  const newBoard = () => {
+    let n = boards.length + 1;
+    while (boards.some((b) => b.name === `画布${n}`)) n++;
+    const b = { id: Math.random().toString(36).slice(2, 8), name: `画布${n}` };
+    saveBoards([...boards, b], b.id);
+    setBoardMenu(false);
+  };
+  const renameBoard = (id: string) => {
+    const b = boards.find((x) => x.id === id);
+    const name = window.prompt("画布名字", b?.name ?? "")?.trim();
+    if (!name) return;
+    saveBoards(boards.map((x) => (x.id === id ? { ...x, name: name.slice(0, 20) } : x)), boardId);
+  };
+  const deleteBoard = (id: string) => {
+    if (boards.length <= 1) return flash("至少要留一个画布");
+    if (boardDelArm !== id) return setBoardDelArm(id);
+    try { localStorage.removeItem(boardKey(id)); } catch {}
+    const rest = boards.filter((x) => x.id !== id);
+    saveBoards(rest, boardId === id ? rest[0].id : boardId);
+    setBoardDelArm(null);
+  };
+  const enterCanvas = (on: boolean) => {
+    setCanvasOn(on);
+    try { localStorage.setItem("ais-canvas-on", on ? "1" : "0"); } catch {}
+    // 2026-11-10 (用户: 进入画布全屏，历史默认收起).
+    if (on) toggleHistory(true);
+  };
+  // Selected pictures become the references (in canvas mode only).
+  const selTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onBoardSelection = useCallback(
+    (urls: string[]) => {
+      setCanvasSel(urls);
+      if (selTimer.current) clearTimeout(selTimer.current);
+      selTimer.current = setTimeout(async () => {
+        if (!urls.length) {
+          onPickFile(null);
+          setExtraRefs([]);
+          setMode("t2i");
+          return;
+        }
+        try {
+          const files = await Promise.all(
+            urls.map(async (u, i) => {
+              const r = await fetch(u.startsWith("data:") ? u : rawOf(u));
+              if (!r.ok) throw new Error();
+              const b = await r.blob();
+              return new File([b], `canvas-${i + 1}.${b.type.includes("png") ? "png" : "jpg"}`, { type: b.type || "image/jpeg" });
+            })
+          );
+          onPickFile(null);
+          setExtraRefs([]);
+          addRefs(files);
+          setMode("i2i");
+        } catch {
+          flash("图片读取失败，请稍后重试");
+        }
+      }, 250);
+    },
+    [onPickFile, addRefs, flash]
+  );
+
   const boardSources = useMemo(
     () => new Map<string, BoardSource>(gallery.map((g) => [g.id, { id: g.id, url: g.url, status: g.status, prompt: g.prompt }])),
     [gallery]
@@ -1737,7 +1859,7 @@ export default function StudioPage() {
       />
 
       <main className="relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto p-2 lg:flex-row lg:gap-0 lg:overflow-hidden">
-        <div className="flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
+        <div className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
         <section
           ref={resultRef_}
           className="apple-card stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden rounded-[22px] lg:h-auto lg:min-h-0 lg:flex-1">
@@ -1748,7 +1870,9 @@ export default function StudioPage() {
             {canvasOn && user && (
               <div className="absolute inset-0 z-20">
                 <CanvasBoard
-                  storageKey={`ais-canvas-v1:${user}`}
+                  key={boardId}
+                  storageKey={boardKey(boardId)}
+                  onSelectionChange={onBoardSelection}
                   sources={boardSources}
                   pendingIds={loading ? batch : []}
                   loading={loading}
@@ -1764,6 +1888,36 @@ export default function StudioPage() {
                 />
               </div>
             )}
+            {canvasOn && (
+              <div className="absolute left-16 top-2 z-30" onPointerDown={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  onClick={() => { setBoardMenu((v) => !v); setBoardDelArm(null); }}
+                  className="flex h-8 items-center gap-1 rounded-full bg-white/90 px-3 text-[12px] font-medium text-[#1d1d1f] shadow-[0_4px_16px_rgba(0,0,0,0.10)] ring-1 ring-black/[0.06] backdrop-blur"
+                >
+                  {boards.find((b) => b.id === boardId)?.name ?? "画布1"}
+                  <svg className={`h-3 w-3 text-[#86868b] transition-transform ${boardMenu ? "" : "rotate-180"}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                </button>
+                {boardMenu && (
+                  <div className="animate-pop-in absolute left-0 top-10 w-56 rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
+                    {boards.map((b) => (
+                      <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}>
+                        <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => { saveBoards(boards, b.id); setBoardMenu(false); }}>
+                          {b.name}
+                        </button>
+                        <button type="button" data-tip="改名" className="rounded-md px-1 text-[#86868b] opacity-0 hover:bg-black/[0.06] group-hover:opacity-100" onClick={() => renameBoard(b.id)}>✎</button>
+                        <button type="button" data-tip={boardDelArm === b.id ? "再点一次删除" : "删除画布"} className={`rounded-md px-1 hover:bg-black/[0.06] ${boardDelArm === b.id ? "text-[#d70015] opacity-100" : "text-[#86868b] opacity-0 group-hover:opacity-100"}`} onClick={() => deleteBoard(b.id)}>
+                          {boardDelArm === b.id ? "删除?" : "×"}
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#0071e3] hover:bg-[#0071e3]/[0.08]">
+                      ＋ 新建画布
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             {/* 单图 / 画布 */}
             <div className="absolute left-1/2 top-2 z-30 flex -translate-x-1/2 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.10)] ring-1 ring-black/[0.06] backdrop-blur">
               {([["single", "单图"], ["canvas", "画布"]] as const).map(([k, t]) => {
@@ -1772,11 +1926,7 @@ export default function StudioPage() {
                   <button
                     key={k}
                     type="button"
-                    onClick={() => {
-                      const next = k === "canvas";
-                      setCanvasOn(next);
-                      try { localStorage.setItem("ais-canvas-on", next ? "1" : "0"); } catch {}
-                    }}
+                    onClick={() => enterCanvas(k === "canvas")}
                     className={`rounded-full px-3 py-1 transition ${on ? "bg-[#1d1d1f] text-white" : "text-[#6e6e73] hover:text-[#1d1d1f]"}`}
                   >
                     {t}
@@ -1945,7 +2095,12 @@ export default function StudioPage() {
 
         </section>
         <section
-          className="stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
+          className={
+            canvasOn
+              ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能).
+                "absolute bottom-4 left-1/2 z-40 m-0 flex w-[min(860px,calc(100%-32px))] -translate-x-1/2 flex-col overflow-visible rounded-[22px] shadow-[0_18px_50px_rgba(0,0,0,0.18)]"
+              : "stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
+          }
         >
 
           <div className="min-h-0">
@@ -2182,14 +2337,28 @@ export default function StudioPage() {
 
 
                 {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
-                <div ref={chipRowRef} className="relative flex flex-wrap items-center gap-1.5 px-2 pb-2 pt-1">
+                {canvasOn && !canvasSel.length && !composeOpen && (
+                  <div className="flex items-center gap-2 px-2 pb-2 pt-1">
+                    <button type="button" onClick={() => setComposeOpen(true)} className="flex h-8 items-center gap-1 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#6e6e73] hover:bg-black/[0.08]">
+                      {(findModel(model) ?? MODELS[0]).name} · 参数
+                      <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                    </button>
+                    <span className="text-[11px] text-[#aeaeb2]">选中画布上的图，就会拿它当参考图改图</span>
+                    <div className="ml-auto">
+                      <button onClick={startOrQueue} disabled={!modelReady || !prompt.trim()} className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]">
+                        {loading ? `${Math.floor(progress)}%` : "生成"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div ref={chipRowRef} className={`relative flex-wrap items-center gap-1.5 px-2 pb-2 pt-1 ${canvasOn && !canvasSel.length && !composeOpen ? "hidden" : "flex"}`}>
                   {openPanel && (
                     <div
                       className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
                       style={{ left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
-                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度" } as Record<string, string>)[openPanel]}
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推" } as Record<string, string>)[openPanel]}
                       </div>}
                     
                     {openPanel === "model" && (
@@ -2245,6 +2414,7 @@ export default function StudioPage() {
                     {openPanel === "quality" && <Choice options={(Object.keys(QUALITY_LABELS) as Quality[]).filter((q) => modelParams.quality?.[q] != null).map((q) => [q, QUALITY_LABELS[q]])} value={quality} onPick={(v) => { setQuality(v as Quality); setOpenPanel(null); }} />}
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
+                    {openPanel === "reverse" && <Choice note="根据参考图自动写画面描述" options={[["direct", "直接生成（默认）", "反推完马上出图"], ["fill", "先填到提示词框", "反推结果放进框里，你改好再点生成"]]} value={reverseMode} onPick={(v) => { setReverseMode(v as "direct" | "fill"); try { localStorage.setItem("ais-reverse-mode", v); } catch {} setOpenPanel(null); }} />}
                     {openPanel === "polish" && <Choice note="只改写你写的提示词，@图 会原样保留" options={[["low", "低（推荐）", "只理顺语句、改错字，几乎不改内容"], ["medium", "中", "说得更清楚具体，不加新东西"], ["high", "高", "扩写成完整的专业提示词"]]} value={polishLevel} onPick={(v) => { setPolishLevel(v as typeof polishLevel); try { localStorage.setItem("ais-polish-level", v); } catch {} setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
@@ -2314,30 +2484,49 @@ export default function StudioPage() {
                     </button>
                   ))}
                   {mode === "i2i" && !findModel(model)?.billing && (
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={reverse}
-                      onClick={() => {
-                        const next = !reverse;
-                        setReverse(next);
-                        localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
-                      }}
-                      className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
-                    >
-                      提示词优化
-                      <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
-                        <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
-                      </span>
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={reverse}
+                        data-tip="根据参考图自动写出画面描述（人物、服装、动作、背景），再和你写的要求一起用来生成"
+                        onClick={() => {
+                          const next = !reverse;
+                          setReverse(next);
+                          localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
+                        }}
+                        className="flex items-center gap-1.5 rounded-full px-1.5 py-0.5 text-[11px] text-[#6e6e73] transition hover:bg-black/[0.04]"
+                      >
+                        提示词反推
+                        <span className={`relative inline-block h-[16px] w-[28px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.15]"}`}>
+                          <span className={`absolute top-[2px] h-[12px] w-[12px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[14px]" : "left-[2px]"}`} />
+                        </span>
+                      </button>
+                      {reverse && (
+                        <button
+                          type="button"
+                          aria-expanded={openPanel === "reverse"}
+                          data-tip="直接生成：反推完马上出图；先填到框里：反推结果放进提示词框，你改好再生成"
+                          onClick={(e) => {
+                            const row = chipRowRef.current;
+                            setPanelLeft(Math.max(0, Math.min(e.currentTarget.offsetLeft, (row?.clientWidth ?? 600) - 300)));
+                            setOpenPanel((v) => (v === "reverse" ? null : "reverse"));
+                          }}
+                          className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] transition ${openPanel === "reverse" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.04]"}`}
+                        >
+                          {reversing ? "反推中…" : reverseMode === "fill" ? "先填到框里" : "直接生成"}
+                          <svg className="h-2.5 w-2.5" viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                        </button>
+                      )}
+                    </div>
                   )}
-                  <div className="flex h-8 items-center overflow-hidden rounded-full bg-black/[0.04] text-[12px] text-[#1d1d1f]">
+                  <div className="flex h-8 items-center overflow-hidden rounded-full bg-[#0071e3]/[0.08] text-[12px] font-medium text-[#0071e3] ring-1 ring-[#0071e3]/25 transition hover:ring-[#0071e3]/50">
                     <button
                       type="button"
                       onClick={runPolish}
                       disabled={!prompt.trim() || polishing}
                       data-tip="按当前提示词润色，@图 原样保留"
-                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-black/[0.06] disabled:opacity-40"
+                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-[#0071e3]/[0.12] active:scale-[0.97] disabled:opacity-40"
                     >
                       {polishing ? (
                         <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-[#0071e3]/30 border-t-[#0071e3]" />
@@ -2355,7 +2544,7 @@ export default function StudioPage() {
                         setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                         setOpenPanel((v) => (v === "polish" ? null : "polish"));
                       }}
-                      className={`flex h-full items-center gap-1 border-l border-black/[0.06] pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-[#0071e3]/10 text-[#0071e3]" : "hover:bg-black/[0.06]"}`}
+                      className={`flex h-full items-center gap-1 border-l border-[#0071e3]/20 pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-[#0071e3]/15" : "hover:bg-[#0071e3]/[0.12]"}`}
                     >
                       {{ low: "低", medium: "中", high: "高" }[polishLevel]}
                       <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>

@@ -71,8 +71,11 @@ export function CanvasBoard({
   onDownload,
   flash,
   apiRef,
+  onSelectionChange,
 }: {
   apiRef?: React.MutableRefObject<BoardApi | null>;
+  /** The selected pictures' urls (in canvas mode they become the reference images). */
+  onSelectionChange?: (urls: string[]) => void;
   storageKey: string;
   sources: Map<string, BoardSource>;
   pendingIds: string[];
@@ -93,6 +96,8 @@ export function CanvasBoard({
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const [dropHover, setDropHover] = useState(false);
+  // 2026-11-10 (用户: 自动对齐吸附，移动时有虚线): alignment guides while dragging.
+  const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const viewRef = useRef(view);
@@ -300,9 +305,39 @@ export function CanvasBoard({
       const hit = nodesRef.current.filter((n) => n.x < hx && n.x + n.w > lx && n.y < hy && n.y + n.h > ly).map((n) => n.id);
       setSel(new Set([...d.add, ...hit]));
     } else if (d.kind === "move") {
-      const dx = (e.clientX - d.sx) / s;
-      const dy = (e.clientY - d.sy) / s;
+      let dx = (e.clientX - d.sx) / s;
+      let dy = (e.clientY - d.sy) / s;
       if (Math.abs(dx) + Math.abs(dy) > 2 / s) d.moved = true;
+      // Snap the moving group's edges / centre to the other pictures' edges / centres (Alt turns it off).
+      const moving = nodesRef.current.filter((n) => d.start.has(n.id));
+      const others = nodesRef.current.filter((n) => !d.start.has(n.id));
+      const v: number[] = [];
+      const h: number[] = [];
+      if (moving.length && others.length && !e.altKey) {
+        const bx0 = Math.min(...moving.map((n) => d.start.get(n.id)!.x)) + dx;
+        const by0 = Math.min(...moving.map((n) => d.start.get(n.id)!.y)) + dy;
+        const bx1 = Math.max(...moving.map((n) => d.start.get(n.id)!.x + n.w)) + dx;
+        const by1 = Math.max(...moving.map((n) => d.start.get(n.id)!.y + n.h)) + dy;
+        const xs = others.flatMap((n) => [n.x, n.x + n.w / 2, n.x + n.w]);
+        const ys = others.flatMap((n) => [n.y, n.y + n.h / 2, n.y + n.h]);
+        const tol = 6 / s;
+        const best = (mine: number[], targets: number[]) => {
+          let off = Infinity;
+          for (const m of mine) for (const t of targets) if (Math.abs(t - m) < Math.abs(off) && Math.abs(t - m) <= tol) off = t - m;
+          return off;
+        };
+        const ox = best([bx0, (bx0 + bx1) / 2, bx1], xs);
+        const oy = best([by0, (by0 + by1) / 2, by1], ys);
+        if (Number.isFinite(ox)) {
+          dx += ox;
+          for (const m of [bx0 + ox, (bx0 + bx1) / 2 + ox, bx1 + ox]) if (xs.some((t) => Math.abs(t - m) < 0.5)) v.push(m);
+        }
+        if (Number.isFinite(oy)) {
+          dy += oy;
+          for (const m of [by0 + oy, (by0 + by1) / 2 + oy, by1 + oy]) if (ys.some((t) => Math.abs(t - m) < 0.5)) h.push(m);
+        }
+      }
+      setGuides({ v, h });
       setNodesRaw((list) => list.map((n) => (d.start.has(n.id) ? { ...n, x: d.start.get(n.id)!.x + dx, y: d.start.get(n.id)!.y + dy } : n)));
     } else if (d.kind === "resize") {
       const w = Math.max(60, d.w + (e.clientX - d.sx) / s);
@@ -315,6 +350,7 @@ export function CanvasBoard({
     if (!d) return;
     if (d.kind === "pan" && !d.moved) setSel(new Set());
     if (d.kind === "marquee") setMarquee(null);
+    setGuides({ v: [], h: [] });
     if ((d.kind === "move" && d.moved) || d.kind === "resize") {
       undo.current.push(d.before);
       redo.current = [];
@@ -417,6 +453,12 @@ export function CanvasBoard({
   };
 
   const urlOf = (n: Node): string | null => n.src ?? (n.gid ? sources.get(n.gid)?.url || null : null);
+  const selKey = nodes.filter((n) => sel.has(n.id)).map((n) => urlOf(n) ?? "").filter(Boolean).join("|");
+  const onSelRef = useRef(onSelectionChange);
+  onSelRef.current = onSelectionChange;
+  useEffect(() => {
+    onSelRef.current?.(selKey ? selKey.split("|") : []);
+  }, [selKey]);
   const selected = nodes.filter((n) => sel.has(n.id));
   const selBox = useMemo(() => {
     if (!selected.length) return null;
@@ -521,6 +563,16 @@ export function CanvasBoard({
             </div>
           );
         })}
+        {(guides.v.length > 0 || guides.h.length > 0) && (
+          <svg className="pointer-events-none absolute left-0 top-0 overflow-visible" width="1" height="1">
+            {guides.v.map((x, i) => (
+              <line key={"v" + i} x1={x} x2={x} y1={-100000} y2={100000} stroke="#ff2e93" strokeWidth={1 / view.s} strokeDasharray={`${5 / view.s} ${4 / view.s}`} />
+            ))}
+            {guides.h.map((y, i) => (
+              <line key={"h" + i} y1={y} y2={y} x1={-100000} x2={100000} stroke="#ff2e93" strokeWidth={1 / view.s} strokeDasharray={`${5 / view.s} ${4 / view.s}`} />
+            ))}
+          </svg>
+        )}
         {marquee && (
           <div
             className="pointer-events-none absolute border border-[#0071e3] bg-[#0071e3]/10"
@@ -559,7 +611,7 @@ export function CanvasBoard({
 
       {/* Zoom controls. */}
       <div
-        className="absolute bottom-3 right-3 z-20 flex items-center gap-0.5 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
+        className="absolute bottom-3 left-3 z-20 flex items-center gap-0.5 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
         onPointerDown={(e) => e.stopPropagation()}
       >
         <button type="button" aria-label="缩小" className="h-7 w-7 rounded-full hover:bg-black/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s / 1.25); }}>−</button>
