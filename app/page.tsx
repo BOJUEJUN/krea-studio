@@ -557,6 +557,8 @@ export default function StudioPage() {
   const [canvasWant, setCanvasOn] = useState(false);
   // 用户 2026-11-11 (刷新后怎么先打开单图页面): the work area stays hidden until 单图 / 画布 is restored.
   const [restored, setRestored] = useState(false);
+  const boardsRef = useRef<{ id: string; name: string }[]>([]);
+  const boardIdRef = useRef("1");
   // 用户 2026-11-11 (手机不用画布，就简单生图): phones always get the plain single-picture page.
   const [phone, setPhone] = useState(false);
   useEffect(() => {
@@ -637,6 +639,8 @@ export default function StudioPage() {
   // 2026-11-10 (用户: 画布要能新建 画布1 2 3): several boards per account, kept in this browser.
   const [boards, setBoards] = useState<{ id: string; name: string }[]>([{ id: "1", name: "画布1" }]);
   const [boardId, setBoardId] = useState("1");
+  boardsRef.current = boards;
+  boardIdRef.current = boardId;
   const [boardJobs, setBoardJobs] = useState<BoardJob[]>([]);
   const jobsPlaced = useCallback((done: BoardJob[]) => {
     setBoardJobs((list) => list.filter((job) => !done.includes(job)));
@@ -959,11 +963,14 @@ export default function StudioPage() {
   useEffect(() => {
     // 2026-11-06 (用户: 每次刷新默认 LOL 2.36MP V1.1): the last-used model is not restored.
     if (localStorage.getItem(REVERSE_KEY) === "off") setReverse(false);
-    if (localStorage.getItem("ais-canvas-on") === "1") {
+    const knownMode = localStorage.getItem("ais-canvas-on");
+    if (knownMode === "1") {
       setCanvasOn(true);
       setHistHidden(true);
     }
-    setRestored(true);
+    // A browser that has never chosen waits briefly for the account's choice from the server.
+    if (knownMode !== null) setRestored(true);
+    else window.setTimeout(() => setRestored(true), 1500);
     if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
     const pl = localStorage.getItem("ais-polish-level-v2");
     setPolishLevel(restoredPolishLevel(pl ?? localStorage.getItem("ais-polish-level"), pl ? 2 : 1));
@@ -2078,6 +2085,12 @@ export default function StudioPage() {
       .then((d) => {
         if (!alive) return;
         const idx = d?.index;
+        if (idx && typeof idx.canvas === "boolean") {
+          setCanvasOn(idx.canvas);
+          setHistHidden(idx.canvas);
+          try { localStorage.setItem("ais-canvas-on", idx.canvas ? "1" : "0"); } catch {}
+        }
+        setRestored(true);
         if (idx && Array.isArray(idx.boards) && idx.boards.length) {
           importShare(idx.boards);
           setBoards(idx.boards);
@@ -2164,11 +2177,11 @@ export default function StudioPage() {
       flash(e?.message || "打不开这个分享");
     }
   };
-  const pushBoardIndex = (list: { id: string; name: string }[], current: string) => {
+  const pushBoardIndex = (list: { id: string; name: string }[], current: string, canvas?: boolean) => {
     fetchJson("/api/canvas", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ boards: list, current, updatedAt: Date.now() }),
+      body: JSON.stringify({ boards: list, current, updatedAt: Date.now(), ...(canvas !== undefined ? { canvas } : {}) }),
     }).catch(() => {});
   };
   const saveBoards = (list: { id: string; name: string }[], current: string) => {
@@ -2214,6 +2227,7 @@ export default function StudioPage() {
     }
     setCanvasOn(on);
     try { localStorage.setItem("ais-canvas-on", on ? "1" : "0"); } catch {}
+    pushBoardIndex(boardsRef.current, boardIdRef.current, on);
     // 2026-11-10 (用户: 进入画布全屏，历史默认收起；回到单图历史也回来).
     toggleHistory(on);
   };

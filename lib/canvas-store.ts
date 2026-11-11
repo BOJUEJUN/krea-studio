@@ -25,7 +25,7 @@ async function readJson(key: string): Promise<any | null> {
   }
 }
 
-export type CanvasIndex = { boards: { id: string; name: string }[]; current: string; updatedAt: number };
+export type CanvasIndex = { boards: { id: string; name: string }[]; current: string; updatedAt: number; canvas?: boolean };
 
 export async function readCanvasIndex(user: string): Promise<CanvasIndex | null> {
   return readJson(idxKey(user));
@@ -37,7 +37,9 @@ export async function writeCanvasIndex(user: string, idx: CanvasIndex): Promise<
     .map((b) => ({ id: b.id, name: String(b.name || "画布").slice(0, 20) }));
   if (!boards.length) throw new Error("至少要有一个画布");
   const current = boards.some((b) => b.id === idx.current) ? idx.current : boards[0].id;
-  await storePut(idxKey(user), JSON.stringify({ boards, current, updatedAt: Number(idx.updatedAt) || Date.now() }), "application/json");
+  // 用户 2026-11-11: 单图 / 画布 follows the account to other devices.
+  const canvas = typeof idx.canvas === "boolean" ? idx.canvas : (await readCanvasIndex(user).catch(() => null))?.canvas;
+  await storePut(idxKey(user), JSON.stringify({ boards, current, updatedAt: Number(idx.updatedAt) || Date.now(), ...(typeof canvas === "boolean" ? { canvas } : {}) }), "application/json");
 }
 
 export async function readBoard(user: string, id: string): Promise<{ nodes: any[]; view: any; updatedAt: number } | null> {
