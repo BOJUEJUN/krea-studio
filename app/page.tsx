@@ -54,7 +54,7 @@ function withMentions(text: string, thumbs: (string | null | undefined)[] = []) 
     if (!src)
       // No picture N uploaded yet: say so instead of looking broken (用户: 怎么只有图1是图片).
       return (
-        <span key={i} className="rounded bg-[#ff3b30]/10 text-[#d70015] underline decoration-dashed underline-offset-2" title={`还没放${part.slice(1)}，点 + 加图`}>
+        <span key={i} className="rounded bg-[#ff3b30]/10 text-danger underline decoration-dashed underline-offset-2" title={`还没放${part.slice(1)}，点 + 加图`}>
           {part}
         </span>
       );
@@ -65,7 +65,7 @@ function withMentions(text: string, thumbs: (string | null | undefined)[] = []) 
         <img
           src={src}
           alt={part.slice(1)}
-          className="absolute left-1/2 top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-[#0071e3]/70"
+          className="absolute left-1/2 top-1/2 h-[22px] w-[22px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-accent/70"
         />
       </span>
     );
@@ -87,17 +87,17 @@ async function fileToDataUrl(file: File, max = 1024): Promise<string> {
 function Choice({ options, value, onPick, note }: { options: ([string, string] | [string, string, string])[]; value: string; onPick: (v: string) => void; note?: string }) {
   return (
     <div className="flex flex-col">
-      {note && <div className="max-w-[200px] px-2.5 pb-1 text-[11px] text-[#86868b]">{note}</div>}
+      {note && <div className="max-w-[200px] px-2.5 pb-1 text-[11px] text-muted">{note}</div>}
       {options.map(([v, t, sub]) => (
         <button
           key={v}
           type="button"
           onClick={() => onPick(v)}
-          className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-left text-[13px] transition ${value === v ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}
+          className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-xl px-2.5 py-1.5 text-left text-[13px] transition ${value === v ? "bg-accent/[0.08] text-accent" : "text-ink hover:bg-edge/[0.04]"}`}
         >
           <span className="flex flex-col">
             {t}
-            {sub && <span className="text-[11px] text-[#86868b]">{sub}</span>}
+            {sub && <span className="text-[11px] text-muted">{sub}</span>}
           </span>
           {value === v && <span>✓</span>}
         </button>
@@ -2205,7 +2205,7 @@ export default function StudioPage() {
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
       {notice && (
-        <div key={notice} className="animate-pop-in pointer-events-none fixed left-1/2 top-5 z-[95] -translate-x-1/2 rounded-full bg-[#1d1d1f]/85 px-4 py-2 text-[13px] text-white shadow-[0_10px_30px_rgba(0,0,0,0.2)] backdrop-blur">
+        <div key={notice} className="animate-pop-in pointer-events-none fixed left-1/2 top-5 z-[95] -translate-x-1/2 rounded-full bg-ink/85 px-4 py-2 text-[13px] text-panel shadow-[0_10px_30px_rgba(0,0,0,0.2)] backdrop-blur">
           {notice}
         </div>
       )}
@@ -2215,13 +2215,13 @@ export default function StudioPage() {
             type="button"
             onClick={() => setUserMenu((v) => !v)}
             data-tip={user} data-tip-start=""
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[14px] font-semibold text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-panel/90 text-[14px] font-semibold text-ink shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl transition hover:scale-105"
           >
             {/^1\d{10}$/.test(user) ? user.slice(-2) : user.slice(0, 1).toUpperCase()}
           </button>
           {userMenu && (
-            <div className="animate-pop-in absolute left-0 top-11 min-w-[140px] rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-              <div className="px-2.5 py-1.5 text-[12px] text-[#86868b]">
+            <div className="animate-pop-in absolute left-0 top-11 min-w-[140px] rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+              <div className="px-2.5 py-1.5 text-[12px] text-muted">
                 {/^1\d{10}$/.test(user) ? `${user.slice(0, 3)}****${user.slice(-4)}` : user}
               </div>
               {isOwnerUser && (
@@ -2231,7 +2231,7 @@ export default function StudioPage() {
                     // 2026-11-05 (用户: 管理要是正常的页面): its own page, not a pop-up.
                     window.location.href = "/admin";
                   }}
-                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]"
+                  className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
                 >
                   管理
                 </button>
@@ -2253,7 +2253,7 @@ export default function StudioPage() {
                   }).catch((e: any) => ({ ok: false, error: e?.message }));
                   flash(d?.ok ? "密码已修改" : d?.error || "修改失败");
                 }}
-                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]"
+                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]"
               >
                 修改密码
               </button>
@@ -2268,7 +2268,7 @@ export default function StudioPage() {
                   setUser(null);
                   setUserMenu(false);
                 }}
-                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-[#d70015] hover:bg-black/[0.04]"
+                className="w-full rounded-xl px-2.5 py-1.5 text-left text-[13px] text-danger hover:bg-edge/[0.04]"
               >
                 退出登录
               </button>
@@ -2281,13 +2281,13 @@ export default function StudioPage() {
         className="pointer-events-none fixed inset-0"
         style={{
           background:
-            "radial-gradient(900px 420px at 50% -6%, rgba(0,113,227,0.06), transparent 55%), linear-gradient(180deg,#fbfbfd 0%,#f5f5f7 100%)",
+            "radial-gradient(900px 420px at 50% -6%, rgba(0,113,227,0.06), transparent 55%), linear-gradient(180deg,light-dark(#fbfbfd,#050507),var(--color-page))",
         }}
       />
 
       {user && !phone && (
         // 2026-11-10 (用户: 统一放到左边一排，页面简单些): one vertical tool rail under the avatar (not on phones).
-        <div className="fixed left-5 top-[68px] z-50 flex flex-col items-center gap-1 rounded-full bg-white/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl">
+        <div className="fixed left-5 top-[68px] z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
           {([
             ["single", "单图", <path key="p" d="M4 5h16v14H4zM4 15l4.5-4.5 4 4 2.5-2.5L20 17" />],
             ["canvas", "自由画布", <path key="p" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />],
@@ -2301,7 +2301,7 @@ export default function StudioPage() {
                 data-tip-start=""
                 aria-label={tip}
                 onClick={() => enterCanvas(k === "canvas")}
-                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${on ? "bg-[#1d1d1f] text-white" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${on ? "bg-ink text-panel" : "text-secondary hover:bg-edge/[0.06] hover:text-ink"}`}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{icon}</svg>
               </button>
@@ -2315,28 +2315,28 @@ export default function StudioPage() {
                 data-tip-start=""
                 aria-label="画布列表"
                 onClick={() => { setBoardMenu((v) => !v); setBoardDelArm(null); }}
-                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${boardMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${boardMenu ? "bg-accent/10 text-accent" : "text-secondary hover:bg-edge/[0.06] hover:text-ink"}`}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5" /></svg>
               </button>
               {boardMenu && (
-                <div className="animate-pop-in absolute left-11 top-0 w-56 rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-                  <div className="px-2 pb-1 pt-0.5 text-[12px] font-semibold text-[#86868b]">画布</div>
+                <div className="animate-pop-in absolute left-11 top-0 w-56 rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+                  <div className="px-2 pb-1 pt-0.5 text-[12px] font-semibold text-muted">画布</div>
                   {boards.map((b) => (
-                    <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-[#0071e3]/[0.08] text-[#0071e3]" : "text-[#1d1d1f] hover:bg-black/[0.04]"}`}>
+                    <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-accent/[0.08] text-accent" : "text-ink hover:bg-edge/[0.04]"}`}>
                       <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => { saveBoards(boards, b.id); setBoardMenu(false); }}>
                         {b.name}
                       </button>
-                      <button type="button" data-tip="改名" className="rounded-md px-1 text-[#86868b] opacity-0 hover:bg-black/[0.06] group-hover:opacity-100" onClick={() => renameBoard(b.id)}>✎</button>
-                      <button type="button" data-tip={boardDelArm === b.id ? "再点一次删除" : "删除画布"} className={`rounded-md px-1 hover:bg-black/[0.06] ${boardDelArm === b.id ? "text-[#d70015] opacity-100" : "text-[#86868b] opacity-0 group-hover:opacity-100"}`} onClick={() => deleteBoard(b.id)}>
+                      <button type="button" data-tip="改名" className="rounded-md px-1 text-muted opacity-0 hover:bg-edge/[0.06] group-hover:opacity-100" onClick={() => renameBoard(b.id)}>✎</button>
+                      <button type="button" data-tip={boardDelArm === b.id ? "再点一次删除" : "删除画布"} className={`rounded-md px-1 hover:bg-edge/[0.06] ${boardDelArm === b.id ? "text-danger opacity-100" : "text-muted opacity-0 group-hover:opacity-100"}`} onClick={() => deleteBoard(b.id)}>
                         {boardDelArm === b.id ? "删除?" : "×"}
                       </button>
                     </div>
                   ))}
-                  <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#0071e3] hover:bg-[#0071e3]/[0.08]">
+                  <button type="button" onClick={newBoard} className="mt-1 w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-accent hover:bg-accent/[0.08]">
                     ＋ 新建画布
                   </button>
-                  <button type="button" onClick={() => { setBoardMenu(false); shareBoard(); }} className="w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.04]">
+                  <button type="button" onClick={() => { setBoardMenu(false); shareBoard(); }} className="w-full rounded-xl px-2 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.04]">
                     分享当前画布…
                   </button>
                 </div>
@@ -2352,36 +2352,36 @@ export default function StudioPage() {
                 data-tip-start=""
                 aria-label="缩放"
                 onClick={() => setZoomMenu((v) => !v)}
-                className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums tracking-tight transition ${zoomMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums tracking-tight transition ${zoomMenu ? "bg-accent/10 text-accent" : "text-secondary hover:bg-edge/[0.06] hover:text-ink"}`}
               >
                 {Math.round(canvasScale * 100)}%
               </button>
               {zoomMenu && (
                 <>
-                  <div className="animate-pop-in absolute left-11 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-full bg-white p-1 text-[12px] text-[#1d1d1f] shadow-[0_12px_36px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-                    <button type="button" aria-label="缩小" data-tip="缩小" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("out")}>
+                  <div className="animate-pop-in absolute left-11 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-full bg-panel p-1 text-[12px] text-ink shadow-[0_12px_36px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+                    <button type="button" aria-label="缩小" data-tip="缩小" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-edge/[0.06]" onClick={() => canvasApi.current?.zoom("out")}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M3.5 8h9" /></svg>
                     </button>
                     <span className="w-11 text-center font-medium tabular-nums">{Math.round(canvasScale * 100)}%</span>
-                    <button type="button" aria-label="放大" data-tip="放大" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("in")}>
+                    <button type="button" aria-label="放大" data-tip="放大" className="flex h-7 w-7 items-center justify-center rounded-full hover:bg-edge/[0.06]" onClick={() => canvasApi.current?.zoom("in")}>
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M3.5 8h9M8 3.5v9" /></svg>
                     </button>
-                    <span className="mx-0.5 h-4 w-px bg-black/10" />
-                    <button type="button" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom(1)}>100%</button>
-                    <button type="button" data-tip="显示全部（Shift+1）" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-black/[0.06]" onClick={() => canvasApi.current?.zoom("fit")}>适应</button>
+                    <span className="mx-0.5 h-4 w-px bg-edge/10" />
+                    <button type="button" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-edge/[0.06]" onClick={() => canvasApi.current?.zoom(1)}>100%</button>
+                    <button type="button" data-tip="显示全部（Shift+1）" className="h-7 whitespace-nowrap rounded-full px-2.5 hover:bg-edge/[0.06]" onClick={() => canvasApi.current?.zoom("fit")}>适应</button>
                   </div>
                 </>
               )}
             </div>
           )}
-          <div className="my-0.5 h-px w-5 bg-black/[0.08]" />
+          <div className="my-0.5 h-px w-5 bg-edge/[0.08]" />
           <button
             type="button"
             data-tip={histHidden ? "打开历史记录" : "收起历史记录"}
             data-tip-start=""
             aria-label="历史记录"
             onClick={() => toggleHistory(!histHidden)}
-            className={`flex h-8 w-8 items-center justify-center rounded-full transition ${histHidden ? "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]" : "bg-[#0071e3]/10 text-[#0071e3]"}`}
+            className={`flex h-8 w-8 items-center justify-center rounded-full transition ${histHidden ? "text-secondary hover:bg-edge/[0.06] hover:text-ink" : "bg-accent/10 text-accent"}`}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /><path d="M12 7.5V12l3 2" /></svg>
           </button>
@@ -2393,37 +2393,37 @@ export default function StudioPage() {
               data-tip-start=""
               aria-label="更多设置"
               onClick={() => setMoreMenu((v) => !v)}
-              className={`flex h-8 w-8 items-center justify-center rounded-full transition ${moreMenu ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.06] hover:text-[#1d1d1f]"}`}
+              className={`flex h-8 w-8 items-center justify-center rounded-full transition ${moreMenu ? "bg-accent/10 text-accent" : "text-secondary hover:bg-edge/[0.06] hover:text-ink"}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
             </button>
             {moreMenu && (
-              <div className="animate-pop-in absolute -top-2 left-11 w-60 rounded-2xl bg-white p-2 text-[13px] text-[#1d1d1f] shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06]">
-                <div className="px-1.5 pb-1 text-[12px] font-semibold text-[#86868b]">外观</div>
+              <div className="animate-pop-in absolute -top-2 left-11 w-60 rounded-2xl bg-panel p-2 text-[13px] text-ink shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+                <div className="px-1.5 pb-1 text-[12px] font-semibold text-muted">外观</div>
                 <div className="apple-seg mb-2 flex">
                   {([["light", "浅色"], ["dark", "深色"], ["auto", "跟随系统"]] as const).map(([k, label]) => (
-                    <button key={k} type="button" data-active={theme === k} onClick={() => chooseTheme(k)} className="apple-seg-item flex-1 py-1 text-[12px] font-medium text-[#6e6e73]">
+                    <button key={k} type="button" data-active={theme === k} onClick={() => chooseTheme(k)} className="apple-seg-item flex-1 py-1 text-[12px] font-medium text-secondary">
                       {label}
                     </button>
                   ))}
                 </div>
                 {canvasOn && (
                   <>
-                    <div className="px-1.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">画布</div>
+                    <div className="px-1.5 pb-1 pt-1 text-[12px] font-semibold text-muted">画布</div>
                     {([
                       ["snap", "移动时自动对齐", boardPrefs.snap],
                       ["grid", "显示网格点", boardPrefs.grid],
                       ["lines", "显示来源连线", boardPrefs.lines],
                       ["map", "显示小地图", boardPrefs.map],
                     ] as const).map(([k, label, on]) => (
-                      <button key={k} type="button" onClick={() => setBoardPref(k, !on)} className="flex w-full items-center justify-between rounded-lg px-1.5 py-1.5 hover:bg-black/[0.04]">
+                      <button key={k} type="button" onClick={() => setBoardPref(k, !on)} className="flex w-full items-center justify-between rounded-lg px-1.5 py-1.5 hover:bg-edge/[0.04]">
                         <span>{label}</span>
-                        <span className={`relative h-5 w-9 rounded-full transition ${on ? "bg-[#34c759]" : "bg-black/15"}`}>
+                        <span className={`relative h-5 w-9 rounded-full transition ${on ? "bg-[#34c759]" : "bg-edge/15"}`}>
                           <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? "left-[18px]" : "left-0.5"}`} />
                         </span>
                       </button>
                     ))}
-                    <div className="mt-2 rounded-xl bg-[#f5f5f7] px-2.5 py-2 text-[11px] leading-[18px] text-[#6e6e73]">
+                    <div className="mt-2 rounded-xl bg-page px-2.5 py-2 text-[11px] leading-[18px] text-secondary">
                       滚轮 缩放 · 按住滚轮 拖动画布<br />
                       左键 选择 / 框选 · 右键 菜单<br />
                       ⌘Z 撤销 · ⌘A 全选 · Delete 移出<br />
@@ -2565,7 +2565,7 @@ export default function StudioPage() {
                       <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="h-full w-full rounded-[18px] object-cover transition duration-300 hover:brightness-95" />
                     </button>
                   ) : (
-                    <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-[#f2f2f4] text-[12px] text-[#d70015]">第 {i + 1} 张没画成</span>
+                    <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-well text-[12px] text-danger">第 {i + 1} 张没画成</span>
                   );
                 }}
               />
@@ -2591,18 +2591,18 @@ export default function StudioPage() {
               <div className="max-w-sm px-6 text-center">
                 <div
                   className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-[14px] text-[20px]"
-                  style={{ background: "rgba(0,113,227,0.1)", color: "#0071e3" }}
+                  style={{ background: "rgba(0,113,227,0.1)", color: "var(--color-accent)" }}
                 >
                   ✦
                 </div>
-                <p className="text-[15px] font-medium text-[#1d1d1f]">
+                <p className="text-[15px] font-medium text-ink">
                   从一句描述开始
                 </p>
               </div>
             )}
             {showingPartial && (
-              <div className="animate-pop-in absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-white/85 px-2.5 py-1 text-[12px] text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur">
-                <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-black/10 border-t-[#0071e3]" />
+              <div className="animate-pop-in absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-panel/85 px-2.5 py-1 text-[12px] text-ink shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur">
+                <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-edge/10 border-t-accent" />
                 {batchDone}/{batchTotal}
               </div>
             )}
@@ -2610,10 +2610,10 @@ export default function StudioPage() {
               const done = batch.map((id) => gallery.find((x) => x.id === id)).filter((g): g is GalleryItem => !!g?.url);
               const at = done.findIndex((g) => g.id === currentId);
               const go = (d: number) => done.length && showItem(done[(at + d + done.length) % done.length]);
-              const arrow = "absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/85 text-[#1d1d1f] shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur hover:bg-white";
+              const arrow = "absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-panel/85 text-ink shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur hover:bg-panel";
               return (
                 <>
-                  <button type="button" onClick={() => setBatchGrid(true)} data-tip="回到全部" data-tip-end="" className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-full bg-white/85 px-2.5 py-1 text-[12px] tabular-nums text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur hover:bg-white">
+                  <button type="button" onClick={() => setBatchGrid(true)} data-tip="回到全部" data-tip-end="" className="absolute right-3 top-3 z-20 flex items-center gap-1 rounded-full bg-panel/85 px-2.5 py-1 text-[12px] tabular-nums text-ink shadow-[0_2px_10px_rgba(0,0,0,0.08)] backdrop-blur hover:bg-panel">
                     <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} strokeLinejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg>
                     {at + 1}/{done.length}
                   </button>
@@ -2640,7 +2640,7 @@ export default function StudioPage() {
                   aria-pressed={compareOn}
                   onClick={() => setCompareOn((v) => !v)}
                   className={`rounded-full px-3.5 py-1.5 text-[12px] font-medium transition active:scale-[0.97] ${
-                    compareOn ? "bg-[#0071e3] text-white" : "bg-black/[0.05] text-[#1d1d1f] hover:bg-black/[0.09]"
+                    compareOn ? "bg-accent text-panel" : "bg-edge/[0.05] text-ink hover:bg-edge/[0.09]"
                   }`}
                 >
                   {compareOn ? "退出对比" : "对比"}
@@ -2654,7 +2654,7 @@ export default function StudioPage() {
                       type="button"
                       data-tip={`和图${i + 1}对比`}
                       onClick={() => setCompareIdx(i)}
-                      className={`relative h-8 w-8 overflow-hidden rounded-lg transition ${compareIdx === i ? "ring-2 ring-[#0071e3]" : "opacity-60 hover:opacity-100"}`}
+                      className={`relative h-8 w-8 overflow-hidden rounded-lg transition ${compareIdx === i ? "ring-2 ring-accent" : "opacity-60 hover:opacity-100"}`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={url} alt={`图${i + 1}`} className="h-full w-full object-cover" />
@@ -2671,7 +2671,7 @@ export default function StudioPage() {
                       type="button"
                       data-active={compareMode === m.key}
                       onClick={() => setCompareMode(m.key)}
-                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-[#6e6e73]"
+                      className="apple-seg-item px-2.5 py-1 text-[11px] font-medium text-secondary"
                     >
                       {m.label}
                     </button>
@@ -2682,7 +2682,7 @@ export default function StudioPage() {
                 <button
                   type="button"
                   onClick={() => downloadItem(currentItem)}
-                  className="rounded-full bg-[#0071e3] px-4 py-1.5 text-[12px] font-medium text-white transition hover:bg-[#0077ed] active:scale-[0.97]"
+                  className="rounded-full bg-accent px-4 py-1.5 text-[12px] font-medium text-panel transition hover:bg-accent-hover active:scale-[0.97]"
                 >
                   下载
                 </button>
@@ -2696,7 +2696,7 @@ export default function StudioPage() {
           <button
             type="button"
             onClick={() => (canvasApi.current ? canvasApi.current.addFrame() : setComposeOpen(true))}
-            className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#1d1d1f] px-4 py-2.5 text-[13px] font-medium text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
+            className="animate-pop-in absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-ink px-4 py-2.5 text-[13px] font-medium text-panel shadow-[0_10px_30px_rgba(0,0,0,0.25)] transition hover:scale-[1.03] active:scale-[0.97]"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
             生成新图
@@ -2709,7 +2709,7 @@ export default function StudioPage() {
               ? "hidden"
               : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
-                `absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-white shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${hugStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
+                `absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-panel shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${hugStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
               : "stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
           }
           style={hugStyle ?? undefined}
@@ -2748,22 +2748,22 @@ export default function StudioPage() {
                   addRefs(files);
                 }}
                 data-drag={dragState}
-                className={`apple-card relative rounded-[22px] border bg-white transition focus-within:border-[rgba(0,113,227,0.45)] ${
+                className={`apple-card relative rounded-[22px] border bg-panel transition focus-within:border-[rgba(0,113,227,0.45)] ${
                   dragState === "zone"
-                    ? "scale-[1.01] border-[#0071e3] ring-4 ring-[#0071e3]/20"
+                    ? "scale-[1.01] border-accent ring-4 ring-accent/20"
                     : dragState === "page" && !canvasOn
-                      ? "border-[#0071e3]/60 ring-4 ring-[#0071e3]/10"
-                      : "border-black/[0.08]"
+                      ? "border-accent/60 ring-4 ring-accent/10"
+                      : "border-edge/[0.08]"
                 }`}
               >
                 {/* While a picture is dragged anywhere on the page, the card lights up to say where it goes. */}
                 {/* On the board a drop lands on the board, so the hint only shows right over the box (用户 2026-11-10). */}
                 {(canvasOn ? dragState === "zone" : dragState !== "none") && (
-                  <div className="animate-pop-in pointer-events-none absolute inset-1.5 z-30 flex flex-col items-center justify-center gap-1.5 rounded-[18px] border-2 border-dashed border-[#0071e3] bg-[#eef6ff]/90 backdrop-blur-sm">
-                    <span className={`flex h-10 w-10 items-center justify-center rounded-full bg-[#0071e3] text-[18px] text-white shadow-[0_8px_22px_rgba(0,113,227,0.35)] ${dragState === "zone" ? "" : "animate-bounce"}`}>
+                  <div className="animate-pop-in pointer-events-none absolute inset-1.5 z-30 flex flex-col items-center justify-center gap-1.5 rounded-[18px] border-2 border-dashed border-accent bg-[light-dark(#eef6ff,#162b42)]/90 backdrop-blur-sm">
+                    <span className={`flex h-10 w-10 items-center justify-center rounded-full bg-accent text-[18px] text-panel shadow-[0_8px_22px_rgba(0,113,227,0.35)] ${dragState === "zone" ? "" : "animate-bounce"}`}>
                       ↓
                     </span>
-                    <span className="text-[13px] font-medium text-[#0071e3]">
+                    <span className="text-[13px] font-medium text-accent">
                       {dragState === "zone" ? "松开，放进参考图" : "拖到这里，当参考图"}
                     </span>
                   </div>
@@ -2771,7 +2771,7 @@ export default function StudioPage() {
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1))].map((r, i) => (
-                      <span key={r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-black/[0.08] outline-none">
+                      <span key={r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={r.url}
@@ -2815,7 +2815,7 @@ export default function StudioPage() {
                             type="button"
                             onClick={() => insertMention(i + 1)}
                             data-tip="在描述里 @ 这张图" data-tip-start=""
-                            className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-[#0071e3]"
+                            className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-accent"
                           >
                             图{i + 1}
                           </button>
@@ -2847,7 +2847,7 @@ export default function StudioPage() {
                                 fileRef.current?.click();
                               }}
                               data-tip="添加参考图，也可拖入或粘贴" data-tip-start=""
-                              className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-black/[0.15] text-[#86868b] transition hover:border-[#0071e3] hover:text-[#0071e3]"
+                              className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-edge/[0.15] text-muted transition hover:border-accent hover:text-accent"
                             >
                               <span className="text-[18px] leading-none">+</span>
                             </button>
@@ -2857,11 +2857,11 @@ export default function StudioPage() {
                             <button
                               type="button"
                               onClick={() => { setPanelLeft(0); setMultiOnly(true); setOpenPanel("model"); }}
-                              className="self-center rounded-xl bg-[#fff8e6] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[#9a6700] ring-1 ring-[#f5c451]/50 hover:bg-[#fff1cc]"
+                              className="self-center rounded-xl bg-[light-dark(#fff8e6,#352a15)] px-2.5 py-1.5 text-left text-[11px] leading-[16px] text-[color:light-dark(#9a6700,#f5c451)] ring-1 ring-[#f5c451]/50 hover:bg-[light-dark(#fff1cc,#443319)]"
                             >
                               连进来 {canvasSel.length} 张图，这个模型只能用 {limit} 张
                               <br />
-                              <span className="font-medium text-[#0071e3]">换成能用多张图的模型 →</span>
+                              <span className="font-medium text-accent">换成能用多张图的模型 →</span>
                             </button>
                           )}
                         </>
@@ -2874,7 +2874,7 @@ export default function StudioPage() {
                     <div
                       ref={promptMirrorRef}
                       aria-hidden
-                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[14px] leading-relaxed text-[#1d1d1f]"
+                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[14px] leading-relaxed text-ink"
                     >
                       {withMentions(prompt, [preview, ...extraRefs.map((r) => r.url)])}
                       {"\n"}
@@ -2923,19 +2923,19 @@ export default function StudioPage() {
                           ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
                           : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
                     }
-                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2] selection:bg-[#0071e3]/25"
+                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
                     style={{
                       // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
                       fieldSizing: "content",
                       minHeight: 76,
                       maxHeight: "22vh",
                       overflowY: "auto",
-                      ...(prompt ? {} : { color: "#1d1d1f" }),
+                      ...(prompt ? {} : { color: "var(--color-ink)" }),
                     } as React.CSSProperties}
                   />
                   {mentionOpen && (
                     <div
-                      className="animate-pop-in absolute z-40 flex gap-1 rounded-2xl bg-white p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)] ring-1 ring-black/[0.06]"
+                      className="animate-pop-in absolute z-40 flex gap-1 rounded-2xl bg-panel p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)] ring-1 ring-edge/[0.06]"
                       style={{ left: Math.max(4, mentionAt.x), top: mentionAt.y + 22 }}
                     >
                       {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
@@ -2944,7 +2944,7 @@ export default function StudioPage() {
                           type="button"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => insertMention(i + 1, true)}
-                          className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-[#1d1d1f] hover:bg-[#0071e3]/10"
+                          className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-ink hover:bg-accent/10"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
@@ -2959,11 +2959,11 @@ export default function StudioPage() {
                 {/* Every setting is its own chip; tap one to choose (用户: 每个参数拆开单独展开选择). */}
                 {false && (
                   <div className="flex items-center gap-2 px-2 pb-2 pt-1">
-                    <button type="button" onClick={() => setComposeOpen(true)} className="flex h-8 items-center gap-1 rounded-full bg-black/[0.04] px-3 text-[12px] text-[#6e6e73] hover:bg-black/[0.08]">
+                    <button type="button" onClick={() => setComposeOpen(true)} className="flex h-8 items-center gap-1 rounded-full bg-edge/[0.04] px-3 text-[12px] text-secondary hover:bg-edge/[0.08]">
                       {(findModel(model) ?? MODELS[0]).name} · 参数
                       <svg className="h-3 w-3" viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
-                    <span className="text-[11px] text-[#aeaeb2]">选中画布上的图，就会拿它当参考图改图</span>
+                    <span className="text-[11px] text-hint">选中画布上的图，就会拿它当参考图改图</span>
                     <div className="ml-auto">
                       <button onClick={startOrQueue} disabled={!modelReady || !prompt.trim()} className="apple-btn-primary flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]">
                         {loading ? `${Math.floor(progress)}%` : "生成"}
@@ -2973,14 +2973,14 @@ export default function StudioPage() {
                 )}
                 <div ref={chipRowRef} className="relative flex flex-nowrap items-center gap-1.5 whitespace-nowrap px-2 pb-2 pt-1">
                   {canvasOn && !canvasSel.length && !canvasTextSel && !canvasFrameSel && composeOpen && (
-                    <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-black/[0.04] text-[#6e6e73] hover:bg-black/[0.08]">×</button>
+                    <button type="button" aria-label="收起" data-tip="收起" onClick={() => setComposeOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-full bg-edge/[0.04] text-secondary hover:bg-edge/[0.08]">×</button>
                   )}
                   {openPanel && (
                     <div
-                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-white p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
+                      className={`animate-pop-in absolute bottom-full z-50 mb-2 max-h-[56vh] overflow-y-auto rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] ${["model", "ratio", "negative", "seed", "lora"].includes(openPanel) ? "w-[300px]" : openPanel === "denoise" ? "w-[260px]" : "w-max min-w-[112px]"}`}
                       style={{ left: panelLeft }}
                     >
-                      {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#86868b]">
+                      {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-muted">
                         {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推" } as Record<string, string>)[openPanel]}
                       </div>}
                     
@@ -2988,7 +2988,7 @@ export default function StudioPage() {
                       <div className="flex flex-col">
                         {/* 用户 2026-11-11: opened from 「换成能用多张图的模型」 → only models that take several pictures. */}
                         {multiOnly && (
-                          <div className="px-2.5 pb-1 text-[11px] text-[#86868b]">能用 {canvasSel.length} 张参考图的模型</div>
+                          <div className="px-2.5 pb-1 text-[11px] text-muted">能用 {canvasSel.length} 张参考图的模型</div>
                         )}
                         {MODELS.filter((m) => !multiOnly || (paramsOf(m.id).maxRefs ?? 1) > 1).map((m) => {
                           const on = model === m.id;
@@ -2999,15 +2999,15 @@ export default function StudioPage() {
                               type="button"
                               disabled={!ready}
                               onClick={() => { pickModel(m.id); setOpenPanel(null); }}
-                              className={`flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${on ? "bg-[#0071e3]/[0.08]" : "hover:bg-black/[0.04]"} disabled:opacity-40`}
+                              className={`flex items-center gap-3 rounded-xl px-2.5 py-2 text-left transition ${on ? "bg-accent/[0.08]" : "hover:bg-edge/[0.04]"} disabled:opacity-40`}
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img src={iconOf(m.cover)} alt="" className="h-9 w-9 shrink-0 rounded-[10px] object-cover ring-1 ring-black/[0.06]" />
+                              <img src={iconOf(m.cover)} alt="" className="h-9 w-9 shrink-0 rounded-[10px] object-cover ring-1 ring-edge/[0.06]" />
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-[13px] font-medium text-[#1d1d1f]">{m.name}</span>
-                                <span className="block truncate text-[11px] text-[#86868b]">{ready ? m.tagline : "待接入"}</span>
+                                <span className="block truncate text-[13px] font-medium text-ink">{m.name}</span>
+                                <span className="block truncate text-[11px] text-muted">{ready ? m.tagline : "待接入"}</span>
                               </span>
-                              {on && <span className="text-[13px] text-[#0071e3]">✓</span>}
+                              {on && <span className="text-[13px] text-accent">✓</span>}
                             </button>
                           );
                         })}
@@ -3021,18 +3021,18 @@ export default function StudioPage() {
                               key={r.label}
                               type="button"
                               onClick={() => { applyRatio(r.w, r.h); setOpenPanel(null); }}
-                              className={`rounded-lg py-1.5 text-[12px] font-medium transition ${width === r.w && height === r.h ? "bg-[#0071e3] text-white" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
+                              className={`rounded-lg py-1.5 text-[12px] font-medium transition ${width === r.w && height === r.h ? "bg-accent text-panel" : "bg-edge/[0.04] text-ink hover:bg-edge/[0.08]"}`}
                             >
                               {r.label}
                             </button>
                           ))}
                         </div>
                         {modelParams.customSize && (
-                          <div className="mt-2 flex items-center gap-2 text-[12px] text-[#6e6e73]">
+                          <div className="mt-2 flex items-center gap-2 text-[12px] text-secondary">
                             自定义
-                            <input inputMode="numeric" value={widthText} onChange={(e) => setWidthText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitWidth} className="w-20 rounded-lg bg-[#f5f5f7] px-2 py-1 text-center tabular-nums outline-none" aria-label="宽度" />
+                            <input inputMode="numeric" value={widthText} onChange={(e) => setWidthText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitWidth} className="w-20 rounded-lg bg-page px-2 py-1 text-center tabular-nums outline-none" aria-label="宽度" />
                             ×
-                            <input inputMode="numeric" value={heightText} onChange={(e) => setHeightText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitHeight} className="w-20 rounded-lg bg-[#f5f5f7] px-2 py-1 text-center tabular-nums outline-none" aria-label="高度" />
+                            <input inputMode="numeric" value={heightText} onChange={(e) => setHeightText(e.target.value.replace(/[^\d]/g, ""))} onBlur={commitHeight} className="w-20 rounded-lg bg-page px-2 py-1 text-center tabular-nums outline-none" aria-label="高度" />
                           </div>
                         )}
                       </div>
@@ -3050,8 +3050,8 @@ export default function StudioPage() {
                       // Same look as the other menus (用户 2026-11-06: 要统一): small grey title, then the control.
                       <div className="px-2.5 pb-2">
                         <div className="flex items-center pb-1 pt-1">
-                          <span className="text-[12px] font-semibold text-[#86868b]">重绘幅度</span>
-                          <span className="ml-auto text-[14px] tabular-nums text-[#0071e3]">{denoise.toFixed(2)}</span>
+                          <span className="text-[12px] font-semibold text-muted">重绘幅度</span>
+                          <span className="ml-auto text-[14px] tabular-nums text-accent">{denoise.toFixed(2)}</span>
                         </div>
                         <input
                           type="range"
@@ -3064,7 +3064,7 @@ export default function StudioPage() {
                           className="soft-range w-full"
                           style={{ "--p": `${((denoise - 0.01) / 0.99) * 100}%` } as React.CSSProperties}
                         />
-                        <div className="flex justify-between text-[11px] text-[#86868b]">
+                        <div className="flex justify-between text-[11px] text-muted">
                           <span>更像原图</span>
                           <span>改得更多</span>
                         </div>
@@ -3072,19 +3072,19 @@ export default function StudioPage() {
                     )}
                     {openPanel === "lora" && (
                       <div className="flex items-center gap-3">
-                        <span className="shrink-0 text-[12px] text-[#6e6e73]">风格越强越像这个模型</span>
+                        <span className="shrink-0 text-[12px] text-secondary">风格越强越像这个模型</span>
                         <input type="range" min={0} max={3} step={0.1} value={lora} onChange={(e) => setLora(Number(e.target.value))} aria-label="风格强度" className="flex-1" />
-                        <span className="w-10 text-right text-[12px] tabular-nums text-[#0071e3]">{lora.toFixed(1)}</span>
+                        <span className="w-10 text-right text-[12px] tabular-nums text-accent">{lora.toFixed(1)}</span>
                       </div>
                     )}
                     {openPanel === "seed" && (
                       <div className="px-1.5 pb-1">
-                        <div className="mb-1.5 text-[11px] text-[#86868b]">同一个种子出相似的图，留空就随机</div>
-                        <input autoFocus inputMode="numeric" value={seedText} placeholder="随机" onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))} className="w-full rounded-lg bg-[#f5f5f7] px-3 py-1.5 text-[13px] tabular-nums outline-none focus:ring-2 focus:ring-[#0071e3]/30" aria-label="种子" />
+                        <div className="mb-1.5 text-[11px] text-muted">同一个种子出相似的图，留空就随机</div>
+                        <input autoFocus inputMode="numeric" value={seedText} placeholder="随机" onChange={(e) => setSeedText(e.target.value.replace(/[^\d]/g, "").slice(0, 12))} className="w-full rounded-lg bg-page px-3 py-1.5 text-[13px] tabular-nums outline-none focus:ring-2 focus:ring-accent/30" aria-label="种子" />
                       </div>
                     )}
                     {openPanel === "negative" && (
-                      <input autoFocus value={negative} placeholder="不想出现的东西，比如：文字、水印、多余的手指" onChange={(e) => setNegative(e.target.value.slice(0, 300))} className="w-full rounded-lg bg-[#f5f5f7] px-3 py-2 text-[12px] outline-none" aria-label="不想要的内容" />
+                      <input autoFocus value={negative} placeholder="不想出现的东西，比如：文字、水印、多余的手指" onChange={(e) => setNegative(e.target.value.slice(0, 300))} className="w-full rounded-lg bg-page px-3 py-2 text-[12px] outline-none" aria-label="不想要的内容" />
                     )}
                   
                     </div>
@@ -3100,19 +3100,19 @@ export default function StudioPage() {
                         setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                         setOpenPanel((v) => (v === c.key ? null : c.key));
                       }}
-                      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[12px] transition ${openPanel === c.key ? "bg-[#0071e3]/10 text-[#0071e3]" : "bg-black/[0.04] text-[#1d1d1f] hover:bg-black/[0.08]"}`}
+                      className={`flex h-8 items-center gap-1.5 rounded-full px-3 text-[12px] transition ${openPanel === c.key ? "bg-accent/10 text-accent" : "bg-edge/[0.04] text-ink hover:bg-edge/[0.08]"}`}
                     >
                       {c.key === "model" && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded-[5px] object-cover ring-1 ring-black/[0.06]" />
+                        <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded-[5px] object-cover ring-1 ring-edge/[0.06]" />
                       )}
                       {c.label}
-                      <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                      <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
                   {chipsMore && mode === "i2i" && !findModel(model)?.billing && (
                     // 用户 2026-11-11: one chip — 提示词反推 is the parent switch, how to use it is its child option.
-                    <div className={`flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${reverse ? "bg-[#0071e3]/[0.08] ring-1 ring-[#0071e3]/25" : "bg-black/[0.04]"}`}>
+                    <div className={`flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${reverse ? "bg-accent/[0.08] ring-1 ring-accent/25" : "bg-edge/[0.04]"}`}>
                       <button
                         type="button"
                         role="switch"
@@ -3124,9 +3124,9 @@ export default function StudioPage() {
                           localStorage.setItem(REVERSE_KEY, next ? "on" : "off");
                           if (!next && openPanel === "reverse") setOpenPanel(null);
                         }}
-                        className={`flex h-full items-center gap-1.5 pl-3 ${reverse ? "pr-2 font-medium text-[#0071e3] hover:bg-[#0071e3]/[0.06]" : "pr-3 text-[#1d1d1f] hover:bg-black/[0.04]"}`}
+                        className={`flex h-full items-center gap-1.5 pl-3 ${reverse ? "pr-2 font-medium text-accent hover:bg-accent/[0.06]" : "pr-3 text-ink hover:bg-edge/[0.04]"}`}
                       >
-                        <span className={`relative inline-block h-[14px] w-[24px] rounded-full transition-colors ${reverse ? "bg-[#0071e3]" : "bg-black/[0.18]"}`}>
+                        <span className={`relative inline-block h-[14px] w-[24px] rounded-full transition-colors ${reverse ? "bg-accent" : "bg-edge/[0.18]"}`}>
                           <span className={`absolute top-[2px] h-[10px] w-[10px] rounded-full bg-white shadow transition-[left] ${reverse ? "left-[12px]" : "left-[2px]"}`} />
                         </span>
                         提示词反推
@@ -3142,28 +3142,28 @@ export default function StudioPage() {
                             setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                             setOpenPanel((v) => (v === "reverse" ? null : "reverse"));
                           }}
-                          className={`flex h-full items-center gap-1 border-l border-[#0071e3]/20 pl-2 pr-2.5 text-[#0071e3] transition ${openPanel === "reverse" ? "bg-[#0071e3]/15" : "hover:bg-[#0071e3]/[0.12]"}`}
+                          className={`flex h-full items-center gap-1 border-l border-accent/20 pl-2 pr-2.5 text-accent transition ${openPanel === "reverse" ? "bg-accent/15" : "hover:bg-accent/[0.12]"}`}
                         >
                           {reversing ? "反推中…" : reverseMode === "fill" ? "先填到框里" : "直接生成"}
-                          <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "reverse" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                          <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === "reverse" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                         </button>
                       )}
                     </div>
                   )}
                   {/* 用户 2026-11-10: 提示词润色 shows once there is a prompt to polish. */}
                   {(prompt.trim() || polishing) && (
-                  <div className="animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-[#0071e3]/[0.08] text-[12px] font-medium text-[#0071e3] ring-1 ring-[#0071e3]/25 transition hover:ring-[#0071e3]/50">
+                  <div className="animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-accent/[0.08] text-[12px] font-medium text-accent ring-1 ring-accent/25 transition hover:ring-accent/50">
                     <button
                       type="button"
                       onClick={runPolish}
                       disabled={!prompt.trim() || polishing}
                       data-tip="按当前提示词润色，@图 原样保留"
-                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-[#0071e3]/[0.12] active:scale-[0.97] disabled:opacity-40"
+                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-accent/[0.12] active:scale-[0.97] disabled:opacity-40"
                     >
                       {polishing ? (
-                        <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-[#0071e3]/30 border-t-[#0071e3]" />
+                        <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent" />
                       ) : (
-                        <svg className="h-3.5 w-3.5 text-[#0071e3]" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1zm4.5 8l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></svg>
+                        <svg className="h-3.5 w-3.5 text-accent" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1zm4.5 8l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></svg>
                       )}
                       {polishing ? "润色中…" : "提示词润色"}
                     </button>
@@ -3176,10 +3176,10 @@ export default function StudioPage() {
                         setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                         setOpenPanel((v) => (v === "polish" ? null : "polish"));
                       }}
-                      className={`flex h-full items-center gap-1 border-l border-[#0071e3]/20 pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-[#0071e3]/15" : "hover:bg-[#0071e3]/[0.12]"}`}
+                      className={`flex h-full items-center gap-1 border-l border-accent/20 pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-accent/15" : "hover:bg-accent/[0.12]"}`}
                     >
                       {{ low: "低", medium: "中", high: "高" }[polishLevel]}
-                      <svg className={`h-3 w-3 text-[#86868b] transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                      <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   </div>
                   )}
@@ -3187,7 +3187,7 @@ export default function StudioPage() {
                     <button
                       type="button"
                       onClick={() => { setPrompt(polishUndo.before); setPolishUndo(null); }}
-                      className="rounded-full px-2 py-1 text-[12px] text-[#0071e3] hover:bg-[#0071e3]/10"
+                      className="rounded-full px-2 py-1 text-[12px] text-accent hover:bg-accent/10"
                     >
                       撤销润色
                     </button>
@@ -3223,7 +3223,7 @@ export default function StudioPage() {
           
               </div>
               {error && (
-              <div className="animate-chip-in mt-2 rounded-2xl bg-[#fff1f0] px-3.5 py-2.5 text-[12px] text-[#d70015]">
+              <div className="animate-chip-in mt-2 rounded-2xl bg-[light-dark(#fff1f0,#382022)] px-3.5 py-2.5 text-[12px] text-danger">
                 {error}
               </div>
             )}
@@ -3231,14 +3231,14 @@ export default function StudioPage() {
                 // 用户 2026-11-11: 对比 on the board, full screen, same four ways as the single-picture view.
                 <div className="animate-pop-in fixed inset-0 z-[96] flex flex-col bg-black/80 backdrop-blur-sm" onClick={() => setBoardCompare(null)}>
                   <div className="flex shrink-0 items-center justify-center gap-2 p-3" onClick={(e) => e.stopPropagation()}>
-                    <div className="apple-seg flex bg-white/90">
+                    <div className="apple-seg flex bg-panel/90">
                       {COMPARE_MODES.map((m) => (
-                        <button key={m.key} type="button" data-active={compareMode === m.key} onClick={() => setCompareMode(m.key)} className="apple-seg-item px-3 py-1 text-[12px] font-medium text-[#6e6e73]">
+                        <button key={m.key} type="button" data-active={compareMode === m.key} onClick={() => setCompareMode(m.key)} className="apple-seg-item px-3 py-1 text-[12px] font-medium text-secondary">
                           {m.label}
                         </button>
                       ))}
                     </div>
-                    <button type="button" aria-label="关闭对比" onClick={() => setBoardCompare(null)} className="flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-[16px] text-[#1d1d1f] hover:bg-white">×</button>
+                    <button type="button" aria-label="关闭对比" onClick={() => setBoardCompare(null)} className="flex h-8 w-8 items-center justify-center rounded-full bg-panel/90 text-[16px] text-ink hover:bg-panel">×</button>
                   </div>
                   <div className="min-h-0 flex-1 p-4 pt-0" onClick={(e) => e.stopPropagation()}>
                     <CompareView key={`${boardCompare.before}-${boardCompare.after}-${compareMode}`} before={fullOf(boardCompare.before)} after={fullOf(boardCompare.after)} mode={compareMode} />
@@ -3309,7 +3309,7 @@ export default function StudioPage() {
           onClick={() => toggleHistory(false)}
           data-tip="历史记录" data-tip-end=""
           aria-label="打开历史记录"
-          className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-white/90 text-[#1d1d1f] shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur-xl transition hover:scale-105 active:scale-95"
+          className="absolute right-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-full bg-panel/90 text-ink shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl transition hover:scale-105 active:scale-95"
           style={{ opacity: histOff ? 1 : 0, transform: histOff ? "none" : "scale(0.6)", pointerEvents: histOff ? undefined : "none", transition: "opacity 260ms ease, transform 320ms cubic-bezier(0.22, 1, 0.36, 1)" }}
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -3342,10 +3342,10 @@ export default function StudioPage() {
               display: !isDesktop && histOff ? "none" : undefined,
             }}
           >
-          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 justify-between">
+          <div className="panel-header flex h-[52px] shrink-0 items-center gap-2 border-b border-edge/[0.06] px-4 justify-between">
             {/* 2026-11-05 (用户选方案 A): 历史 + count, two icons; spend lives in the filter panel. */}
-            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-[#1d1d1f]">
-              历史 <span className="ml-0.5 text-[12px] font-normal tabular-nums text-[#86868b]">{histStats.done}{histStats.pending ? ` · 画着 ${histStats.pending}` : ""}</span>
+            <h2 className="text-[14px] font-semibold tracking-[-0.02em] text-ink">
+              历史 <span className="ml-0.5 text-[12px] font-normal tabular-nums text-muted">{histStats.done}{histStats.pending ? ` · 画着 ${histStats.pending}` : ""}</span>
             </h2>
             <span className="ml-auto" />
             <button
@@ -3354,7 +3354,7 @@ export default function StudioPage() {
               data-tip="搜索 / 筛选" data-tip-end=""
               aria-label="搜索 / 筛选"
               aria-pressed={histToolsOpen}
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" || histSort !== "new" ? "bg-[#0071e3]/10 text-[#0071e3]" : "text-[#6e6e73] hover:bg-black/[0.05]"}`}
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition ${histToolsOpen || histQuery || histMode !== "all" || histFilter !== "all" || histSort !== "new" ? "bg-accent/10 text-accent" : "text-secondary hover:bg-edge/[0.05]"}`}
             >
               <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" /></svg>
             </button>
@@ -3363,7 +3363,7 @@ export default function StudioPage() {
               onClick={() => toggleHistory(true)}
               data-tip="收起历史" data-tip-end=""
               aria-label="收起历史"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#6e6e73] transition hover:bg-black/[0.05]"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-secondary transition hover:bg-edge/[0.05]"
             >
               <svg viewBox="0 0 24 24" className="h-[15px] w-[15px]" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M13 6l6 6-6 6M5 6l6 6-6 6" /></svg>
             </button>
@@ -3371,8 +3371,8 @@ export default function StudioPage() {
           {histToolsOpen && (
           // 2026-11-05 (用户: 筛选点开后要极简): one search line and one row of chips (state, model, order).
           <div className="animate-pop-in shrink-0 space-y-2 px-3 pb-2.5 pt-1">
-            <label className="flex items-center gap-2 rounded-full bg-[#f2f2f4] px-3 py-1.5">
-              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px] shrink-0 text-[#86868b]" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+            <label className="flex items-center gap-2 rounded-full bg-well px-3 py-1.5">
+              <svg viewBox="0 0 24 24" className="h-[14px] w-[14px] shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
               <input
                 value={histQuery}
                 onChange={(e) => {
@@ -3380,7 +3380,7 @@ export default function StudioPage() {
                   setHistPage(0);
                 }}
                 placeholder="搜索描述"
-                className="min-w-0 flex-1 bg-transparent text-[12px] text-[#1d1d1f] outline-none placeholder:text-[#aeaeb2]"
+                className="min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-hint"
               />
             </label>
             <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
@@ -3399,13 +3399,13 @@ export default function StudioPage() {
                     setHistMode("all");
                     setHistPage(0);
                   }}
-                  className={`rounded-full px-2.5 py-1 ${histFilter === key ? "bg-[#1d1d1f] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}
+                  className={`rounded-full px-2.5 py-1 ${histFilter === key ? "bg-ink text-panel" : "bg-well text-[color:light-dark(#3a3a3c,#d3d3d6)] hover:bg-edge/[0.08]"}`}
                 >
                   {label}
                 </button>
               ))}
               {/* Model and order: chips that open the system picker. */}
-              <label className={`relative flex items-center gap-1 rounded-full px-2.5 py-1 ${histFilter.startsWith("model:") ? "bg-[#1d1d1f] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}>
+              <label className={`relative flex items-center gap-1 rounded-full px-2.5 py-1 ${histFilter.startsWith("model:") ? "bg-ink text-panel" : "bg-well text-[color:light-dark(#3a3a3c,#d3d3d6)] hover:bg-edge/[0.08]"}`}>
                 <span className="max-w-[110px] truncate">{histFilter.startsWith("model:") ? findModel(histFilter.slice(6))?.name ?? "模型" : "模型"}</span>
                 <svg viewBox="0 0 24 24" className="h-3 w-3 opacity-60" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
                 <select
@@ -3426,11 +3426,11 @@ export default function StudioPage() {
               <button
                 type="button"
                 onClick={() => (selMode ? endSel() : setSelMode(true))}
-                className={`ml-auto rounded-full px-2.5 py-1 ${selMode ? "bg-[#0071e3] text-white" : "bg-[#f2f2f4] text-[#3a3a3c] hover:bg-black/[0.08]"}`}
+                className={`ml-auto rounded-full px-2.5 py-1 ${selMode ? "bg-accent text-panel" : "bg-well text-[color:light-dark(#3a3a3c,#d3d3d6)] hover:bg-edge/[0.08]"}`}
               >
                 多选
               </button>
-              <label className="relative flex items-center gap-1 rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
+              <label className="relative flex items-center gap-1 rounded-full px-2 py-1 text-secondary hover:bg-edge/[0.05]">
                 <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4" /></svg>
                 {{ new: "最新", old: "最早", cost: "最贵", slow: "最久" }[histSort]}
                 <select
@@ -3449,7 +3449,7 @@ export default function StudioPage() {
                 </select>
               </label>
             </div>
-            <div className="text-[11px] tabular-nums text-[#aeaeb2]">{visibleHistory.length} 张 · 累计约 ¥{histStats.cost}</div>
+            <div className="text-[11px] tabular-nums text-hint">{visibleHistory.length} 张 · 累计约 ¥{histStats.cost}</div>
           </div>
           )}
 
@@ -3461,7 +3461,7 @@ export default function StudioPage() {
             }}
           >
             {visibleHistory.length === 0 ? (
-              <p className="px-2 py-8 text-center text-[12px] text-[#aeaeb2]">
+              <p className="px-2 py-8 text-center text-[12px] text-hint">
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
@@ -3533,26 +3533,26 @@ export default function StudioPage() {
                           );
                         }
                       }}
-                      className={`history-card group relative cursor-pointer overflow-hidden rounded-xl bg-white text-left outline-none ${
-                        on ? "outline outline-2 -outline-offset-2 outline-[#0071e3]" : "ring-1 ring-black/[0.08] hover:ring-black/[0.2]"
+                      className={`history-card group relative cursor-pointer overflow-hidden rounded-xl bg-panel text-left outline-none ${
+                        on ? "outline outline-2 -outline-offset-2 outline-accent" : "ring-1 ring-edge/[0.08] hover:ring-edge/[0.2]"
                       }`}
                     >
-                      <span className={`relative block w-full bg-[#f2f2f4] ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
+                      <span className={`relative block w-full bg-well ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
                         {g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={thumbOf(g.url, isDesktop && rightPx / nCols > 200 ? 640 : 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" onLoad={(e) => noteAspect(g.id, e.currentTarget)} />
                         ) : (
                           <span className="flex h-full w-full flex-col items-center justify-center gap-1 px-2 text-center">
-                            <span className={`text-[12px] font-semibold ${g.status === "expired" ? "text-[#86868b]" : "text-[#d70015]"}`}>
+                            <span className={`text-[12px] font-semibold ${g.status === "expired" ? "text-muted" : "text-danger"}`}>
                               {g.status === "expired" ? "已过期" : "失败"}
                             </span>
-                            <span className="line-clamp-3 text-[10px] leading-snug text-[#86868b]">{g.error || "任务失败"}</span>
+                            <span className="line-clamp-3 text-[10px] leading-snug text-muted">{g.error || "任务失败"}</span>
                           </span>
                         )}
                       </span>
                       {selMode && (
-                        <span className={`pointer-events-none absolute inset-0 z-10 transition ${picked ? "bg-[#0071e3]/15 ring-[3px] ring-inset ring-[#0071e3]" : "bg-white/10"}`}>
-                          <span className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[13px] text-white shadow ${picked ? "border-[#0071e3] bg-[#0071e3]" : "border-white bg-black/20"}`}>
+                        <span className={`pointer-events-none absolute inset-0 z-10 transition ${picked ? "bg-accent/15 ring-[3px] ring-inset ring-accent" : "bg-white/10"}`}>
+                          <span className={`absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[13px] text-white shadow ${picked ? "border-accent bg-accent" : "border-white bg-edge/20"}`}>
                             {picked ? "✓" : ""}
                           </span>
                         </span>
@@ -3596,7 +3596,7 @@ export default function StudioPage() {
                           {cardMenu === g.id && createPortal(
                             <div
                               data-card-menu=""
-                              className="animate-pop-in fixed z-[90] w-[132px] -translate-x-full rounded-xl bg-white p-1 text-[12px] text-[#1d1d1f] shadow-[0_12px_32px_rgba(0,0,0,0.22)] ring-1 ring-black/[0.06]"
+                              className="animate-pop-in fixed z-[90] w-[132px] -translate-x-full rounded-xl bg-panel p-1 text-[12px] text-ink shadow-[0_12px_32px_rgba(0,0,0,0.22)] ring-1 ring-edge/[0.06]"
                               style={{ left: cardMenuAt.x, top: Math.min(cardMenuAt.y, window.innerHeight - 220) }}
                               onClick={(e) => e.stopPropagation()}
                             >
@@ -3611,7 +3611,7 @@ export default function StudioPage() {
                                   key={t as string}
                                   type="button"
                                   onClick={() => { (fn as () => void)(); setCardMenu(null); }}
-                                  className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-black/[0.05]"
+                                  className="block w-full rounded-lg px-2.5 py-1.5 text-left hover:bg-edge/[0.05]"
                                 >
                                   {t as string}
                                 </button>
@@ -3619,7 +3619,7 @@ export default function StudioPage() {
                               <button
                                 type="button"
                                 onClick={() => { deleteItem(g); if (deleteArm === g.id) setCardMenu(null); }}
-                                className={`block w-full rounded-lg px-2.5 py-1.5 text-left ${deleteArm === g.id ? "bg-[#ff3b30] text-white" : "text-[#d70015] hover:bg-[#ff3b30]/10"}`}
+                                className={`block w-full rounded-lg px-2.5 py-1.5 text-left ${deleteArm === g.id ? "bg-[#ff3b30] text-white" : "text-danger hover:bg-[#ff3b30]/10"}`}
                               >
                                 {deleteArm === g.id ? "再点一次删除" : "删除"}
                               </button>
@@ -3658,7 +3658,7 @@ export default function StudioPage() {
                   );
                 })()}
                 {histHasMore && (
-                  <button type="button" onClick={() => setHistPage((p) => p + 1)} className="mx-auto mt-1 block rounded-full px-3 py-1 text-[11px] text-[#86868b] hover:bg-black/[0.04]">
+                  <button type="button" onClick={() => setHistPage((p) => p + 1)} className="mx-auto mt-1 block rounded-full px-3 py-1 text-[11px] text-muted hover:bg-edge/[0.04]">
                     加载更多
                   </button>
                 )}
@@ -3666,17 +3666,17 @@ export default function StudioPage() {
             )}
           </div>
           {selMode && (
-            <div className="animate-pop-in flex shrink-0 items-center gap-1.5 border-t border-black/[0.06] px-3 py-2 text-[12px]">
-              <span className="tabular-nums text-[#6e6e73]">已选 {selected.size}</span>
+            <div className="animate-pop-in flex shrink-0 items-center gap-1.5 border-t border-edge/[0.06] px-3 py-2 text-[12px]">
+              <span className="tabular-nums text-secondary">已选 {selected.size}</span>
               <button
                 type="button"
                 onClick={() => setSelected(selected.size === pageItems.filter((g) => g.url).length ? new Set() : new Set(pageItems.filter((g) => g.url).map((g) => g.id)))}
-                className="rounded-full px-2 py-1 text-[#0071e3] hover:bg-[#0071e3]/10"
+                className="rounded-full px-2 py-1 text-accent hover:bg-accent/10"
               >
                 {selected.size && selected.size === pageItems.filter((g) => g.url).length ? "全不选" : "全选"}
               </button>
               <span className="ml-auto" />
-              <button type="button" disabled={!selected.size} onClick={bulkDownload} className="rounded-full bg-[#f2f2f4] px-3 py-1 text-[#1d1d1f] hover:bg-black/[0.08] disabled:opacity-40">
+              <button type="button" disabled={!selected.size} onClick={bulkDownload} className="rounded-full bg-well px-3 py-1 text-ink hover:bg-edge/[0.08] disabled:opacity-40">
                 下载
               </button>
               <button
@@ -3687,7 +3687,7 @@ export default function StudioPage() {
               >
                 {bulkArm ? "再点一次删除" : "删除"}
               </button>
-              <button type="button" onClick={endSel} className="rounded-full px-2 py-1 text-[#6e6e73] hover:bg-black/[0.05]">
+              <button type="button" onClick={endSel} className="rounded-full px-2 py-1 text-secondary hover:bg-edge/[0.05]">
                 完成
               </button>
             </div>

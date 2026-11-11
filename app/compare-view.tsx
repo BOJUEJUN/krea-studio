@@ -157,10 +157,10 @@ function ZoomBar({ z, boxRef, style }: { z: ReturnType<typeof useZoom>; boxRef: 
     const r = el.getBoundingClientRect();
     z.zoomAt(el, r.left + r.width / 2, r.top + r.height / 2, stepScale(z.view.s, k));
   };
-  const btn = "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[13px] text-[#1d1d1f] hover:bg-black/[0.06]";
+  const btn = "flex h-7 min-w-7 items-center justify-center rounded-full px-1.5 text-[13px] text-ink hover:bg-edge/[0.06]";
   return (
     <div
-      className="absolute z-20 flex items-center gap-0.5 rounded-full bg-white/85 p-0.5 shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur"
+      className="absolute z-20 flex items-center gap-0.5 rounded-full bg-panel/85 p-0.5 shadow-[0_4px_16px_rgba(0,0,0,0.12)] backdrop-blur"
       style={style ?? { right: 8, bottom: 8 }}
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
@@ -245,7 +245,7 @@ export function CompareView({
           ["原图", before],
           ["结果", after],
         ].map(([label, src]) => (
-          <div key={label} className={`relative h-full min-h-0 touch-none overflow-hidden rounded-xl bg-black/[0.03] ${cursor}`} {...panProps}>
+          <div key={label} className={`relative h-full min-h-0 touch-none overflow-hidden rounded-xl bg-edge/[0.03] ${cursor}`} {...panProps}>
             <Tag style={{ left: "50%", top: 10, translate: "-50% 0" }}>{label}</Tag>
             <div className={layer} style={z.style}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -301,7 +301,7 @@ export function CompareView({
           {hint}
           <ZoomBar z={z} boxRef={boxRef} style={at.bottomRight} />
         </div>
-        <label className="flex shrink-0 items-center gap-2 px-2 text-[11px] text-[#6e6e73]">
+        <label className="flex shrink-0 items-center gap-2 px-2 text-[11px] text-secondary">
           原图
           <input
             type="range"
@@ -363,7 +363,7 @@ export function CompareView({
       </div>
       <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: `${pos}%` }}>
         <div className="absolute inset-y-0 -translate-x-1/2 border-l-2 border-white shadow-[0_0_6px_rgba(0,0,0,0.45)]" />
-        <div className="absolute top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white text-[12px] text-[#1d1d1f] shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
+        <div className="absolute top-1/2 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-panel text-[12px] text-ink shadow-[0_2px_10px_rgba(0,0,0,0.3)]">
           ⇆
         </div>
       </div>

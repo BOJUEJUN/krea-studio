@@ -894,12 +894,12 @@ export function CanvasBoard({
       const m = part.match(/^@图(\d+)$/);
       if (!m) return part;
       const p = pics.find((x) => x.n === Number(m[1]));
-      if (!p) return <span key={i} className="rounded bg-[#ff3b30]/10 text-[#d70015] underline decoration-dashed underline-offset-2">{part}</span>;
+      if (!p) return <span key={i} className="rounded bg-[#ff3b30]/10 text-danger underline decoration-dashed underline-offset-2">{part}</span>;
       return (
         <span key={i} className="relative inline-block align-baseline text-transparent">
           {part}
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="absolute left-1/2 top-1/2 h-[20px] w-[20px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-[#0071e3]/70" />
+          <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="absolute left-1/2 top-1/2 h-[20px] w-[20px] -translate-x-1/2 -translate-y-1/2 rounded-md object-cover ring-2 ring-accent/70" />
         </span>
       );
     });
@@ -1028,15 +1028,15 @@ export function CanvasBoard({
   }, [selRect, view, settled]);
   const grid = 24 * view.s;
 
-  const btn = "flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-[#1d1d1f] transition hover:bg-black/[0.06]";
-  const ibtn = "flex h-8 min-w-8 items-center justify-center rounded-full px-1.5 text-[#1d1d1f] transition hover:bg-black/[0.06] active:scale-[0.94]";
+  const btn = "flex h-8 items-center gap-1 rounded-full px-2.5 text-[12px] text-ink transition hover:bg-edge/[0.06]";
+  const ibtn = "flex h-8 min-w-8 items-center justify-center rounded-full px-1.5 text-ink transition hover:bg-edge/[0.06] active:scale-[0.94]";
   const ico = "h-[18px] w-[18px] fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.6]";
   return (
     <div
       ref={boxRef}
-      className={`relative h-full w-full touch-none select-none overflow-hidden bg-[#f6f6f8] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
+      className={`relative h-full w-full touch-none select-none overflow-hidden bg-[light-dark(#f6f6f8,#161619)] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
       style={{
-        backgroundImage: prefs?.grid === false ? "none" : "radial-gradient(circle, rgba(0,0,0,0.13) 1px, transparent 1.2px)",
+        backgroundImage: prefs?.grid === false ? "none" : "radial-gradient(circle, color-mix(in srgb, var(--color-edge) 13%, transparent) 1px, transparent 1.2px)",
         backgroundSize: `${grid}px ${grid}px`,
         backgroundPosition: `${view.x}px ${view.y}px`,
       }}
@@ -1111,7 +1111,7 @@ export function CanvasBoard({
                 data-tip="点一下断开这根线"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => unlink(fid, n.id)}
-                className="group absolute flex items-center gap-0.5 whitespace-nowrap rounded-full bg-white px-1.5 py-px text-[10px] font-medium text-[#6e6e73] shadow-[0_1px_6px_rgba(0,0,0,0.1)] ring-1 ring-black/[0.06] hover:text-[#d70015] hover:ring-[#d70015]/30"
+                className="group absolute flex items-center gap-0.5 whitespace-nowrap rounded-full bg-panel px-1.5 py-px text-[10px] font-medium text-secondary shadow-[0_1px_6px_rgba(0,0,0,0.1)] ring-1 ring-edge/[0.06] hover:text-danger hover:ring-danger/30"
                 style={{ left: x, top: y, transform: `translate(-50%, -50%) scale(${1 / view.s})` }}
               >
                 {label}
@@ -1133,17 +1133,17 @@ export function CanvasBoard({
             <div
               key={n.id}
               data-node-id={n.id}
-              className={`group/node absolute rounded-[10px] ${isGen ? "border-2 border-dashed border-[#0071e3]/40 bg-[#0071e3]/[0.03]" : "bg-white shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on ? "ring-[3px] ring-[#0071e3]" : linkHover === n.id ? "ring-[3px] ring-[#34c759]" : isGen ? "" : "ring-1 ring-black/[0.06]"}`}
+              className={`group/node absolute rounded-[10px] ${isGen ? "border-2 border-dashed border-accent/40 bg-accent/[0.03]" : "bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on ? "ring-[3px] ring-accent" : linkHover === n.id ? "ring-[3px] ring-[#34c759]" : isGen ? "" : "ring-1 ring-edge/[0.06]"}`}
               style={{ left: n.x, top: n.y, width: n.w, height: n.h, outlineWidth: 0 }}
               onPointerDown={(e) => onNodeDown(e, n)}
               onDoubleClick={() => (isText ? setEditing(n.id) : url && onView(url))}
             >
               {/* 用户 2026-11-11: what the node is and its size, above it. */}
               <div
-                className="pointer-events-none absolute left-0 flex items-center justify-between whitespace-nowrap text-[#86868b]"
+                className="pointer-events-none absolute left-0 flex items-center justify-between whitespace-nowrap text-muted"
                 style={{ bottom: "100%", width: n.w * view.s, transform: `scale(${k})`, transformOrigin: "bottom left", paddingBottom: 5, fontSize: 12 }}
               >
-                <span className="flex items-center gap-1 font-medium text-[#6e6e73]">
+                <span className="flex items-center gap-1 font-medium text-secondary">
                   {isText ? (
                     <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4h10M3 8h10M3 12h6" /></svg>
                   ) : (
@@ -1156,7 +1156,7 @@ export function CanvasBoard({
               {isText ? (
                 editing === n.id ? (
                   <>
-                  <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-[#1d1d1f]">
+                  <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-ink">
                     {mentionTokens(n.text ?? "", picsForText(n.id))}
                     {"\n"}
                   </div>
@@ -1190,13 +1190,13 @@ export function CanvasBoard({
                         }
                       }
                     }}
-                    className="relative h-full w-full resize-none overflow-hidden rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-[#1d1d1f] outline-none placeholder:text-[#aeaeb2]"
+                    className="relative h-full w-full resize-none overflow-hidden rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-ink outline-none placeholder:text-hint"
                   />
                   {mention?.id === n.id && (() => {
                     const pics = picsForText(n.id);
                     return (
                       <div
-                        className="animate-pop-in absolute left-3 top-9 z-30 w-56 rounded-xl bg-white p-1 shadow-[0_12px_36px_rgba(0,0,0,0.18)] ring-1 ring-black/[0.06]"
+                        className="animate-pop-in absolute left-3 top-9 z-30 w-56 rounded-xl bg-panel p-1 shadow-[0_12px_36px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06]"
                         style={{ transform: `scale(${k})`, transformOrigin: "top left" }}
                         onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
                       >
@@ -1213,7 +1213,7 @@ export function CanvasBoard({
                                 setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, text: v } : m)));
                                 setMention(null);
                               }}
-                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.05]"
+                              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.05]"
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img src={p.url.startsWith("data:") ? p.url : thumb(p.url, 160)} alt="" className="h-8 w-8 rounded-md object-cover" />
@@ -1221,7 +1221,7 @@ export function CanvasBoard({
                             </button>
                           ))
                         ) : (
-                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-[#86868b]">先把这段文本的「+」连到图片或生成框上，就能 @ 那里的图</div>
+                          <div className="px-2 py-1.5 text-[12px] leading-[18px] text-muted">先把这段文本的「+」连到图片或生成框上，就能 @ 那里的图</div>
                         )}
                       </div>
                     );
@@ -1229,15 +1229,15 @@ export function CanvasBoard({
                   </>
                 ) : (
                   <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
-                    <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-[#1d1d1f]" : "text-[#aeaeb2]"}`}>
+                    <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-ink" : "text-hint"}`}>
                       {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字。连到图片上，选中图片就用这段文字生成；输入 @ 可以指定图片"}
                     </div>
-                    <div className="pt-1 text-[11px] text-[#aeaeb2]">{(n.text ?? "").length} 字</div>
+                    <div className="pt-1 text-[11px] text-hint">{(n.text ?? "").length} 字</div>
                   </div>
                 )
               ) : isGen ? (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-6 text-center text-[12px] leading-[18px] text-[#86868b]">
-                  <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" className="text-[#0071e3]/70"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
+                <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 px-6 text-center text-[12px] leading-[18px] text-muted">
+                  <svg width="22" height="22" viewBox="0 0 16 16" fill="currentColor" className="text-accent/70"><path d="M8 1.5l1.6 4.9L14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z" /></svg>
                   {(n.from?.length ?? 0) ? "选中它，在输入框点生成，图就出在这里" : "把图片或文本的 + 拖到这里连上，再选中它生成"}
                 </div>
               ) : url ? (
@@ -1257,14 +1257,14 @@ export function CanvasBoard({
                   }}
                 />
               ) : status === "failed" || status === "expired" ? (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-[#fff1f1] text-[13px] text-[#d70015]">
+                <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-[light-dark(#fff1f1,#382022)] text-[13px] text-danger">
                   没有生成成功
                   {onRetry && (
                     <button
                       type="button"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={() => retry(n)}
-                      className="rounded-full bg-[#d70015] px-3 py-1 text-[12px] font-medium text-white hover:bg-[#b80012]"
+                      className="rounded-full bg-danger px-3 py-1 text-[12px] font-medium text-white hover:bg-[#b80012]"
                     >
                       重试
                     </button>
@@ -1283,13 +1283,13 @@ export function CanvasBoard({
                 if (!sm?.model) return null;
                 return (
                 <div
-                  className="pointer-events-none absolute left-0 top-full flex items-center gap-1.5 whitespace-nowrap rounded-full bg-white/90 px-2 py-1 text-[11px] text-[#6e6e73] shadow-[0_2px_10px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.05]"
+                  className="pointer-events-none absolute left-0 top-full flex items-center gap-1.5 whitespace-nowrap rounded-full bg-panel/90 px-2 py-1 text-[11px] text-secondary shadow-[0_2px_10px_rgba(0,0,0,0.08)] ring-1 ring-edge/[0.05]"
                   style={{ transform: `translate(0, 6px) scale(${k})`, transformOrigin: "top left", maxWidth: n.w * view.s }}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   {sm.cover && <img src={sm.cover} alt="" className="h-4 w-4 shrink-0 rounded object-cover" />}
-                  <span className="shrink-0 font-medium text-[#1d1d1f]">{sm.model}</span>
-                  {sm.detail && <span className="truncate text-[#aeaeb2]">· {sm.detail}</span>}
+                  <span className="shrink-0 font-medium text-ink">{sm.model}</span>
+                  {sm.detail && <span className="truncate text-hint">· {sm.detail}</span>}
                 </div>
                 );
               })()}
@@ -1298,7 +1298,7 @@ export function CanvasBoard({
                   role="button"
                   aria-label="拖出连线"
                   data-tip="拖到别的节点上连线，拖到空白处新建"
-                  className={`absolute left-full top-1/2 flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full bg-white text-[15px] leading-none text-[#0071e3] shadow-[0_2px_8px_rgba(0,0,0,0.15)] ring-1 ring-[#0071e3]/30 transition-opacity hover:bg-[#0071e3] hover:text-white ${on ? "opacity-100" : "opacity-0 group-hover/node:opacity-100"}`}
+                  className={`absolute left-full top-1/2 flex h-6 w-6 cursor-crosshair items-center justify-center rounded-full bg-panel text-[15px] leading-none text-accent shadow-[0_2px_8px_rgba(0,0,0,0.15)] ring-1 ring-accent/30 transition-opacity hover:bg-accent hover:text-panel ${on ? "opacity-100" : "opacity-0 group-hover/node:opacity-100"}`}
                   style={{ transform: `translate(${10 * k}px, -50%) scale(${k})`, transformOrigin: "left center" }}
                   onPointerDown={(e) => startLink(e, n)}
                 >
@@ -1307,7 +1307,7 @@ export function CanvasBoard({
               )}
               {on && selected.length === 1 && (url || isText) && (
                 <span
-                  className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-[#0071e3] shadow"
+                  className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-full border-2 border-white bg-accent shadow"
                   style={{ transform: `scale(${1 / view.s})`, transformOrigin: "center" }}
                   onPointerDown={(e) => onHandleDown(e, n)}
                 />
@@ -1327,7 +1327,7 @@ export function CanvasBoard({
         )}
         {marquee && (
           <div
-            className="pointer-events-none absolute border border-[#0071e3] bg-[#0071e3]/10"
+            className="pointer-events-none absolute border border-accent bg-accent/10"
             style={{
               left: Math.min(marquee.x0, marquee.x1),
               top: Math.min(marquee.y0, marquee.y1),
@@ -1342,7 +1342,7 @@ export function CanvasBoard({
       {/* Toolbar over the selection. */}
       {selBox && selected.some((n) => urlOf(n)) && (
         <div
-          className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-white/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-black/[0.06] backdrop-blur"
+          className="animate-pop-in absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-full bg-panel/95 p-1 shadow-[0_10px_30px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06] backdrop-blur"
           style={{ left: Math.max(150, Math.min(selBox.x, (boxRef.current?.clientWidth ?? 800) - 150)), top: Math.max(8, selBox.y - 48 - 24) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
@@ -1372,11 +1372,11 @@ export function CanvasBoard({
               </button>
             </>
           )}
-          {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-black/10" />}
+          {selected.length === 1 && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
           <button type="button" aria-label="复制" data-tip="复制一份" className={ibtn} onClick={duplicateSel}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
-          <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-[#d70015] hover:bg-[#d70015]/[0.08]`} onClick={removeSel}>
+          <button type="button" aria-label="移出画布" data-tip="移出画布" className={`${ibtn} text-danger hover:bg-danger/[0.08]`} onClick={removeSel}>
             <svg viewBox="0 0 20 20" className={ico}><path d="M4 6h12" /><path d="M8 6V4.5h4V6" /><path d="M5.5 6l.8 10h7.4l.8-10" /></svg>
           </button>
         </div>
@@ -1385,15 +1385,15 @@ export function CanvasBoard({
       {/* Dropped a link on empty space: what to make there. */}
       {linkMenu && (() => {
         const srcNode = nodesRef.current.find((m) => m.id === linkMenu.src);
-        const item = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.05]";
+        const item = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.05]";
         const close = () => setLinkMenu(null);
         return (
           <div
-            className="animate-pop-in absolute z-30 w-52 rounded-xl bg-white/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/[0.06] backdrop-blur"
+            className="animate-pop-in absolute z-30 w-52 rounded-xl bg-panel/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06] backdrop-blur"
             style={{ left: Math.min(linkMenu.x, (boxRef.current?.clientWidth ?? 800) - 220), top: Math.min(linkMenu.y, (boxRef.current?.clientHeight ?? 600) - 160) }}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <div className="px-2.5 pb-1 pt-0.5 text-[11px] text-[#86868b]">连到新节点</div>
+            <div className="px-2.5 pb-1 pt-0.5 text-[11px] text-muted">连到新节点</div>
             <button type="button" className={item} onClick={() => { close(); addGen({ x: linkMenu.wx, y: linkMenu.wy - 160 }, [linkMenu.src]); }}>
               生成新图（建一个生成框）
             </button>
@@ -1412,7 +1412,7 @@ export function CanvasBoard({
                 看图写描述（建一个文本）
               </button>
             )}
-            <button type="button" className={`${item} text-[#86868b]`} onClick={close}>取消</button>
+            <button type="button" className={`${item} text-muted`} onClick={close}>取消</button>
           </div>
         );
       })()}
@@ -1421,13 +1421,13 @@ export function CanvasBoard({
       {ctx && (() => {
         const one = ctx.node ? nodesRef.current.find((m) => m.id === ctx.node) : undefined;
         const url = one ? urlOf(one) : undefined;
-        const item = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-[#1d1d1f] hover:bg-black/[0.05]";
+        const item = "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-ink hover:bg-edge/[0.05]";
         const go = (f: () => void) => () => { setCtx(null); f(); };
         const W = window.innerWidth, H = window.innerHeight;
         return createPortal(
           <div
             data-canvas-menu=""
-            className="animate-pop-in fixed z-[90] w-48 rounded-xl bg-white/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-black/[0.06] backdrop-blur"
+            className="animate-pop-in fixed z-[90] w-48 rounded-xl bg-panel/95 p-1 shadow-[0_14px_40px_rgba(0,0,0,0.18)] ring-1 ring-edge/[0.06] backdrop-blur"
             style={{ left: Math.min(ctx.x, W - 200), top: Math.min(ctx.y, H - (one ? 300 : 190)) }}
             onPointerDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -1439,10 +1439,10 @@ export function CanvasBoard({
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
-                <div className="my-1 h-px bg-black/[0.07]" />
+                <div className="my-1 h-px bg-edge/[0.07]" />
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制一份</button>
                 {onShare && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的{selected.length > 1 ? ` ${selected.length} 个` : "这张"}…</button>}
-                <button type="button" className={`${item} text-[#d70015]`} onClick={go(removeSel)}>移出画布</button>
+                <button type="button" className={`${item} text-danger`} onClick={go(removeSel)}>移出画布</button>
               </>
             ) : (
               <>
@@ -1450,7 +1450,7 @@ export function CanvasBoard({
                 <button type="button" className={item} onClick={go(() => addText({ x: ctx.wx, y: ctx.wy }))}>添加文本</button>
                 <button type="button" className={item} onClick={go(() => { fileAt.current = { x: ctx.wx, y: ctx.wy }; fileRef.current?.click(); })}>上传图片…</button>
                 {onOpenHistory && <button type="button" className={item} onClick={go(onOpenHistory)}>从历史添加</button>}
-                <div className="my-1 h-px bg-black/[0.07]" />
+                <div className="my-1 h-px bg-edge/[0.07]" />
                 <button type="button" className={item} onClick={go(() => setSel(new Set(nodesRef.current.map((m) => m.id))))}>全选</button>
                 <button type="button" className={item} onClick={go(() => fitAll())}>显示全部</button>
                 {onShare && <button type="button" className={item} onClick={go(() => onShare())}>分享整个画布…</button>}
@@ -1492,7 +1492,7 @@ export function CanvasBoard({
         };
         return (
           <div
-            className="absolute bottom-3 right-3 z-20 overflow-hidden rounded-xl bg-white/85 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
+            className="absolute bottom-3 right-3 z-20 overflow-hidden rounded-xl bg-panel/85 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur"
             style={{ width: MW, height: MH }}
             onPointerDown={(e) => {
               e.stopPropagation();
@@ -1507,12 +1507,12 @@ export function CanvasBoard({
             {nodes.map((n) => (
               <div
                 key={n.id}
-                className={`absolute rounded-[2px] ${sel.has(n.id) ? "bg-[#0071e3]" : n.kind === "text" ? "bg-[#c7c7cc]" : "bg-[#8e8e93]"}`}
+                className={`absolute rounded-[2px] ${sel.has(n.id) ? "bg-accent" : n.kind === "text" ? "bg-[#c7c7cc]" : "bg-[#8e8e93]"}`}
                 style={{ left: ox + (n.x - x0) * k, top: oy + (n.y - y0) * k, width: Math.max(2, n.w * k), height: Math.max(2, n.h * k) }}
               />
             ))}
             <div
-              className="pointer-events-none absolute rounded-[3px] border-[1.5px] border-[#0071e3] bg-[#0071e3]/[0.06]"
+              className="pointer-events-none absolute rounded-[3px] border-[1.5px] border-accent bg-accent/[0.06]"
               style={{ left: ox + (vx0 - x0) * k, top: oy + (vy0 - y0) * k, width: (vx1 - vx0) * k, height: (vy1 - vy0) * k }}
             />
           </div>
@@ -1521,25 +1521,25 @@ export function CanvasBoard({
 
       {/* Zoom controls (only when the page does not host them). */}
       {!onScale && <div
-        className="absolute bottom-3 left-3 z-20 flex items-center gap-0.5 rounded-full bg-white/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] ring-1 ring-black/[0.06] backdrop-blur"
+        className="absolute bottom-3 left-3 z-20 flex items-center gap-0.5 rounded-full bg-panel/90 p-0.5 text-[12px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur"
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <button type="button" aria-label="缩小" className="h-7 w-7 rounded-full hover:bg-black/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s / 1.25); }}>−</button>
-        <button type="button" className="h-7 w-12 rounded-full tabular-nums hover:bg-black/[0.06]" data-tip="回到 100%" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); }}>{Math.round(view.s * 100)}%</button>
-        <button type="button" aria-label="放大" className="h-7 w-7 rounded-full hover:bg-black/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s * 1.25); }}>+</button>
-        <button type="button" className="h-7 rounded-full px-2.5 hover:bg-black/[0.06]" data-tip="显示全部（Shift+1）" onClick={() => fitAll()}>适应</button>
+        <button type="button" aria-label="缩小" className="h-7 w-7 rounded-full hover:bg-edge/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s / 1.25); }}>−</button>
+        <button type="button" className="h-7 w-12 rounded-full tabular-nums hover:bg-edge/[0.06]" data-tip="回到 100%" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, 1); }}>{Math.round(view.s * 100)}%</button>
+        <button type="button" aria-label="放大" className="h-7 w-7 rounded-full hover:bg-edge/[0.06]" onClick={() => { const r = boxRef.current!.getBoundingClientRect(); zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.s * 1.25); }}>+</button>
+        <button type="button" className="h-7 rounded-full px-2.5 hover:bg-edge/[0.06]" data-tip="显示全部（Shift+1）" onClick={() => fitAll()}>适应</button>
       </div>}
 
       {!nodes.length && (
-        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-[13px] text-[#86868b]">
-          <div className="text-[15px] font-semibold text-[#1d1d1f]">自由画布</div>
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center text-[13px] text-muted">
+          <div className="text-[15px] font-semibold text-ink">自由画布</div>
           <div>把右边历史里的图拖进来，或从电脑拖图片进来</div>
           <div>选中图片后再生成，新图会出现在它旁边</div>
           <div className="text-[12px]">拖空白处移动画布 · 双指捏合 / ⌘+滚轮 缩放 · Shift+拖动 框选 · ⌘Z 撤销</div>
         </div>
       )}
       {dropHover && (
-        <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-[14px] border-2 border-dashed border-[#0071e3] bg-[#0071e3]/[0.04] text-[14px] font-medium text-[#0071e3]">
+        <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-[14px] border-2 border-dashed border-accent bg-accent/[0.04] text-[14px] font-medium text-accent">
           松开，放到画布上
         </div>
       )}

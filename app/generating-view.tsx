@@ -34,7 +34,7 @@ function Frame({ aspect, children, tight }: { aspect: number; children: React.Re
     <div ref={wrapRef} className="flex h-full w-full items-center justify-center">
       {/* Always mounted so children (e.g. canvases) exist from the first render. */}
       <div
-        className={`relative overflow-hidden bg-[#eef1f8] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)] ${tight ? "rounded-[18px]" : "rounded-[22px]"}`}
+        className={`relative overflow-hidden bg-[light-dark(#eef1f8,#16181e)] shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.06)] ${tight ? "rounded-[18px]" : "rounded-[22px]"}`}
         style={box ? { width: box.w, height: box.h } : { width: 0, height: 0, visibility: "hidden" }}
       >
         {children}
@@ -210,11 +210,11 @@ export function GeneratingView({ aspect, progress, compact }: Props) {
 
   return (
     <Frame aspect={aspect} tight={compact}>
-      <div ref={wrapRef} className="absolute inset-0 bg-[#f2f2f4]">
-        <canvas ref={ref} className="absolute inset-0 h-full w-full" />
+      <div ref={wrapRef} className="absolute inset-0 bg-well">
+        <canvas ref={ref} className="absolute inset-0 h-full w-full [html.theme-dark_&]:invert" />
       </div>
       <span
-        className={`absolute rounded-full bg-white font-medium tabular-nums text-[#0071e3] shadow-[0_2px_10px_rgba(0,0,0,0.1)] ${
+        className={`absolute rounded-full bg-panel font-medium tabular-nums text-accent shadow-[0_2px_10px_rgba(0,0,0,0.1)] ${
           compact ? "bottom-2.5 right-2.5 px-2.5 py-1 text-[12px]" : "bottom-4 right-4 px-4 py-1.5 text-[17px]"
         }`}
       >
