@@ -2349,7 +2349,7 @@ ${link}`;
       />
 
       {user && (
-        <nav aria-label="工作室工具" className="fixed left-5 top-5 z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
+        <nav aria-label="工作室工具" className="fixed left-5 top-5 md:top-1/2 md:-translate-y-1/2 z-50 flex flex-col items-center gap-1 rounded-full bg-panel/90 p-1 shadow-[0_6px_20px_rgba(0,0,0,0.12)] ring-1 ring-edge/[0.06] backdrop-blur-xl">
           <div ref={userMenuRef} className="relative">
             <button
               type="button"
@@ -2451,7 +2451,7 @@ ${link}`;
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5" /></svg>
               </button>
               {boardMenu && (
-                <div className="animate-pop-in absolute left-11 top-0 w-56 rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+                <div className="animate-pop-in absolute left-11 top-0 max-h-[50dvh] w-56 overflow-y-auto rounded-2xl bg-panel p-1.5 shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
                   <div className="px-2 pb-1 pt-0.5 text-[12px] font-semibold text-muted">画布</div>
                   {boards.map((b) => (
                     <div key={b.id} className={`group flex items-center gap-1 rounded-xl px-2 py-1.5 text-[13px] ${b.id === boardId ? "bg-accent/[0.08] text-accent" : "text-ink hover:bg-edge/[0.04]"}`}>
@@ -2529,7 +2529,7 @@ ${link}`;
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
             </button>
             {moreMenu && (
-              <div className="animate-pop-in absolute -top-2 left-11 w-60 rounded-2xl bg-panel p-2 text-[13px] text-ink shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
+              <div className="animate-pop-in absolute bottom-0 left-11 max-h-[65dvh] w-60 overflow-y-auto rounded-2xl bg-panel p-2 text-[13px] text-ink shadow-[0_18px_50px_rgba(0,0,0,0.16)] ring-1 ring-edge/[0.06]">
                 <div className="px-1.5 pb-1 text-[12px] font-semibold text-muted">外观</div>
                 <div className="apple-seg mb-2 flex">
                   {([["light", "浅色"], ["dark", "深色"], ["auto", "跟随系统"]] as const).map(([k, label]) => (
