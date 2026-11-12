@@ -92,11 +92,14 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
   function start(e: ReactPointerEvent<HTMLDivElement>) {
     if (!ready || e.button !== 0 || !e.isPrimary) return;
     const handle = (e.target as Element).closest<HTMLElement>("[data-region-handle]");
-    const region = handle ? visible.find((r) => r.label === handle.dataset.label) : undefined;
+    const p = position(e);
+    // 用户 2026-11-11 (框选中间也能移动): pressing anywhere inside a box grabs it; outside draws a new one.
+    const inside = handle ? undefined : [...visible].reverse().find((r) => p.x >= r.x && p.y >= r.y && p.x <= r.x + r.width && p.y <= r.y + r.height);
+    const region = handle ? visible.find((r) => r.label === handle.dataset.label) : inside;
     const action = handle?.dataset.regionHandle === "resize" ? "resize" : region ? "move" : "draw";
     e.preventDefault();
     surface.current!.setPointerCapture(e.pointerId);
-    drag.current = { pointer: e.pointerId, start: position(e), region, action };
+    drag.current = { pointer: e.pointerId, start: p, region, action };
     if (region) setActive(region.label);
   }
   function finish(e: ReactPointerEvent<HTMLDivElement>) {
@@ -154,10 +157,10 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
               {ready && visible.map((r) => {
                 const selected = r.label === active, color = colors[regions.indexOf(r) % colors.length];
                 const box = drag.current?.region?.label === r.label && sketch ? sketch : r;
-                return <div key={r.label} data-region-box={r.label} className="pointer-events-none absolute border-2" style={{ ...bounds(box), borderColor: color, backgroundColor: color + (selected ? "29" : "14") }}>
+                return <div key={r.label} data-region-box={r.label} className="absolute cursor-move border-2" style={{ ...bounds(box), borderColor: color, backgroundColor: color + (selected ? "29" : "14") }}>
                   <button type="button" data-region-handle="move" data-label={r.label} aria-label={`选中区域 ${r.label}`} onClick={(e) => { if (!e.detail) select(r.label); }}
                     style={{ background: color }} className="pointer-events-auto absolute left-0 top-0 min-w-5 cursor-move rounded-br px-1 text-center text-[12px] font-bold leading-5 text-white">{r.label}</button>
-                  {selected && <span data-region-handle="resize" data-label={r.label} title="拖动调整大小" className="pointer-events-auto absolute bottom-0 right-0 h-4 w-4 cursor-nwse-resize rounded-tl border-2 border-white" style={{ background: color }} />}
+                  {selected && <span data-region-handle="resize" data-label={r.label} title="拖动调整大小" className="pointer-events-auto absolute -bottom-1.5 -right-1.5 h-5 w-5 cursor-nwse-resize rounded-full border-2 border-white shadow" style={{ background: color }} />}
                 </div>;
               })}
               {sketch && !drag.current?.region && <div className="pointer-events-none absolute border-2 border-dashed border-accent bg-accent/15" style={bounds(sketch)} />}
@@ -194,7 +197,7 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
               {missing.includes(r.label) && <p role="alert" className="mt-1 text-[12px] text-danger">写一下这里要怎么改</p>}
             </div>)}
           </div>
-          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">选中框后按 Delete 删除；建议开深度思考，改得更准</div>
+          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">框里按住可移动，右下角圆点调大小，Delete 删除</div>
         </aside>
       </div>
     </div>
