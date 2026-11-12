@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RegionMark } from "./brush-overlay";
 import type { KreaRegion } from "@/lib/krea-regions";
+import { PromptPolish } from "./prompt-polish";
 import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
@@ -78,7 +79,7 @@ function NodePicture({ url, thumb, backup, onLoad }: {
 }
 
 const typing = (target: EventTarget | null) => target instanceof HTMLElement &&
-  (target.matches("input,textarea,select") || target.isContentEditable);
+  (target.matches("input,textarea:not([data-node-text][readonly]),select") || target.isContentEditable);
 function writeNodeCopy(e: ClipboardEvent, text: string) {
   if (!e.clipboardData) return false;
   e.clipboardData.setData("text/plain", text);
@@ -531,6 +532,8 @@ export function CanvasBoard({
     let lastWheel = 0;
     let wheelIsMouse = false;
     const onWheel = (e: WheelEvent) => {
+      const field = e.target instanceof Element ? e.target.closest<HTMLTextAreaElement>("[data-node-text]") : null;
+      if (field && field.scrollHeight > field.clientHeight && !e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
       // A wheel turned by accident while the wheel button is held to pan does nothing.
       if (drag.current?.kind === "pan") return;
@@ -845,7 +848,7 @@ export function CanvasBoard({
     | { kind: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
     | { kind: "marquee"; x0: number; y0: number; add: Set<string> }
     | { kind: "move"; sx: number; sy: number; start: Map<string, { x: number; y: number }>; before: Node[]; moved: boolean }
-    | { kind: "resize"; id: string; sx: number; w: number; h: number; before: Node[] }
+    | { kind: "resize"; id: string; axis: "width" | "height" | "both"; sx: number; sy: number; w: number; h: number; before: Node[] }
     | { kind: "link"; src: string }
     | null
   >(null);
@@ -897,12 +900,12 @@ export function CanvasBoard({
     const start = new Map(nodesRef.current.filter((m) => next.has(m.id)).map((m) => [m.id, { x: m.x, y: m.y }]));
     drag.current = { kind: "move", sx: e.clientX, sy: e.clientY, start, before: nodesRef.current, moved: false };
   };
-  const onHandleDown = (e: React.PointerEvent, n: Node) => {
+  const onHandleDown = (e: React.PointerEvent, n: Node, axis: "width" | "height" | "both") => {
     if (e.button !== 0) return;
     e.stopPropagation();
     dragPointer.current = e.pointerId;
     boxRef.current?.setPointerCapture(e.pointerId);
-    drag.current = { kind: "resize", id: n.id, sx: e.clientX, w: n.w, h: n.h, before: nodesRef.current };
+    drag.current = { kind: "resize", id: n.id, axis, sx: e.clientX, sy: e.clientY, w: n.w, h: n.h, before: nodesRef.current };
   };
   const onMove = (e: React.PointerEvent) => {
     lastPointer.current = { x: e.clientX, y: e.clientY };
@@ -981,8 +984,15 @@ export function CanvasBoard({
       setGuides({ v, h, gaps });
       setNodesRaw((list) => list.map((n) => (d.start.has(n.id) ? { ...n, x: d.start.get(n.id)!.x + dx, y: d.start.get(n.id)!.y + dy } : n)));
     } else if (d.kind === "resize") {
-      const w = Math.max(60, d.w + (e.clientX - d.sx) / s);
-      setNodesRaw((list) => list.map((n) => (n.id === d.id ? { ...n, w, h: (w * d.h) / d.w, fit: false } : n)));
+      const dx = (e.clientX - d.sx) / s, dy = (e.clientY - d.sy) / s;
+      setNodesRaw((list) => list.map((n) => {
+        if (n.id !== d.id) return n;
+        if (n.kind === "text") return { ...n,
+          w: d.axis === "height" ? d.w : Math.max(168, d.w + dx),
+          h: d.axis === "width" ? d.h : Math.max(104, d.h + dy) };
+        const w = Math.max(60, d.w + dx);
+        return { ...n, w, h: w * d.h / d.w, fit: false };
+      }));
     }
   };
   const finishDrag = (completed: boolean) => {
@@ -1333,6 +1343,9 @@ export function CanvasBoard({
     onSelTextRef.current?.(selTextKey);
   }, [selTextKey, selIdKey]);
   const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => {
+    if (editing) boxRef.current?.querySelector<HTMLTextAreaElement>("[data-node-text]:not([readonly])")?.focus({ preventScroll: true });
+  }, [editing]);
   const picsForText = (textId: string): { n: number; url: string }[] => {
     const target = nodes.find((n) => isGeneration(n) && generationInputs(n, nodes).some((m) => m.id === textId));
     if (!target) return [];
@@ -1475,7 +1488,7 @@ export function CanvasBoard({
   const ico = "h-[18px] w-[18px] fill-none stroke-current [stroke-linecap:round] [stroke-linejoin:round] [stroke-width:1.6]";
   return (
     <div
-      ref={boxRef}
+      ref={boxRef} tabIndex={-1}
       className={`relative h-full w-full touch-none select-none overflow-hidden bg-[light-dark(#f6f6f8,#27292e)] ${panning ? "cursor-grabbing" : spaceDown ? "cursor-grab" : ""}`}
       style={{
         backgroundImage: prefs?.grid === false ? "none" : `radial-gradient(circle, color-mix(in srgb, var(--color-edge) 13%, transparent) ${view.s}px, transparent ${1.2 * view.s}px)`,
@@ -1583,7 +1596,7 @@ export function CanvasBoard({
             >
               {/* 用户 2026-11-11: what the node is and its size, above it. */}
               <div
-                className="pointer-events-none absolute left-0 flex items-center justify-between whitespace-nowrap text-muted"
+                className={`absolute left-0 flex items-center justify-between whitespace-nowrap text-muted ${isText ? "cursor-grab" : "pointer-events-none"}`}
                 style={{ bottom: "100%", width: n.w, gap: 6, paddingBottom: 5, fontSize: 12 }}
               >
                 <span className="flex min-w-0 items-center gap-1 overflow-hidden font-medium text-secondary">
@@ -1599,9 +1612,7 @@ export function CanvasBoard({
               {isText ? (
                 <div className="flex h-full w-full flex-col rounded-[10px]">
                   <div className="relative min-h-0 flex-1">
-                  {editing === n.id ? (
-                  <>
-                  <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-ink">
+                  <div aria-hidden className="studio-text-mirror pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words rounded-[10px] p-3 text-[13px] leading-[20px] text-ink">
                     {mentionTokens(n.text ?? "", picsForText(n.id))}
                     {"\n"}
                   </div>
@@ -1610,18 +1621,42 @@ export function CanvasBoard({
                       const mirror = e.currentTarget.previousElementSibling;
                       if (mirror) mirror.scrollTop = e.currentTarget.scrollTop;
                     }}
-                    autoFocus
+                    data-node-text="" aria-label="文本节点内容" readOnly={editing !== n.id}
                     value={n.text ?? ""}
-                    placeholder="写下描述，连到图片上生成…"
-                    onPointerDown={(e) => e.stopPropagation()}
+                    placeholder={editing === n.id ? "写下描述，连到图片上生成…" : "双击输入文字，连到「图片生成」作为提示词；输入 @ 可以指定参考图"}
+                    onPointerDown={(e) => {
+                      const el = e.currentTarget;
+                      if (!el.readOnly) { e.stopPropagation(); return; }
+                      if (e.button !== 0 || e.shiftKey || spaceDown) return;
+                      const rect = el.getBoundingClientRect();
+                      const inGutter = e.clientX >= rect.left + rect.width * el.clientWidth / el.offsetWidth;
+                      if (el.scrollHeight > el.clientHeight && (inGutter || e.pointerType === "touch")) {
+                        e.stopPropagation();
+                        setSel(new Set([n.id]));
+                      } else {
+                        e.preventDefault();
+                        boxRef.current?.focus({ preventScroll: true });
+                      }
+                    }}
                     onChange={(e) => {
                       const v = e.target.value.slice(0, 2000);
                       const c = e.target.selectionStart ?? v.length;
                       setMention(v[c - 1] === "@" && v.length > (n.text ?? "").length ? { id: n.id, at: c - 1 } : null);
                       setNodesRaw((list) => list.map((m) => (m.id === n.id ? { ...m, text: v } : m)));
                     }}
-                    onBlur={() => setTimeout(() => { setEditing((cur) => (cur === n.id ? null : cur)); setMention(null); }, 150)}
+                    onBlur={(e) => {
+                      const field = e.currentTarget;
+                      setTimeout(() => {
+                        if (document.activeElement === field) return;
+                        setEditing((cur) => cur === n.id ? null : cur);
+                        setMention((cur) => cur?.id === n.id ? null : cur);
+                      }, 150);
+                    }}
                     onKeyDown={(e) => {
+                      if (e.currentTarget.readOnly) {
+                        if (e.key === "Enter" || e.key === "F2") { e.preventDefault(); setEditing(n.id); }
+                        return;
+                      }
                       if (e.key === "Escape") {
                         if (mention) setMention(null);
                         else (e.currentTarget as HTMLTextAreaElement).blur();
@@ -1639,9 +1674,9 @@ export function CanvasBoard({
                         }
                       }
                     }}
-                    className="relative h-full w-full resize-none overflow-y-auto rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-ink outline-none placeholder:text-hint"
+                    className="studio-text-scroll relative block h-full w-full resize-none rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px] text-transparent caret-ink outline-none placeholder:text-hint"
                   />
-                  {mention?.id === n.id && (() => {
+                  {editing === n.id && mention?.id === n.id && (() => {
                     const pics = picsForText(n.id);
                     return (
                       <div
@@ -1675,14 +1710,6 @@ export function CanvasBoard({
                       </div>
                     );
                   })()}
-                  </>
-                ) : (
-                  <div className="flex h-full w-full flex-col overflow-hidden rounded-[10px] p-3">
-                    <div className={`min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[13px] leading-[20px] ${n.text ? "text-ink" : "text-hint"}`}>
-                      {n.text ? mentionTokens(n.text, picsForText(n.id)) : "双击输入文字，连到「图片生成」作为提示词；输入 @ 可以指定参考图"}
-                    </div>
-                  </div>
-                  )}
                   </div>
                   <TextNodeFooter text={n.text ?? ""} level={polishLevel} setLevel={onPolishLevel} polish={onPolish} flash={flash}
                     replace={(before, after) => {
@@ -1784,11 +1811,18 @@ export function CanvasBoard({
                 </span>
               )}
               {on && selected.length === 1 && (url || isText) && (
-                <span
-                  className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize rounded-full border border-white bg-accent shadow"
-                  style={{ transform: `translate(50%, 50%) scale(${k})`, transformOrigin: "center" }}
-                  onPointerDown={(e) => onHandleDown(e, n)}
-                />
+                <>
+                  {isText && <>
+                    <span data-node-resize="width" title="拖动调整宽度" className="absolute bottom-2 left-full top-2 cursor-ew-resize"
+                      style={{ width: 8 * k }} onPointerDown={(e) => onHandleDown(e, n, "width")} />
+                    <span data-node-resize="height" title="拖动调整高度" className="absolute left-2 right-2 top-full cursor-ns-resize"
+                      style={{ height: 8 * k }} onPointerDown={(e) => onHandleDown(e, n, "height")} />
+                  </>}
+                  <span data-node-resize="both" title={isText ? "拖动调整宽高" : "拖动调整大小"}
+                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize rounded-full border border-white bg-accent shadow"
+                    style={{ transform: `translate(50%, 50%) scale(${k})`, transformOrigin: "center" }}
+                    onPointerDown={(e) => onHandleDown(e, n, "both")} />
+                </>
               )}
             </div>
           );
@@ -2076,17 +2110,8 @@ function TextNodeFooter({ text, level, setLevel, polish, replace, flash }: {
     <div className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 px-3 pb-2 text-[11px]"
       onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <span className="mr-auto text-muted">{text.length} 字</span>
-      {undo?.after === text && <button type="button" className="text-secondary" onClick={() => { replace(text, undo.before); setUndo(null); }}>撤销润色</button>}
-      {/* 用户 2026-11-12 (润色要输入后再显示，也不要一直高亮): only with text, plain until it has been used. */}
-      {(text.trim() || busy) && (
-      <div className={`inline-flex items-center rounded-full ${busy || undo?.after === text ? "bg-accent/10 text-accent" : "bg-edge/[0.05] text-secondary"}`}>
-        <button type="button" onClick={run} disabled={busy || !text.trim()} className="px-2 py-1 disabled:opacity-50 hover:text-ink">{busy ? "润色中…" : "提示词润色"}</button>
-        <select aria-label="文本润色程度" value={level} onChange={(e) => setLevel(e.target.value as typeof level)}
-          className="rounded-r-full border-l border-edge/[0.1] bg-transparent py-1 pl-1">
-          <option value="low">低</option><option value="medium">中</option><option value="high">高</option>
-        </select>
-      </div>
-      )}
+      {(text.trim() || busy) && <PromptPolish level={level} busy={busy} canUndo={undo?.after === text}
+        onRun={run} onLevel={setLevel} onUndo={() => { if (undo?.after === text) { replace(text, undo.before); setUndo(null); } }} />}
     </div>
   );
 }

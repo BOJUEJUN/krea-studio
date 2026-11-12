@@ -325,7 +325,7 @@ export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClos
                 id={`region-note-${r.label}`} aria-label={`区域 ${r.label} 提示词`} rows={2} maxLength={MAX_REGION_NOTE}
                 value={r.note} placeholder={index === 0 ? "这里怎么改？" : "这处素材怎么用？"} onFocus={() => setActive(r.label)}
                 onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); if (note.trim()) setMissing((m) => m.filter((l) => l !== r.label)); }}
-                className="block w-full resize-y rounded-md bg-well px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none focus:ring-1 focus:ring-accent" />
+                className="studio-text-scroll block w-full resize-y rounded-md bg-well px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none focus:ring-1 focus:ring-accent" />
               {missing.includes(r.label) && <p role="alert" className="mt-1 text-[12px] text-danger">写一下这里要怎么改</p>}
             </div>)}
           </div>

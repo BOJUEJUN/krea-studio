@@ -513,6 +513,18 @@ textarea {
   animation: apple-chip-in 0.4s var(--ease-out-expo) both;
 }
 
+/* Reserve the same text width in the input and the overlay that draws @图 thumbnails. */
+.studio-text-scroll, .studio-text-mirror { scrollbar-gutter: stable; }
+.studio-text-scroll { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+.studio-text-scroll::-webkit-scrollbar, .studio-text-mirror::-webkit-scrollbar { width: 10px; }
+.studio-text-scroll::-webkit-scrollbar-track { margin-block: 5px; border-radius: 8px; background: color-mix(in srgb, var(--color-edge) 6%, transparent); }
+.studio-text-scroll::-webkit-scrollbar-thumb { min-height: 24px; border: 2px solid transparent; border-radius: 8px; background: color-mix(in srgb, var(--color-edge) 38%, transparent) padding-box; }
+.studio-text-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--color-secondary); }
+@supports not selector(::-webkit-scrollbar) {
+  .studio-text-scroll, .studio-text-mirror { scrollbar-width: thin; scrollbar-color: var(--color-muted) transparent; }
+}
+textarea[data-node-text]:read-only { cursor: inherit; }
+
 /* Panel resizers: invisible in the gap; a thin line shows on hover / drag. */
 .panel-resizer {
   position: relative;

@@ -774,7 +774,7 @@ export default function AdminPage() {
                 </>
               )}
               <div className="mt-4 mb-1 text-[12px] text-[#86868b]">{open.userPrompt || open.settings?.["提示词优化"] ? "最终提示词（优化后）" : "提示词"}</div>
-              <div className="max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f5f5f7] p-3 text-[12px] leading-relaxed">{open.prompt || "（没写描述）"}</div>
+              <div className="studio-text-scroll max-h-[30vh] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f5f5f7] p-3 text-[12px] leading-relaxed">{open.prompt || "（没写描述）"}</div>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button type="button" onClick={() => { navigator.clipboard?.writeText(open.prompt); flash("已复制提示词"); }} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">复制提示词</button>
                 {open.url && (

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
+import { PromptPolish } from "./prompt-polish";
 import { RegionMark } from "./brush-overlay";
 import { KreaRegionEditor } from "./krea-region-editor";
 import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion, REGION_COLORS } from "@/lib/krea-regions";
@@ -118,6 +119,7 @@ function caretXY(el: HTMLTextAreaElement, pos: number): { x: number; y: number }
   for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding", "border", "boxSizing", "whiteSpace", "wordWrap", "width"] as const) {
     (div.style as any)[k] = (cs as any)[k];
   }
+  div.style.width = el.clientWidth + "px";
   div.style.position = "absolute";
   div.style.visibility = "hidden";
   div.style.whiteSpace = "pre-wrap";
@@ -1597,7 +1599,7 @@ export default function StudioPage() {
       const data = e.clipboardData;
       if (!data || e.defaultPrevented) return;
       const target = e.target;
-      const editingText = target instanceof HTMLElement && (target.matches("input,textarea,select") || target.isContentEditable);
+      const editingText = target instanceof HTMLElement && (target.matches("input,textarea:not([data-node-text][readonly]),select") || target.isContentEditable);
       if (canvasOnRef.current && !editingText && canvasApi.current?.pasteNodes(data)) {
         e.preventDefault();
         return;
@@ -3372,10 +3374,10 @@ export default function StudioPage() {
                           </button>
                           <span className="shrink-0 rounded px-1 text-[11px] font-bold leading-4 text-white" style={{ background: color }}>@{r.label}</span>
                           {regionImages.length > 1 && <span className="shrink-0 text-[11px] text-muted">图{r.image_idx + 1}</span>}
-                          <input value={r.note} maxLength={600} placeholder={r.image_idx === 0 ? "这里怎么改？" : "这处素材怎么用？"}
+                          <textarea rows={1} value={r.note} maxLength={600} placeholder={r.image_idx === 0 ? "这里怎么改？" : "这处素材怎么用？"}
                             aria-label={`选区 ${r.label} 的修改要求`}
                             onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); }}
-                            className={`min-w-0 flex-1 bg-transparent text-[16px] md:text-[13px] outline-none placeholder:text-hint ${!r.note.trim() && r.image_idx === 0 ? "placeholder:text-danger" : ""}`} />
+                            className={`studio-text-scroll min-w-0 flex-1 resize-none bg-transparent text-[16px] md:text-[13px] [field-sizing:content] max-h-[4.5rem] outline-none placeholder:text-hint ${!r.note.trim() && r.image_idx === 0 ? "placeholder:text-danger" : ""}`} />
                           <button type="button" aria-label={`删除选区 ${r.label}`} title="删除选区"
                             onClick={() => setRegions((list) => list.filter((v) => v.label !== r.label))}
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[14px] text-muted hover:bg-edge/[0.06] hover:text-ink">×</button>
@@ -3389,7 +3391,7 @@ export default function StudioPage() {
                     <div
                       ref={promptMirrorRef}
                       aria-hidden
-                      className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-ink"
+                      className="studio-text-mirror pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-ink"
                     >
                       {withMentions(prompt, [preview, ...extraRefs.map((r) => r.url)])}
                       {"\n"}
@@ -3439,13 +3441,12 @@ export default function StudioPage() {
                           ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
                           : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
                     }
-                    className="relative block w-full resize-none bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
+                    className="studio-text-scroll relative block w-full resize-none bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
                     style={{
                       // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
                       fieldSizing: "content",
                       minHeight: 76,
                       maxHeight: canvasOn ? (promptExpanded ? "48vh" : "calc(3lh + 1.5rem)") : "22vh",
-                      overflowY: canvasOn && !promptExpanded ? "hidden" : "auto",
                       ...(prompt ? {} : { color: "var(--color-ink)" }),
                     } as React.CSSProperties}
                   />
@@ -3512,7 +3513,7 @@ export default function StudioPage() {
                       style={openPanel === "model" && modelAnchor ? modelAnchor : { left: panelLeft }}
                     >
                       {openPanel !== "denoise" && <div className="whitespace-nowrap px-2.5 pb-1 pt-1 text-[12px] font-semibold text-muted">
-                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", polish: "润色程度", reverse: "提示词反推", speed: "出图速度" } as Record<string, string>)[openPanel]}
+                        {({ model: "模型", ratio: "比例", res: "清晰度", quality: "画质", thinking: "深度思考", background: "背景", complexity: "构思程度", regional: "修改范围", denoise: "重绘幅度", lora: "风格强度", seed: "种子", negative: "不想要的内容", count: "张数", reverse: "提示词反推", speed: "出图速度" } as Record<string, string>)[openPanel]}
                       </div>}
                     
                     {openPanel === "model" && (
@@ -3576,7 +3577,6 @@ export default function StudioPage() {
                     {openPanel === "thinking" && <Choice note={`更懂复杂描述，慢一点，+¥${(modelParams.thinking ?? 0).toFixed(2)}`} options={[["0", "关"], ["1", "开"]]} value={thinking ? "1" : "0"} onPick={(v) => { setThinking(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "background" && <Choice options={[["auto", "自动"], ["transparent", "透明"], ["opaque", "不透明"]]} value={background} onPick={(v) => { setBackground(v as typeof background); setOpenPanel(null); }} />}
                     {openPanel === "reverse" && <Choice note="根据参考图自动写画面描述" options={[["direct", "直接生成（默认）", "反推完马上出图"], ["fill", "先填到提示词框", "反推结果放进框里，你改好再点生成"]]} value={reverseMode} onPick={(v) => { setReverseMode(v as "direct" | "fill"); try { localStorage.setItem("ais-reverse-mode", v); } catch {} setOpenPanel(null); }} />}
-                    {openPanel === "polish" && <Choice note="@图 编号会保留" options={[["low", "低（默认）", "理顺表达，保留原意"], ["medium", "中", "重写描述，补足动作与画面细节"], ["high", "高", "深入设计构图、光影与材质"]]} value={polishLevel} onPick={(v) => { changePolishLevel(v as typeof polishLevel); setOpenPanel(null); }} />}
                     {openPanel === "complexity" && <Choice note="画之前想多久；不影响价格" options={[["auto", "自动（推荐）", "交给模型自己判断"], ["low", "快", "简单画面，出图更快"], ["medium", "标准", "一般画面"], ["high", "精细", "多人、多物体、细节多时更准，稍慢"]]} value={complexity} onPick={(v) => { setComplexity(v as typeof complexity); setOpenPanel(null); }} />}
                     {openPanel === "regional" && <Choice note="只改说的地方：描述里没提到的部分保持原样" options={[["0", "改整张图"], ["1", "只改说的地方"]]} value={regional ? "1" : "0"} onPick={(v) => { setRegional(v === "1"); setOpenPanel(null); }} />}
                     {openPanel === "count" && <Choice options={[["1", "1 张"], ["2", "2 张"], ["3", "3 张"], ["4", "4 张"]]} value={String(count)} onPick={(v) => { setCount(Number(v)); localStorage.setItem(COUNT_KEY, v); setOpenPanel(null); }} />}
@@ -3709,49 +3709,9 @@ export default function StudioPage() {
                       )}
                     </div>
                   )}
-                  {/* 用户 2026-11-10: 提示词润色 shows once there is a prompt to polish. */}
-                  {(prompt.trim() || polishing) && (
-                  // 用户 2026-11-12 (润色不要高亮，不然以为已经点了): same plain look as the other settings until it is used.
-                  <div className={`compose-split animate-pop-in flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${polishUndo || polishing ? "bg-accent/[0.08] font-medium text-accent ring-1 ring-accent/25" : "bg-edge/[0.04] text-ink"}`}>
-                    <button
-                      type="button"
-                      onClick={runPolish}
-                      disabled={!prompt.trim() || polishing}
-                      data-tip="按当前提示词润色，@图 原样保留"
-                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-edge/[0.08] active:scale-[0.97] disabled:opacity-40"
-                    >
-                      {polishing ? (
-                        <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent" />
-                      ) : (
-                        <svg className="h-3.5 w-3.5 text-accent" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l1.4 3.6L13 6 9.4 7.4 8 11 6.6 7.4 3 6l3.6-1.4L8 1zm4.5 8l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8z" /></svg>
-                      )}
-                      {polishing ? "润色中…" : "提示词润色"}
-                    </button>
-                    <button
-                      type="button"
-                      aria-expanded={openPanel === "polish"}
-                      onClick={(e) => {
-                        const row = chipRowRef.current;
-                        const x = (e.currentTarget.parentElement as HTMLElement).offsetLeft;
-                        setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
-                        setOpenPanel((v) => (v === "polish" ? null : "polish"));
-                      }}
-                      className={`flex h-full items-center gap-1 border-l border-edge/[0.1] pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-accent/10 text-accent" : "hover:bg-edge/[0.08]"}`}
-                    >
-                      {{ low: "低", medium: "中", high: "高" }[polishLevel]}
-                      <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                    </button>
-                  </div>
-                  )}
-                  {polishUndo && polishUndo.after === prompt && (
-                    <button
-                      type="button"
-                      onClick={() => { editPrompt(polishUndo.before); setPolishUndo(null); }}
-                      className="rounded-full px-2 py-1 text-[12px] text-accent hover:bg-accent/10"
-                    >
-                      撤销润色
-                    </button>
-                  )}
+                  {(prompt.trim() || polishing) && <PromptPolish level={polishLevel} busy={polishing} canUndo={polishUndo?.after === prompt}
+                    onRun={runPolish} onLevel={changePolishLevel} onOpen={() => setOpenPanel(null)}
+                    onUndo={() => { if (polishUndo?.after === prompt) { editPrompt(polishUndo.before); setPolishUndo(null); } }} />}
                   <div className="compose-submit">
                     <button
               onClick={startOrQueue}
