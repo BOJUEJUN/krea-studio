@@ -2064,13 +2064,16 @@ function TextNodeFooter({ text, level, setLevel, polish, replace, flash }: {
       onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
       <span className="mr-auto text-muted">{text.length} 字</span>
       {undo?.after === text && <button type="button" className="text-secondary" onClick={() => { replace(text, undo.before); setUndo(null); }}>撤销润色</button>}
-      <div className="inline-flex items-center rounded-full bg-accent/10 text-accent">
-        <button type="button" onClick={run} disabled={busy || !text.trim()} className="px-2 py-1 font-medium disabled:opacity-50">{busy ? "润色中…" : "提示词润色"}</button>
+      {/* 用户 2026-11-12 (润色要输入后再显示，也不要一直高亮): only with text, plain until it has been used. */}
+      {(text.trim() || busy) && (
+      <div className={`inline-flex items-center rounded-full ${busy || undo?.after === text ? "bg-accent/10 text-accent" : "bg-edge/[0.05] text-secondary"}`}>
+        <button type="button" onClick={run} disabled={busy || !text.trim()} className="px-2 py-1 disabled:opacity-50 hover:text-ink">{busy ? "润色中…" : "提示词润色"}</button>
         <select aria-label="文本润色程度" value={level} onChange={(e) => setLevel(e.target.value as typeof level)}
-          className="rounded-r-full border-l border-accent/25 bg-transparent py-1 pl-1">
+          className="rounded-r-full border-l border-edge/[0.1] bg-transparent py-1 pl-1">
           <option value="low">低</option><option value="medium">中</option><option value="high">高</option>
         </select>
       </div>
+      )}
     </div>
   );
 }
