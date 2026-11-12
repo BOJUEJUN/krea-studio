@@ -97,6 +97,10 @@ export async function createRhHostedTask(opts: {
     body.resolution = ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res!.toLowerCase()
       : opts.quality === "low" ? "1k" : opts.quality === "high" ? "4k" : "2k";
   } else if (opts.model === "seedream-55") {
+    // 用户 2026-11-12 (输入「蓝色头发」报错，不够 5 个字): Seedream wants at least 5 characters, so a short request is
+    // put into a plain sentence with the same meaning.
+    const said = String(body.prompt || "").trim();
+    if ([...said].length < 5) body.prompt = refs.length ? `把图片改成：${said}` : `画一张图：${said}`;
     // Seedream 5.5 takes 1K / 1.5K / 2K; an edit keeps 图1's shape, a new picture gets the chosen shape at ~2K.
     body.outputFormat = "png";
     body.watermark = "false";
