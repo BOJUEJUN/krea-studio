@@ -28,7 +28,7 @@ export type BoardSource = { id: string; url: string; status?: string; prompt?: s
 export type BoardJob = { gid: string; frame?: string; board?: string; failed?: boolean };
 export type BoardApi = {
   add: (gid: string) => void;
-  reedit: (g: EditablePicture) => void;
+  reedit: (g: EditablePicture, snapshot?: boolean) => void;
   layout: () => CanvasLayout | undefined;
   startFrame: (busy: ReadonlySet<string>, draft: CanvasDraft, previewAspect?: number) => CanvasLayout | undefined;
   saveDraft: (id: string, draft: CanvasDraft) => void;
@@ -684,9 +684,9 @@ export function CanvasBoard({
         commit((ns) => [...ns, fork]);
         return captureLayout([fork], [...list, fork], urlOfRef.current);
       },
-      reedit: (g) => {
-        if (!remoteReady.current) { deferred.current.push(() => api.reedit(g)); return; }
-        const restored = restoreWorkflow(nodesRef.current, g, urlOfRef.current);
+      reedit: (g, snapshot) => {
+        if (!remoteReady.current) { deferred.current.push(() => api.reedit(g, snapshot)); return; }
+        const restored = restoreWorkflow(nodesRef.current, g, urlOfRef.current, snapshot);
         if (restored.list !== nodesRef.current) commit(restored.list);
         explicitEdit.current = restored.frame.id;
         setEditClick((n) => n + 1);

@@ -1,4 +1,4 @@
-import { pictureRefs, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
+import { canvasImagePath, pictureRefs, pictureDraft, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
 export { pictureDraft, readDraft, type CanvasDraft } from "./edit-recipe";
 
 export type BoardNode = {
@@ -35,14 +35,18 @@ export function captureLayout(picked: BoardNode[], list: BoardNode[], urlOf: (n:
   for (const n of branch) {
     const from = isResult(n) ? undefined : n.from?.filter((id) => ids.has(id));
     if (n.kind === "text") inputs.push({ ...box(n), node: n.id, from, text: n.text ?? "" });
-    else if (urlOf(n)) inputs.push({ ...box(n), node: n.id, from, ref: ref++ });
+    else {
+      const url = urlOf(n);
+      if (url) inputs.push({ ...box(n), node: n.id, from, ref: ref++, source: canvasImagePath(url) });
+    }
   }
   return { frame: { ...box(frame), node: frame.id }, inputs };
 }
 
 /** Restore this result's input branch, keeping other work on this board. Reopening focuses the same branch. */
-export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n: BoardNode) => string | null) {
-  const results = list.filter((n) => isResult(n) && n.gid === g.id);
+export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n: BoardNode) => string | null, snapshot = false) {
+  const results = list.filter((n) => !n.pendingGid && ((isResult(n) && n.gid === g.id) ||
+    (snapshot && !g.url && n.kind === "gen" && n.editOf === g.id)));
   const result = results.find((n) => n.id === g.canvasLayout?.frame.node) ?? results.find((n) => n.editOf === g.id) ?? results[0];
   const upstream = result ? generationInputs(result, list) : [];
   const urls = pictureRefs(g);
@@ -63,11 +67,16 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   const inputs: BoardNode[] = [];
   const slotted = new Map<CanvasLayout["inputs"][number], BoardNode>();
   const upstreamImages = upstream.filter((n) => !!urlOf(n));
-  for (const [i, src] of urls.entries()) {
+  const savedRefs = new Map(urls.entries());
+  if (snapshot) for (const s of layout?.inputs ?? []) {
+    if ("ref" in s && s.source && !savedRefs.has(s.ref)) savedRefs.set(s.ref, s.source);
+  }
+  for (const [i, src] of savedRefs) {
     const slot = layout?.inputs.find((v) => "ref" in v && v.ref === i);
     const pos = position(slot);
     const old = upstreamImages.find((n) => urlOf(n) === src && !inputs.includes(n)) ??
-      list.find((n) => n !== result && n.id === slot?.node && n.kind !== "text" && !!urlOf(n) && !inputs.includes(n)) ??
+      list.find((n) => n !== result && n.id === slot?.node && !!urlOf(n) &&
+        (!snapshot || ("source" in slot && urlOf(n) === slot.source)) && !inputs.includes(n)) ??
       list.find((n) => !isGeneration(n) && urlOf(n) === src && !inputs.includes(n));
     const input: BoardNode = old ?? { id: uid(), kind: "image", src, ...pos, fit: !slot };
     inputs.push(input);
@@ -92,10 +101,15 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   }
   const ordered = layout ? layout.inputs.flatMap((slot) => slotted.get(slot) ?? []) : [];
   const from = [...new Set([...ordered, ...inputs].map((n) => n.id))];
-  if (result?.editOf === g.id && result.from?.length === from.length && result.from.every((id, i) => id === from[i])) {
+  if (!snapshot && result?.editOf === g.id && result.from?.length === from.length && result.from.every((id, i) => id === from[i])) {
     return { list, frame: result, focus: [...inputs, result] };
   }
   const frame: BoardNode = { ...(result ?? { id: uid(), gid: g.id, ...box(frameBox), fit: true }), kind: "result", from, editOf: g.id };
+  if (snapshot) {
+    frame.draft = g.editorDraft ?? pictureDraft(g);
+    if (g.url) frame.src = g.url;
+    else { frame.kind = "gen"; delete frame.gid; delete frame.src; }
+  }
   const focus = [...inputs, frame];
   const replacements = new Map(focus.map((n) => [n.id, n]));
   return { list: [...list.map((n) => replacements.get(n.id) ?? n), ...focus.filter((n) => !list.some((m) => m.id === n.id))], frame, focus };

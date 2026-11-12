@@ -117,6 +117,7 @@ function merge(prev: HistoryItem | undefined, next: HistoryItem): HistoryItem {
     settings: next.settings ?? prev.settings,
     refUrls: next.refUrls ?? prev.refUrls,
     canvasLayout: next.canvasLayout ?? prev.canvasLayout,
+    workspace: prev.workspace ?? next.workspace,
     editorDraft: next.editorDraft ?? prev.editorDraft,
     userPrompt: next.userPrompt ?? prev.userPrompt,
     deleted: next.deleted ?? prev.deleted,

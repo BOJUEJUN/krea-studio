@@ -107,7 +107,7 @@ export async function GET(req: Request) {
         // 2026-11-05 (用户: 刷新后生成进度没了): tasks still running, so a reloaded page picks them up again.
         running: items
           .filter((x) => !x.url && x.status === "pending" && x.taskId && Date.now() - x.createdAt < 30 * 60_000)
-          .map((x) => ({ taskId: x.taskId, seed: x.seed, mode: x.mode, model: x.model, prompt: x.prompt, refUrl: x.refUrl, refUrls: x.refUrls, settings: x.settings, canvasLayout: x.canvasLayout, editorDraft: x.editorDraft, createdAt: x.createdAt })),
+          .map((x) => ({ taskId: x.taskId, seed: x.seed, mode: x.mode, model: x.model, prompt: x.prompt, refUrl: x.refUrl, refUrls: x.refUrls, settings: x.settings, canvasLayout: x.canvasLayout, editorDraft: x.editorDraft, workspace: x.workspace, canvasBoard: x.workspace?.kind === "canvas" ? x.workspace.boardId : undefined, createdAt: x.createdAt })),
       },
       { headers: { "Cache-Control": "no-store" } }
     );

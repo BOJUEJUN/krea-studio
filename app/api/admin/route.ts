@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dailyLimit, inviteCode, isOwner, listUsers, sessionUser, setDailyLimit, setDisabled, setInviteCode, unauthorized } from "@/lib/auth";
-import { readHistory } from "@/lib/history";
+import { readHistory, readUserHistory } from "@/lib/history";
+import { recordWorkspace } from "@/lib/edit-recipe";
 import { directLinks } from "@/lib/thumbs";
 import { ownerName } from "@/lib/auth";
 
@@ -18,6 +19,16 @@ async function ownerOnly(req: Request) {
 export async function GET(req: NextRequest) {
   const deny = await ownerOnly(req);
   if (deny) return deny;
+  const query = req.nextUrl.searchParams;
+  if (query.has("record")) {
+    const id = query.get("record"), account = query.get("account");
+    if (!id || !account || id.length > 128 || account.length > 64) return NextResponse.json({ ok: false, error: "记录无效" }, { status: 400 });
+    const item = (await readUserHistory(account)).find((it) => it.id === id);
+    if (!item) return NextResponse.json({ ok: false, error: "找不到这条记录" }, { status: 404 });
+    const { mode, model, label, prompt, url, status, seed, refUrl, refUrls, settings, canvasLayout, editorDraft, createdAt } = item;
+    return NextResponse.json({ ok: true, viewer: sessionUser(req), item: { id, mode, model, label, prompt, url, status, seed, refUrl, refUrls,
+      settings, canvasLayout, editorDraft, createdAt, workspace: recordWorkspace(item) } }, { headers: { "Cache-Control": "private, no-store" } });
+  }
   const [users, items, owner, code, limitPerDay] = await Promise.all([listUsers(), readHistory(), ownerName(), inviteCode(), dailyLimit()]);
   const want = new URL(req.url).searchParams.get("user");
   if (want) {
@@ -108,6 +119,11 @@ export async function GET(req: NextRequest) {
       url: it.url,
       refUrl: it.refUrl,
       refUrls: it.refUrls,
+      workspace: recordWorkspace(it),
+      nodeCount: it.canvasLayout ? 1 + it.canvasLayout.inputs.length : undefined,
+      seed: it.seed,
+      polishLevel: it.editorDraft?.polishLevel,
+      reverseOn: it.editorDraft?.reverseOn,
       prompt: it.prompt,
       model: it.model ?? it.label ?? "",
       mode: it.mode,

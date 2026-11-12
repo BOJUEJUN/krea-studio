@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readCanvasLayout, readDraft } from "@/lib/edit-recipe";
+import { readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -129,6 +129,7 @@ export async function POST(req: NextRequest) {
       try { editorDraft = readDraft(JSON.parse(draft)); } catch {}
     }
     if (ratioLabel) settings["改图比例"] = editAspect ? ratioLabel : "自适应";
+    const workspace = readWorkspace(form.get("workspace"));
     const encodedLayout = form.get("canvasLayout");
     let canvasLayout;
     if (typeof encodedLayout === "string" && encodedLayout.length < 100_000) {
@@ -145,7 +146,7 @@ export async function POST(req: NextRequest) {
         model: model.id,
         prompt: prompt.slice(0, 2000),
         url: "",
-        refUrl, refUrls, canvasLayout, editorDraft,
+        refUrl, refUrls, canvasLayout, editorDraft, workspace,
         seed: t.seed,
         settings,
         userPrompt,
@@ -163,7 +164,7 @@ export async function POST(req: NextRequest) {
         mode: "i2i",
         model: model.id,
         prompt,
-        refUrl, refUrls, settings, canvasLayout, editorDraft,
+        refUrl, refUrls, settings, canvasLayout, editorDraft, workspace,
       },
       { status: 202 }
     );

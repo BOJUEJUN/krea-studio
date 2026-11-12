@@ -1,15 +1,33 @@
 import { LEGACY_MODEL, QUALITY_LABELS, findModel, paramsOf, type Mode, type Quality, type Res } from "./models";
 
 type Box = { node?: string; x: number; y: number; w: number; h: number };
-export type CanvasLayout = { frame: Box; inputs: (Box & { from?: string[] } & ({ ref: number } | { text: string }))[] };
+export type CanvasLayout = { frame: Box; inputs: (Box & { from?: string[] } & ({ ref: number; source?: string } | { text: string }))[] };
+export const canvasImagePath = (url: unknown) =>
+  typeof url === "string" && /^\/api\/(?:img|ref)\/[\w-]{1,64}$/.test(url) ? url : undefined;
+export type RecordWorkspace = { kind: "single" } | { kind: "canvas"; boardId?: string; boardName?: string };
+export function readWorkspace(value: unknown): RecordWorkspace | undefined {
+  if (typeof value === "string" && value.length < 512) {
+    try { value = JSON.parse(value); } catch { return; }
+  }
+  if (!value || typeof value !== "object" || !("kind" in value)) return;
+  if (value.kind === "single") return { kind: "single" };
+  if (value.kind !== "canvas") return;
+  return { kind: "canvas",
+    boardId: "boardId" in value && typeof value.boardId === "string" && /^[\w-]{1,32}$/.test(value.boardId) ? value.boardId : undefined,
+    boardName: "boardName" in value && typeof value.boardName === "string" ? value.boardName.trim().slice(0, 20) || undefined : undefined };
+}
+export function recordWorkspace(g: EditMetadata): RecordWorkspace | undefined {
+  return g.workspace ?? (g.canvasLayout ? { kind: "canvas" } : undefined);
+}
 export type EditMetadata = {
+  workspace?: RecordWorkspace;
   editorDraft?: CanvasDraft;
   settings?: Record<string, string>;
   refUrls?: string[];
   canvasLayout?: CanvasLayout;
 };
 export type EditablePicture = EditMetadata & {
-  id: string; mode: Mode; model?: string; prompt: string; refUrl?: string; seed?: number;
+  id: string; mode: Mode; model?: string; prompt: string; refUrl?: string; seed?: number; url?: string;
 };
 
 /** Only geometry and ordered input slots travel with the picture. Image bytes stay in the reference archive. */
@@ -27,7 +45,7 @@ export function readCanvasLayout(value: unknown): CanvasLayout | undefined {
     const b = box(v);
     if (!b) return;
     const from: string[] | undefined = Array.isArray(v.from) ? v.from.slice(0, 32).filter((id: unknown) => typeof id === "string" && /^[a-zA-Z0-9_-]{1,40}$/.test(id)) : undefined;
-    if (Number.isInteger(v.ref) && v.ref >= 0 && v.ref < 8) inputs.push({ ...b, from, ref: v.ref });
+    if (Number.isInteger(v.ref) && v.ref >= 0 && v.ref < 8) inputs.push({ ...b, from, ref: v.ref, source: canvasImagePath(v.source) });
     else if (typeof v.text === "string") inputs.push({ ...b, from, text: v.text.slice(0, 2000) });
     else return;
   }
@@ -92,5 +110,5 @@ export function readEditMetadata(body: Record<string, unknown>): EditMetadata {
   const settings = body.settings && typeof body.settings === "object" && !Array.isArray(body.settings)
     ? Object.fromEntries(Object.entries(body.settings).filter(([key, v]) => key.length <= 30 && typeof v === "string").slice(0, 32)
       .map(([key, v]) => [key, String(v).slice(0, 300)])) : undefined;
-  return { refUrls, settings, editorDraft: readDraft(body.editorDraft), canvasLayout: readCanvasLayout(body.canvasLayout) };
+  return { refUrls, settings, workspace: readWorkspace(body.workspace), editorDraft: readDraft(body.editorDraft), canvasLayout: readCanvasLayout(body.canvasLayout) };
 }

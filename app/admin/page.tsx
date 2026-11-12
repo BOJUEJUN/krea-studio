@@ -2,7 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MODELS, findModel } from "@/lib/models";
-import { pictureRefs } from "@/lib/edit-recipe";
+import { pictureRefs, type RecordWorkspace } from "@/lib/edit-recipe";
 import { COMPARE_MODES, CompareView, type CompareMode } from "../compare-view";
 import { ImageViewer } from "../image-viewer";
 
@@ -53,6 +53,11 @@ type Rec = {
   durationMs?: number;
   settings?: Record<string, string>;
   userPrompt?: string;
+  workspace?: RecordWorkspace;
+  nodeCount?: number;
+  seed?: number;
+  polishLevel?: "low" | "medium" | "high";
+  reverseOn?: boolean;
   fav: boolean;
   deleted?: boolean;
   createdAt: number;
@@ -67,6 +72,10 @@ const TABS: { key: Tab; label: string; icon: string }[] = [
   { key: "settings", label: "设置", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" },
 ];
 
+const workspaceLabel = (w?: RecordWorkspace, detail = false) =>
+  w?.kind === "canvas" ? detail && w.boardName ? `画布 · ${w.boardName}` : "画布" : w?.kind === "single" ? "单图" : "未记录";
+const editRecordLink = (r: Rec, workspace?: "canvas" | "single") =>
+  "/?" + new URLSearchParams({ editRecord: r.id, account: r.owner, ...(workspace ? { workspace } : {}) });
 const modelName = (id: string) => findModel(id)?.name ?? (id || "其他");
 const modelIcon = (id: string) => {
   const m = findModel(id);
@@ -245,6 +254,7 @@ export default function AdminPage() {
   const [fModel, setFModel] = useState("all");
   const [fStatus, setFStatus] = useState<"all" | "done" | "failed" | "fav">("all");
   const [fTime, setFTime] = useState<"all" | "today" | "7" | "30">("all");
+  const [fWorkspace, setFWorkspace] = useState("all");
   const [fText, setFText] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [limit, setLimit] = useState(60);
@@ -299,6 +309,7 @@ export default function AdminPage() {
     setFModel("all");
     setFStatus("all");
     setFTime("all");
+    setFWorkspace("all");
     setFText("");
     setLimit(60);
     go("records");
@@ -313,18 +324,20 @@ export default function AdminPage() {
       (r) =>
         (fUser === "all" || r.owner === fUser) &&
         (fModel === "all" || r.model === fModel) &&
+        (fWorkspace === "all" || (r.workspace?.kind ?? "unknown") === fWorkspace) &&
         (fStatus === "all" || (fStatus === "done" ? !!r.url : fStatus === "fav" ? r.fav : !r.url && r.status !== "pending")) &&
         (fTime === "all" || (fTime === "today" ? r.createdAt >= dayStart : r.createdAt >= now - Number(fTime) * 86_400_000)) &&
         (!q || r.prompt.toLowerCase().includes(q))
     );
-  }, [data, fUser, fModel, fStatus, fTime, fText]);
+  }, [data, fUser, fModel, fStatus, fTime, fText, fWorkspace]);
   const recCost = records.reduce((s, r) => s + (Number(r.cost) || 0), 0);
 
   const exportCsv = () => {
-    const head = ["时间", "账号", "模型", "方式", "状态", "花费", "用时(秒)", "提示词", "图片"];
+    const head = ["时间", "账号", "工作区", "模型", "方式", "状态", "花费", "用时(秒)", "提示词", "图片"];
     const rows = records.map((r) => [
       new Date(r.createdAt).toLocaleString("zh-CN"),
       r.owner,
+      workspaceLabel(r.workspace, true),
       modelName(r.model),
       r.mode === "i2i" ? "图生图" : "文生图",
       r.url ? "成功" : r.status === "pending" ? "生成中" : "失败",
@@ -425,7 +438,7 @@ export default function AdminPage() {
                     {data.models.slice(0, 8).map((m) => {
                       const icon = modelIcon(m.model);
                       return (
-                        <button key={m.model} type="button" onClick={() => { setFModel(m.model); setFUser("all"); setFStatus("all"); setFTime("all"); go("records"); }} className="block w-full text-left">
+                        <button key={m.model} type="button" onClick={() => { setFModel(m.model); setFUser("all"); setFStatus("all"); setFTime("all"); setFWorkspace("all"); go("records"); }} className="block w-full text-left">
                           <div className="flex items-center gap-2 text-[12px]">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             {icon ? <img src={icon} alt="" className="h-5 w-5 rounded-md" /> : <span className="h-5 w-5 rounded-md bg-[#f2f2f4]" />}
@@ -458,7 +471,7 @@ export default function AdminPage() {
                     ))}
                   </div>
                 </Card>
-                <Card title="最新生成" right={<button type="button" onClick={() => { setFUser("all"); setFModel("all"); setFStatus("all"); setFTime("all"); go("records"); }} className="text-[12px] text-[#0071e3]">全部 ›</button>}>
+                <Card title="最新生成" right={<button type="button" onClick={() => { setFUser("all"); setFModel("all"); setFStatus("all"); setFTime("all"); setFWorkspace("all"); go("records"); }} className="text-[12px] text-[#0071e3]">全部 ›</button>}>
                   <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
                     {data.records.filter((r) => r.url).slice(0, 12).map((r) => (
                       <button key={r.id} type="button" onClick={() => setOpen(r)} className="overflow-hidden rounded-xl bg-[#f2f2f4]">
@@ -546,6 +559,9 @@ export default function AdminPage() {
                   <option value="all">全部模型</option>
                   {[...new Set([...MODELS.map((m) => m.id as string), ...data.models.map((m) => m.model)])].map((id) => <option key={id} value={id}>{modelName(id)}</option>)}
                 </select>
+                <select value={fWorkspace} onChange={(e) => { setFWorkspace(e.target.value); setLimit(60); }} className={select} aria-label="工作区">
+                  <option value="all">全部工作区</option><option value="canvas">画布</option><option value="single">单图</option><option value="unknown">未记录</option>
+                </select>
                 <Seg value={fStatus} options={[["all", "全部"], ["done", "成功"], ["failed", "失败"], ["fav", "收藏"]]} onPick={(v) => { setFStatus(v); setLimit(60); }} />
                 <Seg value={fTime} options={[["all", "全部时间"], ["today", "今天"], ["7", "7 天"], ["30", "30 天"]]} onPick={(v) => { setFTime(v); setLimit(60); }} />
                 <div className="ml-auto flex items-center gap-2">
@@ -555,8 +571,8 @@ export default function AdminPage() {
               </div>
               <div className="px-1 text-[12px] text-[#86868b]">
                 共 {records.length} 条 · 花费 {yuan(recCost)}
-                {(fUser !== "all" || fModel !== "all" || fStatus !== "all" || fTime !== "all" || fText) && (
-                  <button type="button" onClick={() => { setFUser("all"); setFModel("all"); setFStatus("all"); setFTime("all"); setFText(""); }} className="ml-2 text-[#0071e3]">清除筛选</button>
+                {(fUser !== "all" || fModel !== "all" || fStatus !== "all" || fTime !== "all" || fWorkspace !== "all" || fText) && (
+                  <button type="button" onClick={() => { setFUser("all"); setFModel("all"); setFStatus("all"); setFTime("all"); setFWorkspace("all"); setFText(""); }} className="ml-2 text-[#0071e3]">清除筛选</button>
                 )}
               </div>
               {records.length === 0 ? (
@@ -581,6 +597,7 @@ export default function AdminPage() {
                       <span className="block px-2.5 py-2">
                         <span className="block truncate text-[12px]">{r.prompt || "（没写描述）"}</span>
                         <span className="mt-0.5 flex items-center gap-1 text-[11px] text-[#86868b]">
+                          {r.workspace && <><span className="shrink-0">{workspaceLabel(r.workspace)}</span><span>·</span></>}
                           <span className="truncate">{r.owner}</span>
                           <span>·</span>
                           <span className="truncate">{modelName(r.model)}</span>
@@ -598,6 +615,7 @@ export default function AdminPage() {
                         <th className="px-3 py-2 font-normal">图</th>
                         <th className="px-2 py-2 font-normal">时间</th>
                         <th className="px-2 py-2 font-normal">账号</th>
+                        <th className="px-2 py-2 font-normal">工作区</th>
                         <th className="px-2 py-2 font-normal">模型</th>
                         <th className="px-2 py-2 font-normal">提示词</th>
                         <th className="px-2 py-2 text-right font-normal">用时</th>
@@ -617,6 +635,7 @@ export default function AdminPage() {
                           </td>
                           <td className="whitespace-nowrap px-2 tabular-nums text-[#86868b]">{when(r.createdAt)}</td>
                           <td className="px-2">{r.owner}</td>
+                          <td className="whitespace-nowrap px-2">{workspaceLabel(r.workspace)}</td>
                           <td className="whitespace-nowrap px-2">{modelName(r.model)}</td>
                           <td className="max-w-[360px] truncate px-2 text-[#3a3a3c]">{r.prompt}</td>
                           <td className="whitespace-nowrap px-2 text-right tabular-nums text-[#86868b]">{secs(r.durationMs)}</td>
@@ -709,12 +728,18 @@ export default function AdminPage() {
                 <dd><button type="button" onClick={() => { setOpen(null); showUser(open.owner); }} className="text-[#0071e3]">{open.owner}</button></dd>
                 <dt className="text-[#86868b]">时间</dt>
                 <dd className="tabular-nums">{new Date(open.createdAt).toLocaleString("zh-CN")}</dd>
+                <dt className="text-[#86868b]">工作区</dt>
+                <dd>{workspaceLabel(open.workspace, true)}</dd>
+                {open.nodeCount != null && <><dt className="text-[#86868b]">节点快照</dt><dd>{open.nodeCount} 个节点</dd></>}
                 <dt className="text-[#86868b]">方式</dt>
                 <dd>{open.mode === "i2i" ? "图生图" : "文生图"}</dd>
                 <dt className="text-[#86868b]">用时</dt>
                 <dd className="tabular-nums">{secs(open.durationMs)}</dd>
                 <dt className="text-[#86868b]">花费</dt>
                 <dd className="tabular-nums">{open.cost ? `¥${open.cost}` : "—"}</dd>
+                {open.seed != null && <><dt className="text-[#86868b]">种子</dt><dd className="tabular-nums">{open.seed}</dd></>}
+                {open.polishLevel && <><dt className="text-[#86868b]">润色档位</dt><dd>{{ low: "低", medium: "中", high: "高" }[open.polishLevel]}</dd></>}
+                {open.mode === "i2i" && !findModel(open.model)?.billing && open.reverseOn != null && <><dt className="text-[#86868b]">提示词反推</dt><dd>{open.reverseOn ? "开" : "关"}</dd></>}
                 {Object.entries(open.settings ?? {}).map(([k, v]) => (
                   <Fragment key={k}>
                     <dt className="text-[#86868b]">{k}</dt>
@@ -726,9 +751,21 @@ export default function AdminPage() {
                 <div className="mt-4">
                   <div className="mb-1 text-[12px] text-[#86868b]">参考图</div>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={openRefs[0]} alt="参考图" className="max-h-32 rounded-xl" />
+                  <div className="flex flex-wrap gap-2">{openRefs.map((src, i) => (
+                    <figure key={i} className="relative overflow-hidden rounded-lg bg-[#f2f2f4]">
+                      <img src={src} alt={`参考图${i + 1}`} className="h-[68px] w-[68px] object-contain" />
+                      {openRefs.length > 1 && <figcaption className="absolute bottom-0 left-0 rounded-tr bg-black/55 px-1 text-[10px] text-white">图{i + 1}</figcaption>}
+                    </figure>
+                  ))}</div>
                 </div>
               )}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {open.workspace ? <a href={editRecordLink(open)} className="rounded-full bg-[#0071e3] px-4 py-1.5 text-[12px] text-white">重新编辑</a> : <>
+                  <span className="text-[12px] text-[#6e6e73]">重新编辑</span>
+                  <a href={editRecordLink(open, "single")} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px]">在单图编辑</a>
+                  <a href={editRecordLink(open, "canvas")} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px]">在画布编辑</a>
+                </>}
+              </div>
               {!open.settings && <div className="mt-2 text-[11px] text-[#aeaeb2]">这张图在记录参数之前生成，没有完整参数。</div>}
               {open.userPrompt && (
                 <>

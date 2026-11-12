@@ -26,7 +26,7 @@ import {
 
 import type { RunFrame } from "@/lib/canvas-execution";
 import type { BoardNode, CanvasDraft } from "@/lib/canvas-workflow";
-import { pictureParams, pictureRefs, restoredPolishLevel, type EditMetadata } from "@/lib/edit-recipe";
+import { pictureParams, pictureRefs, recordWorkspace, restoredPolishLevel, type EditMetadata, type RecordWorkspace } from "@/lib/edit-recipe";
 
 type Readiness = Record<string, Record<Mode, boolean>>;
 
@@ -644,8 +644,11 @@ export default function StudioPage() {
   // 2026-11-10 (用户: 画布要能新建 画布1 2 3): several boards per account, kept in this browser.
   const [boards, setBoards] = useState<{ id: string; name: string }[]>([{ id: "1", name: "画布1" }]);
   const [boardId, setBoardId] = useState("1");
+  const [boardsLoadedFor, setBoardsLoadedFor] = useState<string | null>(null);
   boardsRef.current = boards;
   boardIdRef.current = boardId;
+  const workspaceAt = useCallback((id?: string): RecordWorkspace =>
+    id ? { kind: "canvas", boardId: id, boardName: boardsRef.current.find((b) => b.id === id)?.name } : { kind: "single" }, []);
   const [boardJobs, setBoardJobs] = useState<BoardJob[]>([]);
   const jobsPlaced = useCallback((done: BoardJob[]) => {
     setBoardJobs((list) => list.filter((job) => !done.includes(job)));
@@ -997,6 +1000,7 @@ export default function StudioPage() {
       })
       .catch(() => {});
     // 2026-11-06 (用户: 刷新要等几秒): show the history this browser saw last time at once, then refresh it.
+    const openingRecord = new URLSearchParams(location.search).has("editRecord");
     let fromCache = false;
     const cachedDone = new Set<string>();
     try {
@@ -1007,7 +1011,7 @@ export default function StudioPage() {
         rememberDirect(cached);
         setGallery(cached);
         const first = (cached as GalleryItem[]).find((x) => x.url);
-        if (first && !busyRef.current) showItem(first);
+        if (first && !busyRef.current && !openingRecord) showItem(first);
       }
     } catch {}
     const recent = (p: PendingJob) => Date.now() - p.createdAt < 30 * 60_000;
@@ -1026,7 +1030,7 @@ export default function StudioPage() {
           const remoteIds = new Set(d.items.map((x: GalleryItem) => x.id));
           setGallery((cur) => [...cur.filter((x) => earlyIds.has(x.taskId ?? x.id) && x.url && !remoteIds.has(x.id)), ...d.items]);
           const first = (d.items as GalleryItem[]).find((x) => x.url);
-          if (first && !busyRef.current && !fromCache) showItem(first);
+          if (first && !busyRef.current && !fromCache && !openingRecord) showItem(first);
         }
         // 2026-11-05 (用户: 刷新后进度没了): the server remembers every submitted task; pick unfinished ones up again.
         const local = readPending();
@@ -1245,6 +1249,7 @@ export default function StudioPage() {
   const draftReady = useRef(false);
   useEffect(() => {
     if (!user || draftReady.current) return;
+    if (new URLSearchParams(location.search).has("editRecord")) return;
     loadDraft(user).then((d) => {
       if (d && !fileBlobRef.current) {
         const files = d.images.map((x) => new File([x.blob], x.name || "ref.png", { type: x.blob.type }));
@@ -1467,13 +1472,13 @@ export default function StudioPage() {
     replaceReferenceUrls(refs);
   }, [restorePictureParams, replaceReferenceUrls]);
 
-  const [requestedEdit, setRequestedEdit] = useState<{ board: string; item: GalleryItem } | null>(null);
+  const [requestedEdit, setRequestedEdit] = useState<{ board: string; item: GalleryItem; snapshot?: boolean } | null>(null);
   useEffect(() => {
     if (!requestedEdit) return;
     if (!canvasOn || requestedEdit.board !== boardId) { setRequestedEdit(null); return; }
     const board = canvasApi.current;
     if (!board) return;
-    board.reedit(requestedEdit.item);
+    board.reedit(requestedEdit.item, requestedEdit.snapshot);
     setRequestedEdit(null);
   }, [requestedEdit, canvasOn, boardId, user]);
 
@@ -1659,7 +1664,7 @@ export default function StudioPage() {
         model: pending.model,
         prompt: pending.prompt,
         url,
-        refUrl: pending.refUrl, refUrls: pending.refUrls, settings: pending.settings, canvasLayout: pending.canvasLayout, editorDraft: pending.editorDraft,
+        refUrl: pending.refUrl, refUrls: pending.refUrls, settings: pending.settings, canvasLayout: pending.canvasLayout, editorDraft: pending.editorDraft, workspace: pending.workspace,
         cost: done.cost || null,
         createdAt: pending.createdAt,
         durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
@@ -1807,14 +1812,14 @@ export default function StudioPage() {
         });
         if (!d?.ok || !d.taskId) throw new Error(d?.error || "高清放大失败");
         const now = Date.now();
-        const p: PendingJob = { canvasBoard, canvasLayout, taskId: d.taskId, mode: g.mode, model: g.model as ModelId | undefined, prompt: g.prompt, createdAt: now, startedAt: now };
+        const p: PendingJob = { workspace: workspaceAt(canvasBoard), canvasBoard, canvasLayout, taskId: d.taskId, mode: g.mode, model: g.model as ModelId | undefined, prompt: g.prompt, createdAt: now, startedAt: now };
         addPending([p]);
         resumePending([p]);
       } catch (e: any) {
         setError(e?.message || "高清放大失败");
       }
     },
-    [gallery, resumePending, boardId]
+    [gallery, resumePending, boardId, workspaceAt]
   );
 
   const resumePendingRef = useRef(resumePending);
@@ -1829,6 +1834,7 @@ export default function StudioPage() {
     const editRatio = editorDraft.editRatio ?? "auto";
     const fixedEditAspect = editAspectOf(model, editRatio);
     const canvasBoard = target || canvasOnRef.current ? boardId : undefined;
+    const workspace = workspaceAt(canvasBoard);
     const hasFrame = !!target || !!(canvasBoard && canvasApi.current?.layout()?.frame.node);
     if (!hasFrame && busyRef.current) return;
     const leftover = hasFrame ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
@@ -1913,7 +1919,7 @@ export default function StudioPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            prompt: finalPrompt, canvasLayout, editorDraft,
+            prompt: finalPrompt, canvasLayout, editorDraft, workspace,
             editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
             count: frameId ? 1 : count,
@@ -1932,6 +1938,7 @@ export default function StudioPage() {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
         fd.append("editorDraft", JSON.stringify(editorDraft));
+        fd.append("workspace", JSON.stringify(workspace));
         if (canvasLayout) fd.append("canvasLayout", JSON.stringify(canvasLayout));
         if (finalPrompt !== userPrompt) {
           fd.append("optimized", "1");
@@ -1973,7 +1980,7 @@ export default function StudioPage() {
         model,
         prompt: finalPrompt,
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
-        refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft,
+        refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft, workspace,
         createdAt: now + i,
         startedAt: clickedAt,
         renderTiming: frameId ? timing : undefined,
@@ -2004,7 +2011,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [editorMode, readiness, preview, previewAspect, startStep, count, extraRefs, finishBatch, resumePending, boardId, placeJobs, paintProgress, finishPending]);
+  }, [editorMode, readiness, preview, previewAspect, startStep, count, extraRefs, finishBatch, resumePending, boardId, workspaceAt, placeJobs, paintProgress, finishPending]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
@@ -2094,6 +2101,7 @@ export default function StudioPage() {
     fetchJson("/api/canvas")
       .then((d) => {
         if (!alive) return;
+        if (!d?.ok && new URLSearchParams(location.search).has("editRecord")) throw new Error();
         const idx = d?.index;
         if (idx && typeof idx.canvas === "boolean") {
           setCanvasOn(idx.canvas);
@@ -2120,8 +2128,11 @@ export default function StudioPage() {
           pushBoardIndex(list, cur);
           importShare(list);
         }
+        setBoardsLoadedFor(user);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (alive && new URLSearchParams(location.search).has("editRecord")) flash("工作区加载失败，请刷新重试");
+      });
     return () => {
       alive = false;
     };
@@ -2187,22 +2198,73 @@ export default function StudioPage() {
       flash(e?.message || "打不开这个分享");
     }
   };
-  const pushBoardIndex = (list: { id: string; name: string }[], current: string, canvas?: boolean) => {
+  const pushBoardIndex = useCallback((list: { id: string; name: string }[], current: string, canvas?: boolean) => {
     fetchJson("/api/canvas", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ boards: list, current, updatedAt: Date.now(), ...(canvas !== undefined ? { canvas } : {}) }),
     }).catch(() => {});
-  };
-  const saveBoards = (list: { id: string; name: string }[], current: string) => {
+  }, []);
+  const saveBoards = useCallback((list: { id: string; name: string }[], current: string, canvas?: boolean) => {
     setBoards(list);
     setBoardId(current);
     try {
       localStorage.setItem(`ais-canvas-boards:${user}`, JSON.stringify(list));
       localStorage.setItem(`ais-canvas-current:${user}`, current);
     } catch {}
-    pushBoardIndex(list, current);
-  };
+    pushBoardIndex(list, current, canvas);
+  }, [user, pushBoardIndex]);
+  // Only the admin records entry opens the recorded workspace. The studio's own history edits in place.
+  useEffect(() => {
+    if (!user || boardsLoadedFor !== user) return;
+    const link = new URL(window.location.href);
+    const id = link.searchParams.get("editRecord"), account = link.searchParams.get("account");
+    if (!id || !account) return;
+    let alive = true;
+    void (async () => {
+      const d = await fetchJson("/api/admin?" + new URLSearchParams({ record: id, account }));
+      if (!alive) return;
+      if (!d?.ok || !d.item) throw new Error(d?.error || "记录加载失败，请刷新重试");
+      if (d.viewer !== user) return;
+      const item: GalleryItem = d.item;
+      const origin = recordWorkspace(item);
+      const wantsCanvas = (origin?.kind ?? link.searchParams.get("workspace")) === "canvas";
+      const canvas = wantsCanvas && !window.matchMedia("(max-width: 767px)").matches;
+      let list = boardsRef.current, board = boardIdRef.current;
+      let copied = false;
+      if (canvas) {
+        const ownBoard = account === user && origin?.kind === "canvas" && list.find((b) => b.id === origin.boardId);
+        if (ownBoard) board = ownBoard.id;
+        else {
+          // Never open another account's board, even when its id matches one of ours.
+          const copies = list.find((b) => b.id === "record-copies");
+          if (!copies && list.length >= 50) throw new Error("画布已满，请先腾出一个位置再还原记录");
+          board = copies?.id ?? "record-copies";
+          if (!copies) list = [...list, { id: board, name: "生图记录副本" }];
+          copied = true;
+        }
+      }
+      setOpenPanel(null);
+      setCanvasOn(canvas);
+      setHistHidden(canvas);
+      if (!wantsCanvas || canvas) {
+        saveBoards(list, board, canvas);
+        try { localStorage.setItem("ais-canvas-on", canvas ? "1" : "0"); } catch {}
+      }
+      if (canvas) setRequestedEdit({ board, item, snapshot: true });
+      else {
+        setCompareOn(false);
+        reuseItem(item);
+        if (item.url) showItem(item);
+        else { setCurrentId(null); setResultUrl(null); }
+      }
+      draftReady.current = true;
+      for (const key of ["editRecord", "account", "workspace"]) link.searchParams.delete(key);
+      window.history.replaceState(window.history.state, "", link.pathname + link.search + link.hash);
+      flash(copied ? "已在你的画布副本还原节点" : wantsCanvas && !canvas ? "手机已还原单图参数；电脑可打开原画布" : "已还原生成参数");
+    })().catch((e) => { if (alive) flash(e instanceof Error ? e.message : "记录加载失败，请刷新重试"); });
+    return () => { alive = false; };
+  }, [user, boardsLoadedFor, saveBoards, reuseItem, showItem, flash]);
   const boardKey = (id: string) => (id === "1" ? `ais-canvas-v1:${user}` : `ais-canvas-v1:${user}:${id}`);
   const newBoard = () => {
     let n = boards.length + 1;
@@ -2268,7 +2330,7 @@ export default function StudioPage() {
     if (key === composeKey.current && !restore) return;
     composeMem.current.set(composeKey.current, { ...composeSnapRef.current, summary: liveSummaryRef.current });
     composeKey.current = key;
-    const remembered = composeMem.current.get(key) ?? draft;
+    const remembered = restore && draft ? draft : composeMem.current.get(key) ?? draft;
     const original = editOf && (restore || !remembered) ? gallery.find((g) => g.id === editOf) : undefined;
     if (original) return restorePictureParams(original);
     const cur = composeSnapRef.current;

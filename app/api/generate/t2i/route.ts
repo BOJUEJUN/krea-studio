@@ -1,4 +1,4 @@
-import { readCanvasLayout, readDraft } from "@/lib/edit-recipe";
+import { readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { buildWorkflowNodes, createCustomTask } from "@/lib/runninghub";
@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
 
     // Record the tasks right away so images reach history even if the page closes.
     const settings = settingsOf(model.id, "t2i", (k) => (body[k] == null ? "" : String(body[k])));
+    const workspace = readWorkspace(body.workspace);
     const canvasLayout = readCanvasLayout(body.canvasLayout);
     const editorDraft = readDraft(body.editorDraft);
     if (Number(body.editorWidth) > 0 && Number(body.editorHeight) > 0) {
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
         prompt: prompt.slice(0, 2000),
         url: "",
         seed: t.seed,
-        settings, canvasLayout, editorDraft,
+        settings, canvasLayout, editorDraft, workspace,
         createdAt: now + i,
       }).catch((e) => console.error("[history] record on submit failed:", e?.message || e));
     }
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest) {
         tasks,
         mode: "t2i",
         model: model.id,
-        settings, canvasLayout, editorDraft,
+        settings, canvasLayout, editorDraft, workspace,
         prompt,
       },
       { status: 202 }
