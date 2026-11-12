@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { MAX_KREA_REGIONS, MAX_REGION_NOTE, type KreaRegion, type RegionBox } from "@/lib/krea-regions";
+import { MAX_KREA_REGIONS, MAX_REGION_NOTE, REGION_COLORS as colors, type KreaRegion, type RegionBox } from "@/lib/krea-regions";
 
 type Point = { x: number; y: number };
 type Drag = { pointer: number; start: Point; region?: KreaRegion; action: "draw" | "move" | "resize" };
-const colors = ["#0766d3", "#aa2676", "#13735a", "#9d4c09", "#7652ae"];
 const clamp = (v: number, max = 1) => Math.max(0, Math.min(max, v));
 const bounds = (r: RegionBox) => ({ left: r.x * 100 + "%", top: r.y * 100 + "%", width: r.width * 100 + "%", height: r.height * 100 + "%" });
 

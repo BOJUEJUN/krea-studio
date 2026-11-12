@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
 import { KreaRegionEditor } from "./krea-region-editor";
-import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion } from "@/lib/krea-regions";
+import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion, REGION_COLORS } from "@/lib/krea-regions";
 import { BatchGrid } from "./batch-grid";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
@@ -1181,6 +1181,27 @@ export default function StudioPage() {
     if (el && main) main.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
   }, []);
 
+  // 用户 2026-11-12 (要看到正常的记录): a page left open keeps old code (it did not record 画布 / 单图). When a new
+  // version is live, offer a one-click refresh.
+  const [updateReady, setUpdateReady] = useState(false);
+  useEffect(() => {
+    let first = "", last = 0;
+    const check = () => {
+      if (document.visibilityState !== "visible" || Date.now() - last < 60_000) return;
+      last = Date.now();
+      fetch("/api/version", { cache: "no-store" }).then((r) => r.json()).then((d) => {
+        const b = String(d?.build || "");
+        if (!b) return;
+        if (!first) first = b;
+        else if (b !== first) setUpdateReady(true);
+      }).catch(() => {});
+    };
+    check();
+    const timer = window.setInterval(check, 5 * 60_000);
+    window.addEventListener("focus", check);
+    document.addEventListener("visibilitychange", check);
+    return () => { window.clearInterval(timer); window.removeEventListener("focus", check); document.removeEventListener("visibilitychange", check); };
+  }, []);
   const flash = useCallback((text: string, ms = 2600) => {
     setNotice(text);
     window.setTimeout(() => setNotice((n) => (n === text ? null : n)), ms);
@@ -2585,6 +2606,12 @@ export default function StudioPage() {
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
+      {updateReady && (
+        <button type="button" onClick={() => window.location.reload()}
+          className="fixed left-1/2 top-3 z-[60] -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-[13px] text-panel shadow-lg hover:opacity-90">
+          网站已更新 · 点这里刷新
+        </button>
+      )}
       {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions}
         onClose={() => setRegionSession(null)} onSave={(next) => {
           // 用户 2026-11-11 (深度思考点不开): boxes switch 深度思考 on once (more precise), but it stays the user's choice.
@@ -2890,6 +2917,11 @@ export default function StudioPage() {
             {canvasOn && user && (
               <div className="absolute inset-0 z-20">
                 <CanvasBoard
+                  regionMarks={canvasOn && hasBoxes ? regions.reduce<Record<string, { x: number; y: number; width: number; height: number; label: string; color: string }[]>>((acc, r, idx) => {
+                    const u = canvasSel[r.image_idx];
+                    if (u) (acc[u] ??= []).push({ x: r.x, y: r.y, width: r.width, height: r.height, label: r.label, color: REGION_COLORS[idx % REGION_COLORS.length] });
+                    return acc;
+                  }, {}) : undefined}
                   key={boardId}
                   storageKey={boardKey(boardId)}
                   cloudId={boardId}
@@ -3294,6 +3326,35 @@ export default function StudioPage() {
                         </>
                       );
                     })()}
+                  </div>
+                )}
+                {/* 用户 2026-11-11 (框选确定后要在输入框显示提示词): each box shows where it is and what to change, editable here. */}
+                {hasBoxes && (
+                  <div className="flex flex-col gap-1.5 px-3 pt-2">
+                    {regions.map((r, idx) => {
+                      const color = REGION_COLORS[idx % REGION_COLORS.length];
+                      const src = regionImages[r.image_idx];
+                      const tile = src && /^\/api\/(img|ref)\//.test(src) ? thumbOf(src.replace(/\?raw=1$/, ""), 160) : src;
+                      return (
+                        <div key={r.label} className="flex items-center gap-2 rounded-lg border-l-[3px] bg-edge/[0.035] py-1 pl-1.5 pr-1" style={{ borderLeftColor: color }}>
+                          <button type="button" title="在图上调整这个框" aria-label={`调整框 ${r.label}`}
+                            onClick={() => { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); }}
+                            className="relative h-9 w-7 shrink-0 overflow-hidden rounded bg-page bg-[length:100%_100%] ring-1 ring-edge/[0.08]"
+                            style={tile ? { backgroundImage: `url("${tile}")` } : undefined}>
+                            <span className="absolute border" style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.width * 100}%`, height: `${r.height * 100}%`, borderColor: color, background: color + "33" }} />
+                          </button>
+                          <span className="shrink-0 rounded px-1 text-[11px] font-bold leading-4 text-white" style={{ background: color }}>@{r.label}</span>
+                          {regionImages.length > 1 && <span className="shrink-0 text-[11px] text-muted">图{r.image_idx + 1}</span>}
+                          <input value={r.note} maxLength={600} placeholder={r.image_idx === 0 ? "这里怎么改？" : "这处素材怎么用？"}
+                            aria-label={`框 ${r.label} 的修改要求`}
+                            onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); }}
+                            className={`min-w-0 flex-1 bg-transparent text-[16px] md:text-[13px] outline-none placeholder:text-hint ${!r.note.trim() && r.image_idx === 0 ? "placeholder:text-danger" : ""}`} />
+                          <button type="button" aria-label={`删除框 ${r.label}`} title="删除这个框"
+                            onClick={() => setRegions((list) => list.filter((v) => v.label !== r.label))}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[14px] text-muted hover:bg-edge/[0.06] hover:text-ink">×</button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <div className="relative">

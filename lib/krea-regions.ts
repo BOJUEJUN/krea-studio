@@ -1,4 +1,6 @@
 export const MAX_KREA_REGIONS = 24;
+/** One color per box, in box order (editor, input box and canvas use the same). */
+export const REGION_COLORS = ["#0766d3", "#aa2676", "#13735a", "#9d4c09", "#7652ae"];
 export const MAX_REGION_NOTE = 600;
 export type RegionBox = { x: number; y: number; width: number; height: number };
 export type KreaRegion = RegionBox & { image_idx: number; label: string; note: string };

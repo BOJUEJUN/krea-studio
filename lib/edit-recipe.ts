@@ -18,7 +18,9 @@ export function readWorkspace(value: unknown): RecordWorkspace | undefined {
     boardName: "boardName" in value && typeof value.boardName === "string" ? value.boardName.trim().slice(0, 20) || undefined : undefined };
 }
 export function recordWorkspace(g: EditMetadata): RecordWorkspace | undefined {
-  return g.workspace ?? (g.canvasLayout ? { kind: "canvas" } : undefined);
+  // 用户 2026-11-12 (工作区显示未记录): pages opened before the workspace was recorded still send a canvas layout for
+  // every canvas run, so a record without either came from the single-picture page.
+  return g.workspace ?? (g.canvasLayout ? { kind: "canvas" } : { kind: "single" });
 }
 export type EditMetadata = {
   workspace?: RecordWorkspace;
