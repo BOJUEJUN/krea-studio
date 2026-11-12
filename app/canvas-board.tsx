@@ -532,6 +532,8 @@ export function CanvasBoard({
     let wheelIsMouse = false;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      // A wheel turned by accident while the wheel button is held to pan does nothing.
+      if (drag.current?.kind === "pan") return;
       if (!moving.current) {
         moving.current = true;
         onBoxRef.current?.(null);
@@ -864,7 +866,7 @@ export function CanvasBoard({
       setMarquee({ x0: w.x, y0: w.y, x1: w.x, y1: w.y });
       if (!e.shiftKey) setSel(new Set());
     } else {
-      drag.current = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: viewRef.current.x, vy: viewRef.current.y, moved: false };
+      drag.current = { kind: "pan", sx: e.clientX, sy: e.clientY, vx: e.clientX, vy: e.clientY, moved: false };
       setPanning(true);
     }
   };
@@ -924,7 +926,11 @@ export function CanvasBoard({
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
       nav();
       userMoved.current = true;
-      setView((v) => ({ ...v, x: d.vx + e.clientX - d.sx, y: d.vy + e.clientY - d.sy }));
+      // 用户 2026-11-12 (PC 按住滚轮拖画布时突然闪到别处): move by how far the pointer went since the last move, so a
+      // zoom in between (a wheel nudged while held) is not undone by jumping back to the drag's starting view.
+      const dx = e.clientX - d.vx, dy = e.clientY - d.vy;
+      d.vx = e.clientX; d.vy = e.clientY;
+      setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
     } else if (d.kind === "marquee") {
       const w = toWorld(e.clientX, e.clientY);
       const box = { x0: d.x0, y0: d.y0, x1: w.x, y1: w.y };
