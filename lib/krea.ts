@@ -1,4 +1,5 @@
-import { copyRemoteImage } from "./images";
+import { copyRemoteImage, saveImageBytes } from "./images";
+import { storeGet, storePut } from "./store";
 import type { KreaRegion } from "./krea-regions";
 
 /**
@@ -75,6 +76,16 @@ export async function createKreaTask(opts: {
   if (opts.negative?.trim()) body.negative_prompt = opts.negative.trim().slice(0, 1024);
   const json = await call("/generate/image/krea/krea-3", body);
   if (!json?.job_id) throw new Error("Krea 没有返回任务编号");
+  // 用户 2026-11-11 (局部重绘后比例不对，感觉拉伸了): Krea snaps the output to its own size grid (597×848 came back
+  // 864×1216), which squeezes the picture ~1%. Remember 图1's shape so the result is put back to it.
+  if ((opts.regional || opts.regions?.length) && refs[0]) {
+    try {
+      const sharp = (await import("sharp")).default;
+      const m = await sharp(refs[0].bytes).rotate().metadata();
+      const w = m.autoOrient?.width ?? m.width, h = m.autoOrient?.height ?? m.height;
+      if (w && h) await storePut(`kfix-${json.job_id}`, JSON.stringify({ w, h }), "application/json").catch(() => {});
+    } catch {}
+  }
   // The job API does not echo the request, so the price inputs ride along in the task id: _<1|2|4><h|f><refs>.
   const size = String(body.resolution)[0];
   const refsCount = Array.isArray(body.image_urls) ? body.image_urls.length : 0;
@@ -98,6 +109,26 @@ export async function createKreaUpscale(imageUrl: string, width: number, height:
   return `krea-${json.job_id}_up`;
 }
 
+/** Stretch a 局部重绘 result back to 图1's width:height (only for small grid-rounding differences), once. */
+async function restoreShape(jobId: string, taskId: string): Promise<void> {
+  const note = await storeGet(`kfix-${jobId}`).catch(() => null);
+  if (!note) return;
+  const want = JSON.parse(note.toString("utf8"));
+  if (want?.done || !want?.w || !want?.h) return;
+  const bytes = await storeGet(`img-${taskId}`, 40_000);
+  if (!bytes) return;
+  const sharp = (await import("sharp")).default;
+  const m = await sharp(bytes).metadata();
+  if (!m.width || !m.height) return;
+  const height = Math.round((m.width * want.h) / want.w);
+  const off = Math.abs(height - m.height) / m.height;
+  if (off > 0.002 && off < 0.06) {
+    const fixed = await sharp(bytes).resize(m.width, height, { fit: "fill" }).png().toBuffer();
+    await saveImageBytes(taskId, fixed);
+  }
+  await storePut(`kfix-${jobId}`, JSON.stringify({ ...want, done: true }), "application/json").catch(() => {});
+}
+
 export async function queryKreaTask(taskId: string): Promise<{
   status: string;
   outputs: string[];
@@ -112,6 +143,7 @@ export async function queryKreaTask(taskId: string): Promise<{
     if (!url) return { status: "FAILED", outputs: [], errorMessage: "Krea 没有返回图片" };
     // 2026-11-06 (用户: Krea 卡在 98%): saving a big PNG from the US to Tencent timed out; one save routine now.
     const saved = await copyRemoteImage(taskId, url);
+    await restoreShape(jobId, taskId).catch((e) => console.error("[krea] shape fix failed:", e?.message || e));
     // Estimate in ¥: $0.03 at 1K, $0.06 at 2K, +$0.02 per reference.
     if (meta === "up") return { status: "SUCCESS", outputs: [saved], cost: "0.72" }; // $0.10 per upscale
     const base = meta[0] === "1" ? 0.22 : meta[0] === "4" ? 0.86 : 0.43;
