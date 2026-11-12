@@ -4,6 +4,8 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
+import { KreaRegionEditor } from "./krea-region-editor";
+import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion } from "@/lib/krea-regions";
 import { BatchGrid } from "./batch-grid";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
@@ -698,6 +700,10 @@ export default function StudioPage() {
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
   const [regional, setRegional] = useState(false);
+  const [regions, setRegions] = useState<KreaRegion[]>([]);
+  const [regionSession, setRegionSession] = useState<{ node: string; images: string[] } | null>(null);
+  const hasBoxes = model === "krea-3" && mode === "i2i" && regions.length > 0;
+  const hasRegionNote = hasBoxes && regions.some((r) => r.note.trim());
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
   const [paramsOpen, setParamsOpen] = useState(false);
@@ -1130,7 +1136,8 @@ export default function StudioPage() {
     setHeightText(String(v));
   }, [heightText]);
 
-  const onPickFile = useCallback((file: File | null) => {
+  const onPickFile = useCallback((file: File | null, promoteNext = false) => {
+    setRegions((list) => reindexRegions(list, (i) => i === 0 ? -1 : promoteNext ? i - 1 : i));
     refVersion.current++;
     refLoadRef.current = null;
     fileBlobRef.current = file;
@@ -1163,7 +1170,7 @@ export default function StudioPage() {
   /** Removing the first picture promotes the next one. */
   const removeMainRef = () => {
     const [next, ...others] = extraRefs;
-    onPickFile(next ? next.file : null);
+    onPickFile(next ? next.file : null, true);
     setExtraRefs(others);
   };
 
@@ -1227,6 +1234,7 @@ export default function StudioPage() {
       if (limit <= 1) {
         onPickFile(files[0]);
         setExtraRefs([]);
+        setRegions([]);
         if (!quiet || files.length > 1)
           flash(fileBlobRef.current && files.length >= 1 ? (files.length > 1 ? "这个模型只用 1 张参考图，已用第一张" : "已换成新的参考图") : "已放入参考图");
         return;
@@ -1255,6 +1263,11 @@ export default function StudioPage() {
         const files = d.images.map((x) => new File([x.blob], x.name || "ref.png", { type: x.blob.type }));
         if (files[0]) onPickFile(files[0]);
         if (files.length > 1) setExtraRefs(files.slice(1).map((file) => ({ file, url: URL.createObjectURL(file) })));
+        const savedRegions = readKreaRegions(d.regions, files.length);
+        if (files.length && savedRegions?.length && !canvasOnRef.current) {
+          setRegions(savedRegions);
+          setModel("krea-3");
+        }
         if (d.prompt) setPrompt((p) => p || d.prompt);
       }
       draftReady.current = true;
@@ -1264,10 +1277,10 @@ export default function StudioPage() {
     if (!user || !draftReady.current) return;
     const t = window.setTimeout(() => {
       const files = [fileBlobRef.current, ...extraRefs.map((r) => r.file)].filter((f): f is File => !!f);
-      saveDraft(user, { prompt, images: files.map((f) => ({ blob: f, name: f.name })) });
+      saveDraft(user, { prompt, regions: !canvasOn && hasBoxes ? regions : undefined, images: files.map((f) => ({ blob: f, name: f.name })) });
     }, 400);
     return () => clearTimeout(t);
-  }, [user, prompt, preview, extraRefs]);
+  }, [user, prompt, preview, extraRefs, canvasOn, hasBoxes, regions]);
 
   /** 2026-11-05 (用户: 历史加收藏，能筛选找到): star a picture; saved on the server. */
   const toggleFav = useCallback(
@@ -1409,6 +1422,7 @@ export default function StudioPage() {
     setPolishLevel(restoredPolishLevel(v.polishLevel, v.polishVersion));
     setThinking(v.thinking);
     setRegional(v.regional);
+    setRegions(v.regions ?? []);
     setBackground(v.background);
     setComplexity(v.complexity);
     setReverse(v.reverseOn);
@@ -1428,6 +1442,7 @@ export default function StudioPage() {
     setRes(v.res);
     setThinking(v.thinking);
     setRegional(v.regional);
+    setRegions([]);
     setBackground(v.background);
     setComplexity(v.complexity);
     setNegative(v.negative);
@@ -1830,6 +1845,7 @@ export default function StudioPage() {
     const editorDraft = target?.draft ?? { ...composeSnapRef.current, summary: liveSummaryRef.current };
     const { model, prompt, res, quality, thinking, widthText, heightText, width, height, denoise, regional } = editorDraft;
     const mode = target ? (urls.length ? "i2i" : "t2i") : editorMode;
+    const editRegions = model === "krea-3" && mode === "i2i" ? editorDraft.regions ?? [] : [];
     const reverse = editorDraft.reverseOn && !findModel(model)?.billing;
     const editRatio = editorDraft.editRatio ?? "auto";
     const fixedEditAspect = editAspectOf(model, editRatio);
@@ -1840,7 +1856,7 @@ export default function StudioPage() {
     const leftover = hasFrame ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
     if (leftover.length) { resumePending(leftover); return; }
     setError(null);
-    if ((mode === "t2i" || !reverse) && !prompt.trim()) { setError("请先输入描述"); return; }
+    if ((mode === "t2i" || !reverse) && !prompt.trim() && !editRegions.some((r) => r.note.trim())) { setError("请先输入描述"); return; }
     if (readiness && !readiness[model]?.[mode]) {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
@@ -1938,6 +1954,7 @@ export default function StudioPage() {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
         fd.append("editorDraft", JSON.stringify(editorDraft));
+        if (editRegions.length) fd.append("regions", JSON.stringify(editRegions));
         fd.append("workspace", JSON.stringify(workspace));
         if (canvasLayout) fd.append("canvasLayout", JSON.stringify(canvasLayout));
         if (finalPrompt !== userPrompt) {
@@ -1957,9 +1974,9 @@ export default function StudioPage() {
           fd.append("width", String(sz.width));
           fd.append("height", String(sz.height));
         }
-        if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
+        if ((thinking || editRegions.length) && paramsOf(model).thinking) fd.append("thinking", "1");
         for (const [k, v] of Object.entries(advanced(editorDraft))) fd.append(k, String(v));
-        if (regional && paramsOf(model).regional) fd.append("regional", "1");
+        if ((regional || editRegions.length) && paramsOf(model).regional) fd.append("regional", "1");
         for (const f of supplemental.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(f), "ref.jpg");
         data = await fetchJson("/api/generate/i2i", { method: "POST", body: fd });
       }
@@ -1978,7 +1995,7 @@ export default function StudioPage() {
         seed: t.seed,
         mode,
         model,
-        prompt: finalPrompt,
+        prompt: finalPrompt || regionDescription(editRegions),
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
         refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft, workspace,
         createdAt: now + i,
@@ -2071,7 +2088,7 @@ export default function StudioPage() {
     const tier = p.resolutions?.[res];
     const base = p.pricePerMegapixel ? (p.quality?.[quality] ?? 0) * (tier ?? 1) : tier ?? p.quality?.[quality];
     const refsUsed = mode === "i2i" ? Math.min(p.maxRefs ?? 1, (preview ? 1 : 0) + extraRefs.length) : 0;
-    const fixed = base != null ? base + (thinking && p.thinking ? p.thinking : 0) + (p.refPrice ?? 0) * refsUsed : findModel(model)?.price;
+    const fixed = base != null ? base + ((thinking || hasBoxes) && p.thinking ? p.thinking : 0) + (p.refPrice ?? 0) * refsUsed : findModel(model)?.price;
     if (fixed) {
       const total = fixed * count;
       return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
@@ -2320,22 +2337,25 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const composeSnap: CanvasDraft = { regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
   const composeKey = useRef("");
   const liveSummaryRef = useRef("");
   const switchCompose = (key: string, editOf?: string, restore = false, draft?: CanvasDraft) => {
-    if (key === composeKey.current && !restore) return;
+    if (key === composeKey.current && !restore) {
+      if (key && draft) setRegions(draft.regions ?? []);
+      return;
+    }
     composeMem.current.set(composeKey.current, { ...composeSnapRef.current, summary: liveSummaryRef.current });
     composeKey.current = key;
     const remembered = restore && draft ? draft : composeMem.current.get(key) ?? draft;
     const original = editOf && (restore || !remembered) ? gallery.find((g) => g.id === editOf) : undefined;
     if (original) return restorePictureParams(original);
     const cur = composeSnapRef.current;
-    const v = remembered ?? { ...cur, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
-    applyEditorDraft(v);
+    const v = remembered ?? { ...cur, regions: undefined, prompt: "", denoise: 0.5, seedText: "", negative: "", lora: 2 };
+    applyEditorDraft(draft ? { ...v, regions: draft.regions } : v);
   };
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
@@ -2457,11 +2477,11 @@ export default function StudioPage() {
       : modelParams.editRatio ? [{ key: "ratio", label: fixedEditAspect ? editRatio : "自适应" }] : []),
     ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
     ...(modelParams.quality ? [{ key: "quality", label: `画质 ${QUALITY_LABELS[quality]}` }] : []),
-    ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
+    ...(modelParams.thinking != null ? [{ key: "thinking", label: (thinking || hasBoxes) ? "深度思考" : "普通思考" }] : []),
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
     ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "快", medium: "标准", high: "精细" }[complexity]}` }] : []),
     // 2026-11-06 (用户: "整体改"听不懂): say what gets changed.
-    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
+    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: hasBoxes ? "只改框选区域" : regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
     // 速度 (标准 / 高速) removed 2026-11-11: 高速 measured no faster and ~30% dearer (用户: 高速没用就去掉).
@@ -2475,7 +2495,7 @@ export default function StudioPage() {
   useEffect(() => {
     if (canvasOn && editingNode && editingNode === composeKey.current)
       canvasApi.current?.saveDraft(editingNode, { ...composeSnapRef.current, summary: liveSummary });
-  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, background, complexity, reverseOn, reverseMode, editRatio]);
+  }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, regions, background, complexity, reverseOn, reverseMode, editRatio]);
   const boardSummary = (n: BoardNode, hasPictures: boolean) => {
     if (n.id === editingNode) return null;
     const saved = composeMem.current.get(n.id) ?? n.draft;
@@ -2500,7 +2520,7 @@ export default function StudioPage() {
     mode === "t2i" ? RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` : "跟参考图",
     modelParams.resolutions ? res : null,
     modelParams.quality ? QUALITY_LABELS[quality] : null,
-    modelParams.thinking != null && thinking ? "深度思考" : null,
+    modelParams.thinking != null && (thinking || hasBoxes) ? "深度思考" : null,
     mode === "i2i" && modelParams.denoise ? `重绘 ${denoise.toFixed(2)}` : null,
     seedText ? `种子 ${seedText}` : null,
   ]
@@ -2547,6 +2567,11 @@ export default function StudioPage() {
   const pageItems = visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE);
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
+  const regionImages = canvasOn ? canvasSel.slice(0, 8).map(fullOf) : preview ? [preview, ...extraRefs.slice(0, 7).map((r) => r.url)] : [];
+  const regionOwner = canvasOn ? boardId + "/" + editingNode : "single";
+  const sessionValid = regionSession && model === "krea-3" && regionSession.node === regionOwner &&
+    regionSession.images.length === regionImages.length && regionSession.images.every((src, i) => src === regionImages[i]);
+  useEffect(() => { if (regionSession && !sessionValid) setRegionSession(null); }, [regionSession, sessionValid]);
   const pickModel = (id: ModelId) => {
     setModel(id);
     setError(null);
@@ -2557,6 +2582,8 @@ export default function StudioPage() {
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
+      {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions}
+        onClose={() => setRegionSession(null)} onSave={(next) => { setRegions(next); setRegionSession(null); }} />}
       {dlg && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 px-4 backdrop-blur-[2px]" onPointerDown={(e) => e.target === e.currentTarget && closeDlg(null)}>
           <form
@@ -3209,7 +3236,12 @@ export default function StudioPage() {
                         )}
                         <button
                           type="button"
-                          onClick={() => (canvasOn && editingNode ? canvasApi.current?.removeInput(i) : i === 0 ? removeMainRef() : setExtraRefs((list) => list.filter((x) => x.url !== r.url)))}
+                          onClick={() => {
+                            if (canvasOn && editingNode) return canvasApi.current?.removeInput(i);
+                            if (i === 0) return removeMainRef();
+                            setRegions((list) => reindexRegions(list, (n) => n === i ? -1 : n > i ? n - 1 : n));
+                            setExtraRefs((list) => list.filter((_, slot) => slot !== i - 1));
+                          }}
                           className="absolute right-0.5 top-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
                           aria-label={`删除图${i + 1}`}
                         >
@@ -3236,6 +3268,12 @@ export default function StudioPage() {
                               <span className="text-[18px] leading-none">+</span>
                             </button>
                           )}
+                          {model === "krea-3" && regionImages.length > 0 && <button type="button" aria-label="框选修改"
+                            onClick={() => { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); }}
+                            className="inline-flex items-center gap-1.5 self-center rounded-full border border-accent/25 bg-accent/[0.06] px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10">
+                            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5" /></svg>
+                            框选修改{hasBoxes && <span className="tabular-nums">{regions.length}</span>}
+                          </button>}
                           {/* 用户 2026-11-11 (怎么没有显示连进来的内容): say plainly when this model cannot take every linked picture. */}
                           {canvasOn && canvasSel.length > limit && (
                             <button
@@ -3305,7 +3343,7 @@ export default function StudioPage() {
                     placeholder={
                       mode === "t2i"
                         ? "描述你想要的画面，或点 + 放参考图改图…"
-                        : reverse
+                        : hasBoxes ? "整张图的补充要求（选填）" : reverse
                           ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
                           : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
                     }
@@ -3519,6 +3557,8 @@ export default function StudioPage() {
                       key={c.key}
                       type="button"
                       data-setting={c.key}
+                      disabled={hasBoxes && (c.key === "thinking" || c.key === "regional")}
+                      title={hasBoxes && (c.key === "thinking" || c.key === "regional") ? "框选修改使用深度思考和局部编辑" : undefined}
                       aria-expanded={openPanel === c.key}
                       onClick={(e) => {
                         if (c.key === "model") anchorModel(e.currentTarget);
@@ -3623,7 +3663,7 @@ export default function StudioPage() {
                     <button
               onClick={startOrQueue}
               disabled={
-                !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim())
+                !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim() && !hasRegionNote)
               }
               className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
@@ -3705,7 +3745,10 @@ export default function StudioPage() {
                   if (slot != null && files[0]) {
                     // 换图 on a picture swaps just that one.
                     if (slot === 0) onPickFile(files[0]);
-                    else setExtraRefs((list) => list.map((x, j) => (j === slot - 1 ? { file: files[0], url: URL.createObjectURL(files[0]) } : x)));
+                    else {
+                      setRegions((list) => list.filter((r) => r.image_idx !== slot));
+                      setExtraRefs((list) => list.map((x, j) => (j === slot - 1 ? { file: files[0], url: URL.createObjectURL(files[0]) } : x)));
+                    }
                     flash(`已换掉图${slot + 1}`);
                     return;
                   }

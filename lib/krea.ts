@@ -1,4 +1,5 @@
 import { copyRemoteImage } from "./images";
+import type { KreaRegion } from "./krea-regions";
 
 /**
  * Krea 3 through Krea's own API (env KREA_API_KEY): submit returns a job id, the page
@@ -54,16 +55,18 @@ export async function createKreaTask(opts: {
   seed?: number;
   negative?: string;
   regional?: boolean;
+  regions?: KreaRegion[];
 }): Promise<string> {
   const body: Record<string, unknown> = {
-    prompt: opts.prompt,
-    thinking_mode: opts.thinking ? "high" : "fast",
+    ...(opts.prompt ? { prompt: opts.prompt } : {}),
+    thinking_mode: opts.thinking || opts.regions?.length ? "high" : "fast",
     resolution: ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res : opts.quality === "low" ? "1K" : opts.quality === "high" ? "4K" : "2K",
   };
   const refs = opts.images?.length ? opts.images : opts.image ? [opts.image] : [];
   if (refs.length) {
     body.image_urls = refs.slice(0, 8).map((r) => `data:${r.mime};base64,${r.bytes.toString("base64")}`);
-    if (opts.regional) body.regional_edit = true;
+    if (opts.regional || opts.regions?.length) body.regional_edit = true;
+    if (opts.regions?.length) body.regions = opts.regions;
   }
   if (opts.width && opts.height) {
     body.aspect_ratio = nearestRatio(opts.width, opts.height);

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
+import { pictureDraft, readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
+import { readKreaRegions, regionDescription, type KreaRegion } from "@/lib/krea-regions";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -38,10 +39,7 @@ export async function POST(req: NextRequest) {
         ? Math.floor(Math.random() * 1e12)
         : Number(seedRaw);
 
-    if (!prompt) {
-      return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
-    }
-    if (!file) {
+    if (!(file instanceof File) || !file.size) {
       return NextResponse.json({ ok: false, error: "请上传参考图" }, { status: 400 });
     }
 
@@ -54,6 +52,22 @@ export async function POST(req: NextRequest) {
     }
     const gptModel = GPT_IMAGE_MODELS[model.id];
     const krea = model.id === "krea-3";
+    const extraFiles = form.getAll("ref").slice(0, 7).filter((f): f is File => f instanceof File && f.size > 0);
+    let regions: KreaRegion[] = [];
+    if (form.has("regions")) {
+      const raw = form.get("regions");
+      let parsed: KreaRegion[] | null = null;
+      try {
+        if (krea && typeof raw === "string" && raw.length <= 40_000)
+          parsed = readKreaRegions(JSON.parse(raw), 1 + extraFiles.length);
+      } catch { /* malformed region payload */ }
+      if (!parsed) return NextResponse.json({ ok: false, error: "框选区域无效，请检查参考图、选框和提示词" }, { status: 400 });
+      regions = parsed;
+    }
+    if (!prompt && !regions.some((r) => r.note)) {
+      return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
+    }
+    const recordedPrompt = prompt || regionDescription(regions);
     const hosted = !!RH_HOSTED_MODELS[model.id] || krea;
     const spec = gptModel || hosted ? null : workflowFor(model.id, "i2i");
     if (!spec && !gptModel && !hosted) {
@@ -75,8 +89,8 @@ export async function POST(req: NextRequest) {
     // Extra reference images (Krea 3 / Banana / GPT take up to 8 in all).
     const extras: { bytes: Buffer; mime: string }[] = [];
     if (gptImage) {
-      for (const f of form.getAll("ref").slice(0, 7)) {
-        if (f instanceof File && f.size) extras.push({ bytes: Buffer.from(await f.arrayBuffer()), mime: f.type || "image/jpeg" });
+      for (const f of extraFiles) {
+        extras.push({ bytes: Buffer.from(await f.arrayBuffer()), mime: f.type || "image/jpeg" });
       }
     }
     const images = gptImage ? [gptImage, ...extras] : undefined;
@@ -98,7 +112,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ ...shape, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1" }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ ...shape, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1", regions }), seed: s });
         continue;
       }
       if (hosted) {
@@ -129,6 +143,12 @@ export async function POST(req: NextRequest) {
       try { editorDraft = readDraft(JSON.parse(draft)); } catch {}
     }
     if (ratioLabel) settings["改图比例"] = editAspect ? ratioLabel : "自适应";
+    if (regions.length) {
+      settings["深度思考"] = "开";
+      settings["修改范围"] = `框选 ${regions.length} 处`;
+      editorDraft ??= pictureDraft({ id: "", mode: "i2i", model: model.id, prompt, settings, seed });
+      editorDraft.regions = regions;
+    } else if (editorDraft) delete editorDraft.regions;
     const workspace = readWorkspace(form.get("workspace"));
     const encodedLayout = form.get("canvasLayout");
     let canvasLayout;
@@ -144,7 +164,7 @@ export async function POST(req: NextRequest) {
         taskId: t.taskId,
         mode: "i2i",
         model: model.id,
-        prompt: prompt.slice(0, 2000),
+        prompt: recordedPrompt.slice(0, 2000),
         url: "",
         refUrl, refUrls, canvasLayout, editorDraft, workspace,
         seed: t.seed,

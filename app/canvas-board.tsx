@@ -11,7 +11,7 @@ import { equalSpacing, type GapGuide } from "@/lib/canvas-spacing";
 import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
 import { editAspectOf } from "@/lib/models";
 import { shareCodeIn } from "@/lib/canvas-share-code";
-import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, pictureDraft, restoreWorkflow, selectedGeneration, uid, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
+import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, pictureDraft, restoreWorkflow, selectedGeneration, uid, updateRegionInputs, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
 
 /**
  * 2026-11-10 (用户: 页面可以切换成自由画布). An infinite board, modelled on what makes Krea / Visual Electric /
@@ -271,6 +271,7 @@ export function CanvasBoard({
         undo.current.push(prev);
         if (undo.current.length > 60) undo.current.shift();
         redo.current = [];
+        return updateRegionInputs(prev, value, urlOfRef.current);
       }
       return value;
     });

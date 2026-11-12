@@ -1,5 +1,6 @@
 import { canvasImagePath, pictureRefs, pictureDraft, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
 export { pictureDraft, readDraft, type CanvasDraft } from "./edit-recipe";
+import { reindexRegions } from "./krea-regions";
 
 export type BoardNode = {
   id: string; gid?: string; src?: string; pendingGid?: string;
@@ -22,6 +23,24 @@ export function generationInputs(n: BoardNode, list: BoardNode[], selectedFrames
 }
 export function selectedGeneration(picked: BoardNode[]) {
   return picked.length === 1 && isGeneration(picked[0]) ? picked[0] : undefined;
+}
+
+/** Keep each box on its original input when a wire or image resource is changed. */
+export function updateRegionInputs(before: BoardNode[], after: BoardNode[], urlOf: (n: BoardNode) => string | null) {
+  function imageKeys(frame: BoardNode, nodes: BoardNode[]) {
+    return generationInputs(frame, nodes).filter((n) => urlOf(n)).map((n) =>
+      isGeneration(n) ? n.id : n.id + ":" + (n.gid ?? n.src ?? ""));
+  }
+  return after.map((frame) => {
+    const draft = frame.draft;
+    if (!draft?.regions?.length) return frame;
+    const old = before.find((n) => n.id === frame.id);
+    if (!old || old.draft !== draft) return frame;
+    const previous = imageKeys(old, before), current = imageKeys(frame, after);
+    if (previous.length === current.length && previous.every((id, i) => id === current[i])) return frame;
+    const regions = reindexRegions(draft.regions, (i) => current.indexOf(previous[i]));
+    return { ...frame, draft: { ...draft, regions } };
+  });
 }
 const box = ({ x, y, w, h }: Pick<BoardNode, "x" | "y" | "w" | "h">) => ({ x, y, w, h });
 
@@ -85,7 +104,8 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
   // Old histories saved only their first reference; the original board may still have the others.
   const used = Number(g.settings?.["参考图"]?.match(/\d+/)?.[0] ?? (urls.length || 1));
   if (g.mode === "i2i") for (const n of upstreamImages.slice(urls.length, used)) if (!inputs.includes(n)) inputs.push(n);
-  const promptTexts = texts.length ? texts : !layout && g.prompt ? [{ text: g.prompt }] : [];
+  const editorPrompt = g.editorDraft?.regions?.length ? g.editorDraft.prompt : g.prompt;
+  const promptTexts = texts.length ? texts : !layout && editorPrompt ? [{ text: editorPrompt }] : [];
   for (const t of promptTexts) {
     const pos = position("x" in t ? t : undefined, true);
     const old = upstream.find((n) => n.kind === "text" && n.text === t.text && !inputs.includes(n)) ??

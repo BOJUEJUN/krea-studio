@@ -1,4 +1,5 @@
 import { LEGACY_MODEL, QUALITY_LABELS, findModel, paramsOf, type Mode, type Quality, type Res } from "./models";
+import { readKreaRegions, type KreaRegion } from "./krea-regions";
 
 type Box = { node?: string; x: number; y: number; w: number; h: number };
 export type CanvasLayout = { frame: Box; inputs: (Box & { from?: string[] } & ({ ref: number; source?: string } | { text: string }))[] };
@@ -75,6 +76,7 @@ export function pictureParams(g: EditablePicture) {
 }
 
 export type CanvasDraft = ReturnType<typeof pictureParams> & {
+  regions?: KreaRegion[];
   widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; polishVersion?: number; editRatio?: string; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
 };
 export function restoredPolishLevel(level: unknown, version: unknown): CanvasDraft["polishLevel"] {
@@ -99,6 +101,10 @@ export function readDraft(v: unknown): CanvasDraft | undefined {
   }
   out.polishLevel = restoredPolishLevel(data.polishLevel, data.polishVersion);
   out.polishVersion = 2;
+  if (out.model === "krea-3" && data.regions) {
+    const regions = readKreaRegions(data.regions);
+    if (regions?.length) out.regions = regions;
+  }
   if (out.reverseMode !== "fill") out.reverseMode = "direct";
   return out as CanvasDraft;
 }

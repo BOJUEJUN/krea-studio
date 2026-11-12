@@ -2,7 +2,9 @@
  * 2026-11-05 (用户: 刷新后上传的图片没了): the reference pictures and the description being written are kept in
  * this browser (IndexedDB), so a reload or a closed tab brings them back.
  */
-export type Draft = { prompt: string; images: { blob: Blob; name: string }[] };
+import type { KreaRegion } from "./krea-regions";
+
+export type Draft = { prompt: string; regions?: KreaRegion[]; images: { blob: Blob; name: string }[] };
 
 const DB = "ai-studio";
 const STORE = "draft";
