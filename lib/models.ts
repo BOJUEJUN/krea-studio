@@ -17,6 +17,7 @@ export type ModelId =
   | "lol-ingame"
   | "banana-21"
   | "krea-3"
+  | "seedream-55"
   | "gpt-26-flare"
   | "gpt-26-sunburst";
 
@@ -193,6 +194,23 @@ const ALL_MODELS: ModelInfo[] = [
       seed: true,
       negative: true,
       regional: true,
+    },
+  },
+  {
+    // 用户 2026-11-11 (即梦 5.5 RunningHub 上有，你自己去接): measured 16 s and ¥0.28 for a 2K edit; only the asked-for
+    // part changed. Edits are said in words (no boxes).
+    id: "seedream-55",
+    name: "即梦 5.5",
+    tagline: "字节 Seedream · 约 16 秒 · 改图只动说的地方",
+    cover: "/models/seedream.svg",
+    price: 0.28,
+    billing: "RunningHub",
+    params: {
+      denoise: false,
+      customSize: false,
+      ratios: ["1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9"],
+      resolutions: { "2K": 0.28 },
+      maxRefs: 8,
     },
   },
   {

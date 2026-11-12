@@ -15,6 +15,7 @@ const HOSTS: Record<Site, { base: string; env: string }> = {
 
 export const RH_HOSTED_MODELS: Record<string, { site: Site; path: string }> = {
   "banana-21": { site: "b", path: "rhart-image-n-nb21" },
+  "seedream-55": { site: "s", path: "seedream-v5.5" },
 };
 
 export function rhHostedReady(model: string): boolean {
@@ -94,6 +95,17 @@ export async function createRhHostedTask(opts: {
     body.aspectRatio = nearestRatio(w, h);
     body.resolution = ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res!.toLowerCase()
       : opts.quality === "low" ? "1k" : opts.quality === "high" ? "4k" : "2k";
+  } else if (opts.model === "seedream-55") {
+    // Seedream 5.5 takes 1K / 1.5K / 2K; an edit keeps 图1's shape, a new picture gets the chosen shape at ~2K.
+    body.outputFormat = "png";
+    body.watermark = "false";
+    body.optimizePromptMode = "standard";
+    if (refs.length) body.resolution = "2K";
+    else {
+      const scale = Math.sqrt((2048 * 2048) / (w * h));
+      body.width = Math.round((w * scale) / 16) * 16;
+      body.height = Math.round((h * scale) / 16) * 16;
+    }
   } else {
     // Keep the requested shape at about 4 MP or less (Seedream accepts 1024-4096 per side).
     const scale = Math.min(1, Math.sqrt((2048 * 2048) / (w * h)));
@@ -121,7 +133,8 @@ export async function queryRhHostedTask(taskId: string): Promise<{
     const saved = await copyRemoteImage(taskId, url);
     // Estimate in ¥: the global site bills about $0.03 per 2K image.
     // Estimate in ¥: the global site bills about $0.03 per 1K/2K image, about double at 4K (task id ends -4k).
-    return { status: "SUCCESS", outputs: [saved], cost: site === "b" ? (taskId.endsWith("_4") ? "0.43" : "0.22") : undefined };
+    const billed = json?.usage?.thirdPartyConsumeMoney ?? json?.usage?.consumeMoney;
+    return { status: "SUCCESS", outputs: [saved], cost: billed != null ? String(billed) : site === "b" ? (taskId.endsWith("_4") ? "0.43" : "0.22") : undefined };
   }
   if (status === "FAILED") {
     const msg = String(json?.errorMessage || "");
