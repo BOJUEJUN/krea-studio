@@ -7,6 +7,7 @@ import { ImageViewer } from "./image-viewer";
 import { KreaRegionEditor } from "./krea-region-editor";
 import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion, REGION_COLORS } from "@/lib/krea-regions";
 import { BatchGrid } from "./batch-grid";
+import { FailedGeneration, UnavailableProgress, generationIssue, type GenerationIssue } from "@/lib/generation-issue";
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
@@ -655,9 +656,9 @@ export default function StudioPage() {
   const jobsPlaced = useCallback((done: BoardJob[]) => {
     setBoardJobs((list) => list.filter((job) => !done.includes(job)));
   }, []);
-  const placeJobs = useCallback((jobs: PendingJob[], failed = false) => {
+  const placeJobs = useCallback((jobs: PendingJob[], failed = false, issue?: GenerationIssue) => {
     const added = jobs.filter((p) => p.canvasBoard || p.canvasLayout?.frame.node)
-      .map((p) => ({ gid: p.taskId, frame: p.canvasLayout?.frame.node, board: p.canvasBoard, failed }));
+      .map((p) => ({ gid: p.taskId, frame: p.canvasLayout?.frame.node, board: p.canvasBoard, failed, issue }));
     if (added.length) setBoardJobs((list) => [...list.filter((j) => !added.some((a) => a.gid === j.gid)), ...added]);
   }, []);
   const [boardMenu, setBoardMenu] = useState(false);
@@ -803,6 +804,7 @@ export default function StudioPage() {
   }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [singleIssue, setSingleIssue] = useState<GenerationIssue | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultRef, setResultRef] = useState<string | null>(null);
   // Every reference of the latest batch (图1, 图2, …) so 对比 can pick which one.
@@ -1045,7 +1047,7 @@ export default function StudioPage() {
         const remaining = local.filter((p) => !final.has(p.taskId) && recent(p));
         for (const p of local) {
           const item = final.get(p.taskId);
-          if (item) placeJobs([p], !item.url);
+          if (item) placeJobs([p], !item.url, item.url ? undefined : generationIssue(findModel(item.model)?.name, new Error(item.error || "任务未完成，请重新生成")));
         }
         const all = [...remaining, ...server.filter((p) => !final.has(p.taskId) && !remaining.some((l) => l.taskId === p.taskId))];
         writePending(all);
@@ -1093,6 +1095,7 @@ export default function StudioPage() {
   }, [resultUrl]);
 
   const showItem = useCallback((g: GalleryItem) => {
+    setSingleIssue(null);
     setBatchGrid(false);
     setCurrentId(g.id);
     setPromptOpen(false);
@@ -1655,31 +1658,29 @@ export default function StudioPage() {
     let failures = 0;
     while (mounted.current && (job === null || jobRef.current === job)) {
       if (Date.now() - start > 600_000) {
-        throw new Error("生成超时，请稍后重试");
+        throw new UnavailableProgress("等待结果超时，刷新页面可继续查询");
       }
       let d: any;
       try {
         d = await fetchJson(`/api/task?taskId=${encodeURIComponent(taskId)}`);
       } catch (e) {
         if ((job !== null && jobRef.current !== job)) return null;
-        if (++failures >= 8) throw e;
+        if (++failures >= 8) throw new UnavailableProgress("连接中断，刷新页面可继续查询");
         await sleep(2000);
         continue;
       }
       if ((job !== null && jobRef.current !== job)) return null;
       if (!d?.ok) {
-        if (++failures >= 8) throw new Error(d?.error || "查询任务失败");
+        if (++failures >= 8) throw new UnavailableProgress((d?.error || "查询暂时不可用") + "，刷新页面可继续查询");
         await sleep(2000);
         continue;
       }
       failures = 0;
       const st = String(d.status || "").toUpperCase();
       if (st === "SUCCESS" && d.outputs?.length) return d;
-      if (st === "FAILED" || st === "CANCEL") {
-        // A finished-but-failed task must not be resumed by the next click.
-        dropPending(taskId);
-        throw new Error(d.error || "任务失败");
-      }
+      if (st === "SUCCESS") throw new FailedGeneration("任务已结束，但模型没有返回图片，请重新生成");
+      if (["FAILED", "FAILURE", "CANCEL", "CANCELED", "CANCELLED", "EXPIRED", "TIMEOUT"].includes(st))
+        throw new FailedGeneration(d.error || (st.startsWith("CANCEL") ? "任务已取消，可重新生成" : "模型未提供具体原因，可调整输入后再试"));
       await sleep(3000);
     }
     return null;
@@ -1688,7 +1689,27 @@ export default function StudioPage() {
   /** Wait for one task, then show (first of the batch only) and record it. */
   const finishPending = useCallback(
     async (pending: PendingJob, job: number | null, shown: { v: boolean }): Promise<GalleryItem | null> => {
-      const done = await pollTask(pending.taskId, job);
+      let done;
+      try {
+        done = await pollTask(pending.taskId, job);
+      } catch (err) {
+        if (!mounted.current || (job !== null && jobRef.current !== job)) return null;
+        const issue = generationIssue(findModel(pending.model)?.name, err);
+        const terminal = err instanceof FailedGeneration;
+        placeJobs([pending], terminal, issue);
+        if (terminal) {
+          const failed: GalleryItem = {
+            id: pending.taskId, taskId: pending.taskId, status: "failed", error: issue.detail, url: "",
+            model: pending.model, mode: pending.mode, prompt: pending.prompt, seed: pending.seed, createdAt: pending.createdAt,
+            refUrl: pending.refUrl, refUrls: pending.refUrls, editorDraft: pending.editorDraft, canvasLayout: pending.canvasLayout,
+            workspace: pending.workspace, settings: pending.settings, durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
+          };
+          dropPending(pending.taskId);
+          setGallery((list) => list.some((g) => g.id === failed.id && g.url) ? list : [failed, ...list.filter((g) => g.id !== failed.id)].sort((a, b) => b.createdAt - a.createdAt));
+          void fetchJson("/api/history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(failed) }).catch(() => {});
+        }
+        throw err;
+      }
       if (!mounted.current || done === null || (job !== null && jobRef.current !== job)) return null;
       const url = done.outputs?.[0];
       if (!url) throw new Error(done.error || "任务完成但未返回图片");
@@ -1732,7 +1753,7 @@ export default function StudioPage() {
         .catch(() => {});
       return item;
     },
-    [pollTask, showItem]
+    [pollTask, showItem, placeJobs]
   );
 
   /** Run a whole batch in parallel; errors only surface if every image failed. */
@@ -1756,7 +1777,6 @@ export default function StudioPage() {
           if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney));
         })
         .catch(() => {});
-      placeJobs(pendings.filter((_, i) => results[i].status === "rejected"), true);
       const failed = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
       if (failed.length === results.length) throw failed[0].reason;
       if (failed.length) {
@@ -1779,10 +1799,7 @@ export default function StudioPage() {
       frameTimes.current.set(frame, timing);
       paintProgress();
       placeJobs([p]);
-      void finishPending(p, null, { v: true }).catch((error) => {
-        placeJobs([p], true);
-        setError(error?.message || "查询任务失败");
-      }).finally(() => {
+      void finishPending(p, null, { v: true }).catch(() => { /* the node shows its own issue */ }).finally(() => {
         if (frameTimes.current.get(frame) === timing) frameTimes.current.delete(frame);
         if (mounted.current) paintProgress();
       });
@@ -1813,9 +1830,7 @@ export default function StudioPage() {
     finishBatch(pendings, job)
       .catch((e: any) => {
         if (jobRef.current !== job) return;
-        const message = e?.message || "查询任务失败";
-        setError(`${message}（刷新页面可继续查询）`);
-        if (/任务失败|已完成但未返回|不存在|错误码|审核/.test(message)) pendings.forEach((p) => dropPending(p.taskId));
+        setSingleIssue(generationIssue(findModel(first.model)?.name, e));
       })
       .finally(() => {
         if (jobRef.current === job) {
@@ -1891,6 +1906,7 @@ export default function StudioPage() {
     const frameId = canvasLayout?.frame.node;
     const job = frameId ? null : ++jobRef.current;
     if (!frameId) busyRef.current = true;
+    let accepted = false;
     const clickedAt = Date.now();
     const useReverse = mode === "i2i" && reverse && (!!target || reversedForRef.current !== preview);
     const renderKey = `${model}:${mode}`;
@@ -1918,6 +1934,7 @@ export default function StudioPage() {
       if (window.innerWidth < 1024) {
         window.setTimeout(scrollToResult, 60);
       }
+      setSingleIssue(null);
       setResultUrl(null);
       setBatch([]);
       setJobCount(count);
@@ -2005,6 +2022,7 @@ export default function StudioPage() {
       if (!data?.ok || !data?.taskId) {
         throw new Error(data?.error || "任务创建失败");
       }
+      accepted = true;
       step("render");
       const created: { taskId: string; seed?: number }[] =
         Array.isArray(data.tasks) && data.tasks.length
@@ -2027,12 +2045,10 @@ export default function StudioPage() {
       if (frameId) {
         for (const p of pendings) watchedCanvasTasks.current.add(p.taskId);
         placeJobs(pendings);
-        try {
-          const [item] = await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
-          recordSeconds(renderKey, (Date.now() - timing.stepStart) / 1000);
-          void fetchJson("/api/status").then((d) => { if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney)); }).catch(() => {});
-          return item?.url;
-        } catch (error) { placeJobs(pendings, true); throw error; }
+        const [item] = await Promise.all(pendings.map((p) => finishPending(p, null, { v: true })));
+        recordSeconds(renderKey, (Date.now() - timing.stepStart) / 1000);
+        void fetchJson("/api/status").then((d) => { if (d?.account?.remainMoney != null) setMoney(String(d.account.remainMoney)); }).catch(() => {});
+        return item?.url;
       }
       try {
         localStorage.setItem(TIMING_KEY, JSON.stringify({ ids: pendings.map((p) => p.taskId), t: timingRef.current, aspect: mode === "i2i" && preview ? previewAspect : width / height }));
@@ -2040,7 +2056,9 @@ export default function StudioPage() {
       await finishBatch(pendings, job!);
     } catch (e: any) {
       if (mounted.current && (frameId || jobRef.current === job)) {
-        setError(e?.message || "网络错误");
+        const issue = generationIssue(findModel(model)?.name, e);
+        if (!frameId) setSingleIssue(issue);
+        else if (!accepted) setBoardJobs((list) => [...list, { board: canvasBoard, frame: frameId, failed: true, issue }]);
       }
     } finally {
       if (frameId) { frameTimes.current.delete(frameId); if (mounted.current) paintProgress(); }
@@ -2398,7 +2416,7 @@ export default function StudioPage() {
       new Map<string, BoardSource>(
         gallery.map((g) => {
           const m = findModel(g.model);
-          return [g.id, { id: g.id, recipe: g, url: g.url, status: g.status, prompt: g.prompt, model: m?.name, cover: m?.cover, mode: g.mode === "i2i" ? "图生图" : "文生图" }];
+          return [g.id, { id: g.id, recipe: g, url: g.url, status: g.status, error: g.error, prompt: g.prompt, model: m?.name, cover: m?.cover, mode: g.mode === "i2i" ? "图生图" : "文生图" }];
         })
       ),
     [gallery]
@@ -3002,6 +3020,8 @@ export default function StudioPage() {
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="animate-image-reveal h-full w-full rounded-[18px] object-cover" />
                     </button>
+                  ) : g?.status === "failed" ? (
+                    <span role="alert" className="flex h-full items-center justify-center px-2 text-center text-xs text-danger">{g.error || "生成失败"}</span>
                   ) : (
                     <GeneratingView aspect={jobVisual.aspect} progress={progress} compact />
                   );
@@ -3024,7 +3044,7 @@ export default function StudioPage() {
                       <img src={thumbOf(g.url, 640)} alt={`第 ${i + 1} 张`} className="h-full w-full rounded-[18px] object-cover transition duration-300 hover:brightness-95" />
                     </button>
                   ) : (
-                    <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-well text-[12px] text-danger">第 {i + 1} 张没画成</span>
+                    <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-well text-[12px] text-danger">第 {i + 1} 张 · {g?.error || "暂未取得结果"}</span>
                   );
                 }}
               />
@@ -3046,6 +3066,11 @@ export default function StudioPage() {
                 }}
                 className="animate-image-reveal max-h-full w-auto max-w-full cursor-zoom-in object-contain"
               />
+            ) : singleIssue && !canvasOn ? (
+              <div role="alert" className="max-w-md rounded-2xl bg-panel px-6 py-5 text-center shadow-sm ring-1 ring-danger/20">
+                <p className="text-[15px] font-semibold text-danger">{singleIssue.title}</p>
+                <p className="mt-1.5 text-[13px] text-ink">{singleIssue.detail}</p>
+              </div>
             ) : (
               <div className="max-w-sm px-6 text-center">
                 <div
@@ -3758,7 +3783,7 @@ export default function StudioPage() {
           
               </div>
               {error && (
-              <div className="animate-chip-in mt-2 rounded-2xl bg-[light-dark(#fff1f0,#382022)] px-3.5 py-2.5 text-[12px] text-danger">
+              <div role="alert" className="animate-chip-in mt-2 rounded-2xl bg-[light-dark(#fff1f0,#382022)] px-3.5 py-2.5 text-[12px] text-danger">
                 {error}
               </div>
             )}

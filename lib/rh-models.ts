@@ -1,4 +1,5 @@
 import { copyRemoteImage } from "./images";
+import { hostedFailure } from "./rh-errors";
 
 /**
  * Hosted models on RunningHub's standard API (openapi/v2), no workflow needed:
@@ -36,8 +37,14 @@ async function call(site: Site, path: string, body: unknown): Promise<any> {
     body: JSON.stringify(body),
     cache: "no-store",
     signal: AbortSignal.timeout(45_000),
+  }).catch(() => {
+    throw new Error(path === "query" ? "模型服务暂时连接不上" : "提交状态未确认，请先查看历史记录再重试");
   });
-  return res.json().catch(() => ({}));
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json || typeof json !== "object") {
+    throw new Error(hostedFailure(json, res.status === 429 ? "模型请求过多，请稍后再试" : `模型服务响应异常（HTTP ${res.status}）`));
+  }
+  return json;
 }
 
 const RATIOS: [string, number][] = [
@@ -122,7 +129,8 @@ export async function createRhHostedTask(opts: {
     body.height = clampSide(h * scale);
   }
   const json = await call(m.site, `${m.path}/${refs.length ? "image-to-image" : "text-to-image"}`, body);
-  if (!json?.taskId) throw new Error(json?.errorMessage || "RunningHub 没有返回任务编号");
+  if (!json.taskId || /^(FAILED|FAILURE|ERROR|CANCEL(?:L?ED)?)$/i.test(json.status || "") || (json.errorCode && String(json.errorCode) !== "0"))
+    throw new Error(hostedFailure(json, "模型未接受任务，请稍后再试"));
   return `rh${m.site}-${json.taskId}${body.resolution === "4k" ? "_4" : ""}`;
 }
 
@@ -134,9 +142,9 @@ export async function queryRhHostedTask(taskId: string): Promise<{
 }> {
   const site = taskId[2] as Site;
   const json = await call(site, "query", { taskId: taskId.slice(4).replace(/_4$/, "") });
-  const status = String(json?.status || "");
+  const status = String(json.status || json.taskStatus || json.data?.taskStatus || json.data?.status || "").trim().toUpperCase();
   if (status === "SUCCESS") {
-    const item = (json.results || [])[0] || {};
+    const item = (json.results || json.data?.results || [])[0] || {};
     const url = item.url || item.outputUrl;
     if (!url) return { status: "FAILED", outputs: [], errorMessage: "没有返回图片" };
     const saved = await copyRemoteImage(taskId, url);
@@ -145,10 +153,10 @@ export async function queryRhHostedTask(taskId: string): Promise<{
     const billed = json?.usage?.thirdPartyConsumeMoney ?? json?.usage?.consumeMoney;
     return { status: "SUCCESS", outputs: [saved], cost: billed != null ? String(billed) : site === "b" ? (taskId.endsWith("_4") ? "0.43" : "0.22") : undefined };
   }
-  if (status === "FAILED") {
-    const msg = String(json?.errorMessage || "");
-    const errorMessage = /sensitive|审核/i.test(msg) ? "内容没通过审核，换个描述试试" : msg || "生成失败";
-    return { status: "FAILED", outputs: [], errorMessage };
-  }
-  return { status: "RUNNING", outputs: [] };
+  if (/^(CANCEL|CANCELED|CANCELLED)$/.test(status)) return { status: "FAILED", outputs: [], errorMessage: "任务已取消，可重新生成" };
+  const code = String(json.errorCode || json.code || "");
+  if (["FAILED", "FAILURE", "ERROR", "EXPIRED", "TIMEOUT"].includes(status) || ["1004", "1501", "1505"].includes(code))
+    return { status: "FAILED", outputs: [], errorMessage: hostedFailure(json, status === "EXPIRED" ? "任务已过期，请重新生成" : status === "TIMEOUT" ? "模型处理超时，请稍后再试" : "模型未提供具体原因，可调整输入后再试") };
+  if (["QUEUED", "RUNNING", "PENDING", "PROCESSING", "WAITING", "CREATE", "CREATED", "SUBMITTED"].includes(status)) return { status: "RUNNING", outputs: [] };
+  throw new Error(hostedFailure(json, "暂时查不到任务状态"));
 }

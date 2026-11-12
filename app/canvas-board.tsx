@@ -10,6 +10,7 @@ import { planSelection, executePlan, type RunFrame } from "@/lib/canvas-executio
 import { equalSpacing, type GapGuide } from "@/lib/canvas-spacing";
 import { copyNodes, decodeNodes, encodeNodes, nodeMime, pasteNodes } from "@/lib/canvas-clipboard";
 import { editAspectOf } from "@/lib/models";
+import type { GenerationIssue } from "@/lib/generation-issue";
 import { shareCodeIn } from "@/lib/canvas-share-code";
 import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as upstreamOf, pictureDraft, restoreWorkflow, selectedGeneration, uid, updateRegionInputs, type CanvasDraft, type BoardNode as Node } from "@/lib/canvas-workflow";
 
@@ -24,8 +25,8 @@ import { captureLayout, generationInputs, isGeneration, isResult, inputsOf as up
  * - everything is saved in this browser per account.
  */
 
-export type BoardSource = { id: string; url: string; status?: string; prompt?: string; model?: string; cover?: string; mode?: string; recipe?: EditablePicture };
-export type BoardJob = { gid: string; frame?: string; board?: string; failed?: boolean };
+export type BoardSource = { id: string; url: string; status?: string; error?: string; prompt?: string; model?: string; cover?: string; mode?: string; recipe?: EditablePicture };
+export type BoardJob = { gid?: string; frame?: string; board?: string; failed?: boolean; issue?: GenerationIssue };
 export type BoardApi = {
   add: (gid: string) => void;
   reedit: (g: EditablePicture, snapshot?: boolean) => void;
@@ -750,7 +751,7 @@ export function CanvasBoard({
         const recipe = sourcesRef.current.get(n.gid ?? n.editOf ?? "")?.recipe;
         const from = isGeneration(n) ? generationInputs(n, nodesRef.current).map((m) => m.id) : n.from;
         return { ...n, from: from?.filter((id) => ids.has(id)), kind: isResult(n) ? "result" as const : n.kind,
-          src: urlOfRef.current(n) ?? undefined, gid: undefined, editOf: undefined, pendingGid: undefined,
+          src: urlOfRef.current(n) ?? undefined, gid: undefined, editOf: undefined, pendingGid: undefined, issue: undefined,
           draft: n.draft ?? (isGeneration(n) && recipe ? pictureDraft(recipe) : undefined) };
       });
       if (list.some((n) => n.src?.startsWith("data:"))) return null;
@@ -805,10 +806,13 @@ export function CanvasBoard({
       };
       for (const job of placed) {
         const frame = next.find((n) => n.id === job.frame);
-        if (job.failed) {
-          if (frame?.pendingGid === job.gid) replace(frame, { pendingGid: undefined });
+        if (job.issue || job.failed) {
+          if (frame && (!frame.pendingGid || frame.pendingGid === job.gid))
+            replace(frame, { pendingGid: job.failed ? undefined : job.gid, issue: job.issue ?? { title: "生成失败", detail: "请调整参数后重试" } });
+        } else if (!job.gid) {
+          continue;
         } else if (job.frame) {
-          if (frame && isGeneration(frame) && frame.gid !== job.gid && frame.pendingGid !== job.gid) replace(frame, { pendingGid: job.gid });
+          if (frame && isGeneration(frame) && frame.gid !== job.gid && (frame.pendingGid !== job.gid || frame.issue)) replace(frame, { pendingGid: job.gid, issue: undefined });
         } else if (!next.some((n) => n.gid === job.gid)) {
           // A standalone operation such as upscaling a resource has no generator to update.
           const p = pasteAt(), w = 320, h = w / Math.max(0.2, jobAspect || 1);
@@ -818,8 +822,8 @@ export function CanvasBoard({
       for (const n of next) {
         if (!n.pendingGid) continue;
         const src = sources.get(n.pendingGid);
-        if (src?.url) replace(n, { gid: n.pendingGid, pendingGid: undefined, kind: "result", editOf: undefined, src: src.url.startsWith("/api/img/") ? src.url : undefined, nw: undefined, nh: undefined, from: n.from ?? [], fit: true });
-        else if (src?.status === "failed" || src?.status === "expired") replace(n, { pendingGid: undefined });
+        if (src?.url) replace(n, { gid: n.pendingGid, pendingGid: undefined, issue: undefined, kind: "result", editOf: undefined, src: src.url.startsWith("/api/img/") ? src.url : undefined, nw: undefined, nh: undefined, from: n.from ?? [], fit: true });
+        else if (src?.status === "failed" || src?.status === "expired") replace(n, { pendingGid: undefined, issue: { title: src.model ? src.model + " · 生成失败" : "生成失败", detail: src.error || "请调整参数后重试" } });
       }
       return next;
     });
@@ -1675,6 +1679,11 @@ export function CanvasBoard({
                 </div>
               ) : running ? (
                 <div data-node-generating="" className="h-full w-full overflow-hidden rounded-[10px]"><GeneratingView aspect={n.w / Math.max(1, n.h)} progress={frameProgress.get(n.id) ?? progress} zoom={view.s} compact fill /></div>
+              ) : n.issue && !url ? (
+                <div role="alert" className="flex h-full flex-col items-center justify-center gap-1 overflow-hidden rounded-[10px] bg-[light-dark(#fff2ef,#452e30)] px-3 text-center">
+                  <strong className="text-[13px] text-danger">{n.issue.title}</strong>
+                  <span className="line-clamp-4 text-[12px] text-ink" title={n.issue.detail}>{n.issue.detail}</span>
+                </div>
               ) : isGen ? (
                 <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[10px]">
                   <div className="flex shrink-0 flex-col items-center gap-1.5 px-2 text-center text-[13px] font-medium leading-[19px] text-ink"
@@ -1700,7 +1709,7 @@ export function CanvasBoard({
                 </>
               ) : status === "failed" || status === "expired" ? (
                 <div className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-[10px] bg-[light-dark(#fff1f1,#382022)] text-[13px] text-danger">
-                  没有生成成功
+                  <strong>生成失败</strong><span className="px-2 text-center text-[12px] text-ink">{src?.error || "请稍后重试"}</span>
                   {onRetry && (
                     <button
                       type="button"
@@ -1715,6 +1724,10 @@ export function CanvasBoard({
               ) : (
                 <div className="flex h-full w-full items-center justify-center rounded-[10px] bg-well text-[12px] text-muted">暂无预览</div>
               )}
+              {n.issue && url && !running && <div role="alert" title={n.issue.detail} className="absolute inset-x-1 bottom-1 rounded-md bg-panel/95 px-2 py-1 shadow-sm">
+                <strong className="block text-[11px] text-danger">{n.issue.title}</strong>
+                <span className="line-clamp-2 text-[11px] text-ink">{n.issue.detail}</span>
+              </div>}
               {isGeneration(n) && (() => {
                 const sm = summaryFor?.(n, (wires.get(n.id) ?? []).some((m) => !!urlOf(m)));
                 if (!sm) return null;

@@ -13,7 +13,7 @@ export function copyNodes(list: BoardNode[], selection: Set<string>): Clip {
     const n = byId.get(id);
     if (!n || nodes.has(id)) return;
     const from = isGeneration(n) ? generationInputs(n, list).map((m) => m.id) : n.from;
-    nodes.set(id, { ...n, pendingGid: undefined, from, draft: n.draft && { ...n.draft } });
+    nodes.set(id, { ...n, issue: undefined, pendingGid: undefined, from, draft: n.draft && { ...n.draft } });
     from?.forEach(visit);
   };
   selected.forEach(visit);

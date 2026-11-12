@@ -1,8 +1,10 @@
 import { canvasImagePath, pictureRefs, pictureDraft, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
 export { pictureDraft, readDraft, type CanvasDraft } from "./edit-recipe";
 import { reindexRegions } from "./krea-regions";
+import type { GenerationIssue } from "./generation-issue";
 
 export type BoardNode = {
+  issue?: GenerationIssue;
   id: string; gid?: string; src?: string; pendingGid?: string;
   x: number; y: number; w: number; h: number;
   from?: string[]; fit?: boolean;
