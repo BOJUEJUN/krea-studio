@@ -1974,7 +1974,7 @@ export default function StudioPage() {
           fd.append("width", String(sz.width));
           fd.append("height", String(sz.height));
         }
-        if ((thinking || editRegions.length) && paramsOf(model).thinking) fd.append("thinking", "1");
+        if (thinking && paramsOf(model).thinking) fd.append("thinking", "1");
         for (const [k, v] of Object.entries(advanced(editorDraft))) fd.append(k, String(v));
         if ((regional || editRegions.length) && paramsOf(model).regional) fd.append("regional", "1");
         for (const f of supplemental.slice(0, (paramsOf(model).maxRefs ?? 1) - 1)) fd.append("ref", await describeCopy(f), "ref.jpg");
@@ -2088,7 +2088,7 @@ export default function StudioPage() {
     const tier = p.resolutions?.[res];
     const base = p.pricePerMegapixel ? (p.quality?.[quality] ?? 0) * (tier ?? 1) : tier ?? p.quality?.[quality];
     const refsUsed = mode === "i2i" ? Math.min(p.maxRefs ?? 1, (preview ? 1 : 0) + extraRefs.length) : 0;
-    const fixed = base != null ? base + ((thinking || hasBoxes) && p.thinking ? p.thinking : 0) + (p.refPrice ?? 0) * refsUsed : findModel(model)?.price;
+    const fixed = base != null ? base + (thinking && p.thinking ? p.thinking : 0) + (p.refPrice ?? 0) * refsUsed : findModel(model)?.price;
     if (fixed) {
       const total = fixed * count;
       return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
@@ -2478,7 +2478,7 @@ export default function StudioPage() {
       : modelParams.editRatio ? [{ key: "ratio", label: fixedEditAspect ? editRatio : "自适应" }] : []),
     ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
     ...(modelParams.quality ? [{ key: "quality", label: `画质 ${QUALITY_LABELS[quality]}` }] : []),
-    ...(modelParams.thinking != null ? [{ key: "thinking", label: (thinking || hasBoxes) ? "深度思考" : "普通思考" }] : []),
+    ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
     ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "快", medium: "标准", high: "精细" }[complexity]}` }] : []),
     // 2026-11-06 (用户: "整体改"听不懂): say what gets changed.
@@ -2524,7 +2524,7 @@ export default function StudioPage() {
     mode === "t2i" ? RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` : "跟参考图",
     modelParams.resolutions ? res : null,
     modelParams.quality ? QUALITY_LABELS[quality] : null,
-    modelParams.thinking != null && (thinking || hasBoxes) ? "深度思考" : null,
+    modelParams.thinking != null && thinking ? "深度思考" : null,
     mode === "i2i" && modelParams.denoise ? `重绘 ${denoise.toFixed(2)}` : null,
     seedText ? `种子 ${seedText}` : null,
   ]
@@ -2586,7 +2586,11 @@ export default function StudioPage() {
       {/* Signed out: the real studio stays visible behind a frosted sign-in card. */}
       {user === null && <LoginView onDone={(u) => { setUser(u); window.location.reload(); }} />}
       {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions}
-        onClose={() => setRegionSession(null)} onSave={(next) => { setRegions(next); setRegionSession(null); }} />}
+        onClose={() => setRegionSession(null)} onSave={(next) => {
+          // 用户 2026-11-11 (深度思考点不开): boxes switch 深度思考 on once (more precise), but it stays the user's choice.
+          if (next.length && !regions.length) setThinking(true);
+          setRegions(next); setRegionSession(null);
+        }} />}
       {dlg && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 px-4 backdrop-blur-[2px]" onPointerDown={(e) => e.target === e.currentTarget && closeDlg(null)}>
           <form
@@ -3188,7 +3192,9 @@ export default function StudioPage() {
                       <span key={i + ":" + r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={r.url}
+                          // 用户 2026-11-11 (图1 显示 bug): "?raw=1" sent the whole original through the site (too big, failed);
+                          // the 48px tile only needs the small copy.
+                          src={/^\/api\/(img|ref)\//.test(r.url) ? thumbOf(r.url.replace(/\?raw=1$/, ""), 160) : r.url}
                           alt={`图${i + 1}`}
                           onLoad={
                             i === 0
@@ -3555,8 +3561,6 @@ export default function StudioPage() {
                       key={c.key}
                       type="button"
                       data-setting={c.key}
-                      disabled={hasBoxes && c.key === "thinking"}
-                      title={hasBoxes && c.key === "thinking" ? "局部重绘会自动开深度思考" : undefined}
                       aria-expanded={openPanel === c.key}
                       onClick={(e) => {
                         if (c.key === "regionbox") { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); return; }

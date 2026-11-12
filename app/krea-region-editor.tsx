@@ -194,7 +194,7 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
               {missing.includes(r.label) && <p role="alert" className="mt-1 text-[12px] text-danger">写一下这里要怎么改</p>}
             </div>)}
           </div>
-          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">选中框后按 Delete 删除；局部重绘会自动开深度思考</div>
+          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">选中框后按 Delete 删除；建议开深度思考，改得更准</div>
         </aside>
       </div>
     </div>
