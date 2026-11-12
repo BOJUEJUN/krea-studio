@@ -1,7 +1,10 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MODELS, findModel } from "@/lib/models";
+import { pictureRefs } from "@/lib/edit-recipe";
+import { COMPARE_MODES, CompareView, type CompareMode } from "../compare-view";
+import { ImageViewer } from "../image-viewer";
 
 /**
  * enzoban.com/admin — the owner's back office as a real page (2026-11-05 用户: 管理要是一个正常的页面，多功能的).
@@ -40,6 +43,7 @@ type Rec = {
   owner: string;
   url: string;
   refUrl?: string;
+  refUrls?: string[];
   prompt: string;
   model: string;
   mode: "t2i" | "i2i";
@@ -71,6 +75,57 @@ const modelIcon = (id: string) => {
 // Records carry signed Tencent links (direct); the site's own path is the fallback.
 let DIRECT: Record<string, Record<string, string>> = {};
 const thumb = (url: string, w: number | "full" | "download") => DIRECT[url]?.[w] ?? (url.startsWith("/api/img/") && w !== "full" ? `${url}?w=${w}` : url);
+
+function RecordPreview({ result, refs }: { result: string; refs: string[] }) {
+  const [viewing, setViewing] = useState(false);
+  const [mode, setMode] = useState<CompareMode>("slider");
+  const [index, setIndex] = useState(0);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const before = refs[index] ?? refs[0];
+  useEffect(() => {
+    const el = dialog.current;
+    if (!viewing || !el) return;
+    el.showModal();
+    return () => el.close();
+  }, [viewing]);
+  const close = () => {
+    dialog.current?.close();
+    setViewing(false);
+    trigger.current?.focus({ preventScroll: true });
+  };
+
+  return <>
+    <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setViewing(true)} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">
+      {before ? "对比原图" : "看原图"}
+    </button>
+    {viewing && (before ? (
+      <dialog ref={dialog} aria-label="对比原图" onCancel={(e) => { e.preventDefault(); close(); }}
+        className="fixed inset-0 m-0 h-dvh max-h-none w-full max-w-none bg-[#25262a] p-0 text-white">
+        <div className="flex h-full flex-col">
+          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 p-2 sm:p-3">
+            {refs.length > 1 && <select aria-label="选择参考图" value={index} onChange={(e) => setIndex(Number(e.target.value))}
+              className="rounded-full bg-[#3c3d42] px-2 py-1 text-[12px] text-white">
+              {refs.map((_, i) => <option key={i} value={i}>参考图 {i + 1}</option>)}
+            </select>}
+            <div role="group" aria-label="对比方式" className="flex rounded-full bg-white/10 p-0.5">
+              {COMPARE_MODES.map((m) => <button key={m.key} type="button" aria-pressed={mode === m.key}
+                onClick={() => setMode(m.key)} className="rounded-full px-2.5 py-1 text-[12px] text-white/80 hover:bg-white/10 aria-pressed:bg-white aria-pressed:text-black">
+                {m.label}
+              </button>)}
+            </div>
+            <button type="button" aria-label="关闭对比" onClick={close} className="h-8 w-8 rounded-full bg-white/10 text-lg text-white hover:bg-white/20">×</button>
+          </div>
+          <div className="min-h-0 flex-1 px-2 pb-2 [--color-secondary:#dedee2] sm:px-4 sm:pb-4">
+            <CompareView key={`${index}-${mode}`} mode={mode} before={thumb(before, 1600)} after={thumb(result, 1600)}
+              beforeFull={thumb(before, "full")} afterFull={thumb(result, "full")} />
+          </div>
+        </div>
+      </dialog>
+    ) : <ImageViewer src={thumb(result, "full")} onClose={close} />)}
+  </>;
+}
+
 const yuan = (n: number) => `¥${n.toFixed(2)}`;
 const when = (t: number) =>
   t ? new Date(t).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -184,6 +239,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [toast, setToast] = useState<string | null>(null);
   const [open, setOpen] = useState<Rec | null>(null);
+  const openRefs = open ? pictureRefs(open) : [];
   // Records filters
   const [fUser, setFUser] = useState("all");
   const [fModel, setFModel] = useState("all");
@@ -666,11 +722,11 @@ export default function AdminPage() {
                   </Fragment>
                 ))}
               </dl>
-              {open.refUrl && (
+              {openRefs.length > 0 && (
                 <div className="mt-4">
                   <div className="mb-1 text-[12px] text-[#86868b]">参考图</div>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={open.refUrl} alt="" className="max-h-32 rounded-xl" />
+                  <img src={openRefs[0]} alt="参考图" className="max-h-32 rounded-xl" />
                 </div>
               )}
               {!open.settings && <div className="mt-2 text-[11px] text-[#aeaeb2]">这张图在记录参数之前生成，没有完整参数。</div>}
@@ -687,9 +743,7 @@ export default function AdminPage() {
                 {open.url && (
                   <a href={DIRECT[open.url]?.download ?? `${open.url}${open.url.includes("?") ? "&" : "?"}raw=1`} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
                 )}
-                {open.url && (
-                  <a href={open.url} target="_blank" rel="noreferrer" className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">看原图</a>
-                )}
+                {open.url && <RecordPreview key={open.id} result={open.url} refs={openRefs} />}
               </div>
             </div>
           </div>

@@ -107,6 +107,7 @@ export async function GET(req: NextRequest) {
       owner: it.owner ?? owner ?? "",
       url: it.url,
       refUrl: it.refUrl,
+      refUrls: it.refUrls,
       prompt: it.prompt,
       model: it.model ?? it.label ?? "",
       mode: it.mode,
