@@ -2471,6 +2471,7 @@ export default function StudioPage() {
     }
   };
 
+  const regionImages = canvasOn ? canvasSel.slice(0, 8).map(fullOf) : preview ? [preview, ...extraRefs.slice(0, 7).map((r) => r.url)] : [];
   const chips: { key: string; label: string }[] = [
     { key: "model", label: (findModel(model) ?? MODELS[0]).name },
     ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }]
@@ -2481,7 +2482,10 @@ export default function StudioPage() {
     ...(modelParams.background ? [{ key: "background", label: `背景 ${{ auto: "自动", transparent: "透明", opaque: "不透明" }[background]}` }] : []),
     ...(modelParams.complexity ? [{ key: "complexity", label: `构思 ${{ auto: "自动", low: "快", medium: "标准", high: "精细" }[complexity]}` }] : []),
     // 2026-11-06 (用户: "整体改"听不懂): say what gets changed.
-    ...(mode === "i2i" && modelParams.regional ? [{ key: "regional", label: hasBoxes ? "只改框选区域" : regional ? "只改说的地方" : "改整张图" }] : []),
+    // 用户 2026-11-11 (框选修改改成局部重绘，放在输入框下面那一排): one chip opens the box editor; with boxes it
+    // replaces the 修改范围 chip (boxes always edit only the boxed parts).
+    ...(mode === "i2i" && modelParams.regional && regionImages.length > 0 ? [{ key: "regionbox", label: hasBoxes ? `局部重绘 · ${regions.length} 处` : "局部重绘" }] : []),
+    ...(mode === "i2i" && modelParams.regional && !hasBoxes ? [{ key: "regional", label: regional ? "只改说的地方" : "改整张图" }] : []),
     ...(mode === "i2i" && modelParams.denoise ? [{ key: "denoise", label: `重绘 ${denoise.toFixed(2)}` }] : []),
     ...(modelParams.lora ? [{ key: "lora", label: `风格 ${lora.toFixed(1)}` }] : []),
     // 速度 (标准 / 高速) removed 2026-11-11: 高速 measured no faster and ~30% dearer (用户: 高速没用就去掉).
@@ -2567,7 +2571,6 @@ export default function StudioPage() {
   const pageItems = visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE);
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
-  const regionImages = canvasOn ? canvasSel.slice(0, 8).map(fullOf) : preview ? [preview, ...extraRefs.slice(0, 7).map((r) => r.url)] : [];
   const regionOwner = canvasOn ? boardId + "/" + editingNode : "single";
   const sessionValid = regionSession && model === "krea-3" && regionSession.node === regionOwner &&
     regionSession.images.length === regionImages.length && regionSession.images.every((src, i) => src === regionImages[i]);
@@ -3268,12 +3271,7 @@ export default function StudioPage() {
                               <span className="text-[18px] leading-none">+</span>
                             </button>
                           )}
-                          {model === "krea-3" && regionImages.length > 0 && <button type="button" aria-label="框选修改"
-                            onClick={() => { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); }}
-                            className="inline-flex items-center gap-1.5 self-center rounded-full border border-accent/25 bg-accent/[0.06] px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/10">
-                            <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 8V3h5m4 0h5v5m0 4v5h-5m-4 0H3v-5" /></svg>
-                            框选修改{hasBoxes && <span className="tabular-nums">{regions.length}</span>}
-                          </button>}
+                          
                           {/* 用户 2026-11-11 (怎么没有显示连进来的内容): say plainly when this model cannot take every linked picture. */}
                           {canvasOn && canvasSel.length > limit && (
                             <button
@@ -3557,10 +3555,11 @@ export default function StudioPage() {
                       key={c.key}
                       type="button"
                       data-setting={c.key}
-                      disabled={hasBoxes && (c.key === "thinking" || c.key === "regional")}
-                      title={hasBoxes && (c.key === "thinking" || c.key === "regional") ? "框选修改使用深度思考和局部编辑" : undefined}
+                      disabled={hasBoxes && c.key === "thinking"}
+                      title={hasBoxes && c.key === "thinking" ? "局部重绘会自动开深度思考" : undefined}
                       aria-expanded={openPanel === c.key}
                       onClick={(e) => {
+                        if (c.key === "regionbox") { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); return; }
                         if (c.key === "model") anchorModel(e.currentTarget);
                         const row = chipRowRef.current;
                         const x = e.currentTarget.offsetLeft;

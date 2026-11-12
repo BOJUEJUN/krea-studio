@@ -36,6 +36,8 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
   const [space, setSpace] = useState({ w: 0, h: 0 });
   const [loaded, setLoaded] = useState({ url: "", w: 0, h: 0 });
   const [failed, setFailed] = useState(false);
+  /** Boxes on 图1 still missing their 怎么改 (shown after 完成 is pressed). */
+  const [missing, setMissing] = useState<string[]>([]);
   const url = images[index];
   const ready = loaded.url === url && loaded.w > 0 && loaded.h > 0;
   const scale = ready ? Math.min(space.w / loaded.w, space.h / loaded.h) : 0;
@@ -67,6 +69,22 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
     select(label);
   }
   function cancelDrag() { drag.current = null; setSketch(null); }
+  function remove(label: string) {
+    setRegions((list) => list.filter((v) => v.label !== label));
+    setMissing((m) => m.filter((l) => l !== label));
+    if (active === label) setActive(null);
+  }
+  /** 用户 2026-11-11 (优化局部重绘的操作): a box on 图1 without words does nothing, so point at it instead of closing. */
+  function save() {
+    const empty = regions.filter((r) => r.image_idx === 0 && !r.note.trim());
+    if (empty.length) {
+      setMissing(empty.map((r) => r.label));
+      if (index !== 0) { cancelDrag(); setIndex(0); }
+      select(empty[0].label);
+      return;
+    }
+    onSave(regions.map((r) => ({ ...r, note: r.note.trim() })));
+  }
   function position(e: ReactPointerEvent): Point {
     const rect = surface.current!.getBoundingClientRect();
     return { x: clamp((e.clientX - rect.left) / rect.width), y: clamp((e.clientY - rect.top) / rect.height) };
@@ -98,14 +116,21 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
 
   return <dialog ref={dialog} aria-labelledby="region-heading"
     className="m-auto w-[min(1000px,96vw)] max-w-none overflow-hidden rounded-2xl border border-edge/10 bg-panel p-0 text-ink shadow-2xl backdrop:bg-black/55 backdrop:backdrop-blur-sm"
-    onCancel={(e) => { e.preventDefault(); onClose(); }} onKeyDown={(e) => e.stopPropagation()}
+    onCancel={(e) => { e.preventDefault(); onClose(); }} onKeyDown={(e) => {
+      e.stopPropagation();
+      const typing = (e.target as HTMLElement).closest("textarea, input");
+      if (!typing && active && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); remove(active); }
+    }}
     onPaste={(e) => e.stopPropagation()} onClick={(e) => { if (e.target === dialog.current) onClose(); }}>
     <div className="flex h-[min(680px,90dvh)] flex-col">
       <header className="flex items-center justify-between gap-3 border-b border-edge/10 px-4 py-3">
-        <h2 id="region-heading" className="text-[16px] font-semibold">框选修改</h2>
+        <div className="min-w-0">
+          <h2 id="region-heading" className="text-[16px] font-semibold">局部重绘</h2>
+          <p className="truncate text-[12px] text-secondary">框出要改的地方，写上怎么改；没框到的地方保持原样</p>
+        </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={onClose} className="rounded-full px-3 py-1.5 text-sm text-secondary hover:bg-well">取消</button>
-          <button type="button" onClick={() => onSave(regions.map((r) => ({ ...r, note: r.note.trim() })))} className="apple-btn-primary rounded-full px-4 py-1.5 text-sm">完成</button>
+          <button type="button" onClick={save} className="apple-btn-primary rounded-full px-4 py-1.5 text-sm">{regions.length ? "完成" : "关闭"}</button>
         </div>
       </header>
       {images.length > 1 && <nav aria-label="选择标注图片" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-edge/10 px-4 py-2">
@@ -136,6 +161,9 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
                 </div>;
               })}
               {sketch && !drag.current?.region && <div className="pointer-events-none absolute border-2 border-dashed border-accent bg-accent/15" style={bounds(sketch)} />}
+              {ready && !visible.length && !sketch && <div className="pointer-events-none absolute inset-0 grid place-items-center">
+                <span className="rounded-full bg-black/55 px-4 py-2 text-[13px] text-white backdrop-blur-sm">按住拖动，框出要改的地方</span>
+              </div>}
             </div>
           </div>
         </div>
@@ -146,26 +174,27 @@ export function KreaRegionEditor({ images, initial, onSave, onClose }: {
               <button type="button" aria-label="添加区域" title="添加区域" disabled={!ready || atLimit}
                 onClick={() => add({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 })} className="grid h-7 w-7 place-items-center rounded-full bg-well text-lg leading-none disabled:opacity-40">+</button>
             </div>
-            <p className="mt-1 text-xs text-secondary">{atLimit ? "已达 24 个区域上限" : index === 0 ? "在图上拖出选框，再写修改要求。" : "框选素材，可用 @编号 在图1的要求里引用。"}</p>
+            <p className="mt-1 text-xs text-secondary">{atLimit ? "最多 24 个框" : index === 0 ? "拖出一个框，写上这里怎么改。" : "框出要借用的素材，在图1的要求里用 @编号 引用。"}</p>
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3">
-            {visible.map((r) => <div key={r.label} className={`rounded-xl border p-2 ${r.label === active ? "border-accent/60" : "border-edge/10"}`}>
+            {visible.map((r) => <div key={r.label} className={`rounded-xl border p-2 ${missing.includes(r.label) ? "border-danger/60" : r.label === active ? "border-accent/60" : "border-edge/10"}`}>
               <div className="mb-1 flex items-center justify-between">
                 <label htmlFor={`region-note-${r.label}`} className="flex items-center gap-2 text-xs font-semibold">
                   <span className="rounded px-1.5 py-0.5 text-white" style={{ background: colors[regions.indexOf(r) % colors.length] }}>@{r.label}</span>
                   图{index + 1}
                 </label>
                 <button type="button" aria-label={`删除区域 ${r.label}`} title="删除区域" className="h-6 w-6 rounded-full text-sm text-secondary hover:bg-well"
-                  onClick={() => { setRegions((list) => list.filter((v) => v.label !== r.label)); if (active === r.label) setActive(null); }}>×</button>
+                  onClick={() => remove(r.label)}>×</button>
               </div>
               <textarea ref={(el) => { if (el) fields.current.set(r.label, el); else fields.current.delete(r.label); }}
                 id={`region-note-${r.label}`} aria-label={`区域 ${r.label} 提示词`} rows={2} maxLength={MAX_REGION_NOTE}
                 value={r.note} placeholder={index === 0 ? "这里怎么改？" : "这处素材怎么用？"} onFocus={() => setActive(r.label)}
-                onChange={(e) => setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note: e.target.value } : v))}
+                onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); if (note.trim()) setMissing((m) => m.filter((l) => l !== r.label)); }}
                 className="block w-full resize-y rounded-md bg-well px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none focus:ring-1 focus:ring-accent" />
+              {missing.includes(r.label) && <p role="alert" className="mt-1 text-[12px] text-danger">写一下这里要怎么改</p>}
             </div>)}
           </div>
-          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">框选使用深度思考</div>
+          <div className="shrink-0 border-t border-edge/10 px-4 py-2 text-[11px] text-secondary">选中框后按 Delete 删除；局部重绘会自动开深度思考</div>
         </aside>
       </div>
     </div>
