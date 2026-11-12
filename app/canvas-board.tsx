@@ -3,6 +3,8 @@
 import { createPortal } from "react-dom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { RegionMark } from "./brush-overlay";
+import type { KreaRegion } from "@/lib/krea-regions";
 import { PictureMention } from "./picture-mention";
 import { GeneratingView } from "./generating-view";
 import { pictureRefs, type CanvasLayout, type EditablePicture } from "@/lib/edit-recipe";
@@ -175,7 +177,7 @@ export function CanvasBoard({
   /** The selected pictures' urls (in canvas mode they become the reference images). */
   onSelectionChange?: (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean, draft?: CanvasDraft) => void;
   /** 局部重绘 boxes drawn over the pictures they belong to, keyed by picture link. */
-  regionMarks?: Record<string, { x: number; y: number; width: number; height: number; label: string; color: string }[]>;
+  regionMarks?: Record<string, (KreaRegion & { color: string })[]>;
   storageKey: string;
   /** The board's id on the server (用户 2026-11-11: 云端保存); without it the board lives in this browser only. */
   cloudId?: string;
@@ -1696,9 +1698,7 @@ export function CanvasBoard({
                 !nearScreen(n) ? <div className="h-full w-full rounded-[10px] bg-edge/[0.06]" /> :
                 <>
                 {regionMarks?.[url]?.map((m) => (
-                  <div key={m.label} className="pointer-events-none absolute z-[2] border-2" style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%`, width: `${m.width * 100}%`, height: `${m.height * 100}%`, borderColor: m.color, background: m.color + "1f" }}>
-                    <span className="absolute left-0 top-0 rounded-br px-1 text-[11px] font-bold leading-4 text-white" style={{ background: m.color }}>{m.label}</span>
-                  </div>
+                  <RegionMark key={m.label} region={m} color={m.color} numbered />
                 ))}
                 <NodePicture key={url} url={url} backup={archivedPicture(n.gid)} thumb={thumb(url, n.w * view.s > 480 ? 1600 : n.w * view.s > 200 ? 640 : n.w * view.s > 100 ? 320 : 160)}
                   onLoad={(image) => {

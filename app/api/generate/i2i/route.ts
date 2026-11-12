@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { pictureDraft, readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
 import { readKreaRegions, regionDescription, type KreaRegion } from "@/lib/krea-regions";
+import { REGION_JSON_LIMIT } from "@/lib/brush-mask";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse, after } from "next/server";
 import {
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
       const raw = form.get("regions");
       let parsed: KreaRegion[] | null = null;
       try {
-        if (krea && typeof raw === "string" && raw.length <= 40_000)
+        if (krea && typeof raw === "string" && raw.length <= REGION_JSON_LIMIT)
           parsed = readKreaRegions(JSON.parse(raw), 1 + extraFiles.length);
       } catch { /* malformed region payload */ }
       if (!parsed) return NextResponse.json({ ok: false, error: "框选区域无效，请检查参考图、选框和提示词" }, { status: 400 });
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
     const modelPrompt = expandImageMentions(prompt, images?.length ?? 1);
     const text = (k: string) => String(form.get(k) || "");
     const loraRaw = Number(form.get("lora"));
-    const ratioLabel = text("editRatio");
+    const ratioLabel = regions.some((r) => r.mask) ? "auto" : text("editRatio");
     const editAspect = editAspectOf(model.id, ratioLabel);
     if (ratioLabel && ratioLabel !== "auto" && !editAspect)
       return NextResponse.json({ ok: false, error: "这个模型不支持所选比例" }, { status: 400 });
@@ -139,13 +140,13 @@ export async function POST(req: NextRequest) {
     );
     let editorDraft;
     const draft = form.get("editorDraft");
-    if (typeof draft === "string" && draft.length < 40_000) {
+    if (typeof draft === "string" && draft.length <= REGION_JSON_LIMIT + 40_000) {
       try { editorDraft = readDraft(JSON.parse(draft)); } catch {}
     }
     if (ratioLabel) settings["改图比例"] = editAspect ? ratioLabel : "自适应";
     if (regions.length) {
-      settings["深度思考"] = "开";
-      settings["修改范围"] = `框选 ${regions.length} 处`;
+      settings["深度思考"] = form.get("thinking") === "1" ? "开" : "关";
+      settings["修改范围"] = regions.some((r) => r.mask) ? `画笔重绘 · ${regions.length} 处` : `框选 ${regions.length} 处`;
       editorDraft ??= pictureDraft({ id: "", mode: "i2i", model: model.id, prompt, settings, seed });
       editorDraft.regions = regions;
     } else if (editorDraft) delete editorDraft.regions;

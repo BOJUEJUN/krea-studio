@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { createPortal } from "react-dom";
 import { GeneratingView } from "./generating-view";
 import { ImageViewer } from "./image-viewer";
+import { RegionMark } from "./brush-overlay";
 import { KreaRegionEditor } from "./krea-region-editor";
 import { readKreaRegions, regionDescription, reindexRegions, type KreaRegion, REGION_COLORS } from "@/lib/krea-regions";
 import { BatchGrid } from "./batch-grid";
@@ -702,8 +703,9 @@ export default function StudioPage() {
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
   const [regional, setRegional] = useState(false);
   const [regions, setRegions] = useState<KreaRegion[]>([]);
-  const [regionSession, setRegionSession] = useState<{ node: string; images: string[] } | null>(null);
+  const [regionSession, setRegionSession] = useState<{ node: string; images: string[]; label?: string } | null>(null);
   const hasBoxes = model === "krea-3" && mode === "i2i" && regions.length > 0;
+  const hasBrush = hasBoxes && regions.some((r) => r.mask);
   const hasRegionNote = hasBoxes && regions.some((r) => r.note.trim());
   const [extraRefs, setExtraRefs] = useState<{ file: File; url: string }[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -844,7 +846,7 @@ export default function StudioPage() {
   const [batchGrid, setBatchGrid] = useState(false);
   const showingPartial = loading && jobCount <= 1 && batchDone > 0 && batchDone < batchTotal;
   const [editRatio, setEditRatio] = useState("auto");
-  const fixedEditAspect = editAspectOf(model, editRatio);
+  const fixedEditAspect = hasBrush ? undefined : editAspectOf(model, editRatio);
   const [previewAspect, setPreviewAspect] = useState(1);
   // "page": an image is being dragged somewhere over the window; "zone": over the drop area.
   const [dragState, setDragState] = useState<"none" | "page" | "zone">("none");
@@ -1883,7 +1885,7 @@ export default function StudioPage() {
     const mode = target ? (urls.length ? "i2i" : "t2i") : editorMode;
     const editRegions = model === "krea-3" && mode === "i2i" ? editorDraft.regions ?? [] : [];
     const reverse = editorDraft.reverseOn && !findModel(model)?.billing;
-    const editRatio = editorDraft.editRatio ?? "auto";
+    const editRatio = editRegions.some((r) => r.mask) ? "auto" : editorDraft.editRatio ?? "auto";
     const fixedEditAspect = editAspectOf(model, editRatio);
     const canvasBoard = target || canvasOnRef.current ? boardId : undefined;
     const workspace = workspaceAt(canvasBoard);
@@ -2376,7 +2378,7 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const composeSnap: CanvasDraft = { regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio: hasBrush ? "auto" : editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2514,7 +2516,7 @@ export default function StudioPage() {
   const chips: { key: string; label: string }[] = [
     { key: "model", label: (findModel(model) ?? MODELS[0]).name },
     ...(mode === "t2i" ? [{ key: "ratio", label: RATIOS.find((r) => r.w === width && r.h === height)?.label ?? `${width}×${height}` }]
-      : modelParams.editRatio ? [{ key: "ratio", label: fixedEditAspect ? editRatio : "自适应" }] : []),
+      : modelParams.editRatio ? [{ key: "ratio", label: hasBrush ? "跟随图1" : fixedEditAspect ? editRatio : "自适应" }] : []),
     ...(modelParams.resolutions ? [{ key: "res", label: res }] : []),
     ...(modelParams.quality ? [{ key: "quality", label: `画质 ${QUALITY_LABELS[quality]}` }] : []),
     ...(modelParams.thinking != null ? [{ key: "thinking", label: thinking ? "深度思考" : "普通思考" }] : []),
@@ -2630,7 +2632,7 @@ export default function StudioPage() {
           网站已更新 · 点这里刷新
         </button>
       )}
-      {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions}
+      {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions} initialLabel={regionSession.label}
         onClose={() => setRegionSession(null)} onSave={(next) => {
           // 用户 2026-11-11 (深度思考点不开): boxes switch 深度思考 on once (more precise), but it stays the user's choice.
           if (next.length && !regions.length) setThinking(true);
@@ -2935,9 +2937,9 @@ export default function StudioPage() {
             {canvasOn && user && (
               <div className="absolute inset-0 z-20">
                 <CanvasBoard
-                  regionMarks={canvasOn && hasBoxes ? regions.reduce<Record<string, { x: number; y: number; width: number; height: number; label: string; color: string }[]>>((acc, r, idx) => {
+                  regionMarks={canvasOn && hasBoxes ? regions.reduce<Record<string, (KreaRegion & { color: string })[]>>((acc, r, idx) => {
                     const u = canvasSel[r.image_idx];
-                    if (u) (acc[u] ??= []).push({ x: r.x, y: r.y, width: r.width, height: r.height, label: r.label, color: REGION_COLORS[idx % REGION_COLORS.length] });
+                    if (u) (acc[u] ??= []).push({ ...r, color: REGION_COLORS[idx % REGION_COLORS.length] });
                     return acc;
                   }, {}) : undefined}
                   key={boardId}
@@ -3362,19 +3364,19 @@ export default function StudioPage() {
                       const tile = src && /^\/api\/(img|ref)\//.test(src) ? thumbOf(src.replace(/\?raw=1$/, ""), 160) : src;
                       return (
                         <div key={r.label} className="flex items-center gap-2 rounded-lg border-l-[3px] bg-edge/[0.035] py-1 pl-1.5 pr-1" style={{ borderLeftColor: color }}>
-                          <button type="button" title="在图上调整这个框" aria-label={`调整框 ${r.label}`}
-                            onClick={() => { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); }}
+                          <button type="button" title="在图上调整选区" aria-label={`调整${r.mask ? "笔迹" : "框"} ${r.label}`}
+                            onClick={() => { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages, label: r.label }); }}
                             className="relative h-9 w-7 shrink-0 overflow-hidden rounded bg-page bg-[length:100%_100%] ring-1 ring-edge/[0.08]"
                             style={tile ? { backgroundImage: `url("${tile}")` } : undefined}>
-                            <span className="absolute border" style={{ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.width * 100}%`, height: `${r.height * 100}%`, borderColor: color, background: color + "33" }} />
+                            <RegionMark region={r} color={color} />
                           </button>
                           <span className="shrink-0 rounded px-1 text-[11px] font-bold leading-4 text-white" style={{ background: color }}>@{r.label}</span>
                           {regionImages.length > 1 && <span className="shrink-0 text-[11px] text-muted">图{r.image_idx + 1}</span>}
                           <input value={r.note} maxLength={600} placeholder={r.image_idx === 0 ? "这里怎么改？" : "这处素材怎么用？"}
-                            aria-label={`框 ${r.label} 的修改要求`}
+                            aria-label={`选区 ${r.label} 的修改要求`}
                             onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); }}
                             className={`min-w-0 flex-1 bg-transparent text-[16px] md:text-[13px] outline-none placeholder:text-hint ${!r.note.trim() && r.image_idx === 0 ? "placeholder:text-danger" : ""}`} />
-                          <button type="button" aria-label={`删除框 ${r.label}`} title="删除这个框"
+                          <button type="button" aria-label={`删除选区 ${r.label}`} title="删除选区"
                             onClick={() => setRegions((list) => list.filter((v) => v.label !== r.label))}
                             className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[14px] text-muted hover:bg-edge/[0.06] hover:text-ink">×</button>
                         </div>
@@ -3647,6 +3649,7 @@ export default function StudioPage() {
                       key={c.key}
                       type="button"
                       data-setting={c.key}
+                      disabled={c.key === "ratio" && hasBrush}
                       aria-expanded={openPanel === c.key}
                       onClick={(e) => {
                         if (c.key === "regionbox") { setOpenPanel(null); setRegionSession({ node: regionOwner, images: regionImages }); return; }
@@ -3663,7 +3666,7 @@ export default function StudioPage() {
                         <img src={iconOf((findModel(model) ?? MODELS[0]).cover)} alt="" className="h-5 w-5 rounded-[5px] object-cover ring-1 ring-edge/[0.06]" />
                       )}
                       {c.label}
-                      <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                      <svg className={`h-3 w-3 text-muted transition-transform ${c.key === "ratio" && hasBrush ? "hidden" : openPanel === c.key ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
                     </button>
                   ))}
                   {chipsMore && mode === "i2i" && !findModel(model)?.billing && (

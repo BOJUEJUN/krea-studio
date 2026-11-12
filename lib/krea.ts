@@ -1,6 +1,7 @@
 import { copyRemoteImage, saveImageBytes } from "./images";
 import { storeGet, storePut } from "./store";
 import type { KreaRegion } from "./krea-regions";
+import { brushIdOf, finishBrush, releaseBrush, stageBrush } from "./krea-brush-result";
 
 /**
  * Krea 3 through Krea's own API (env KREA_API_KEY): submit returns a job id, the page
@@ -12,7 +13,7 @@ const API = "https://api.krea.ai";
 export const KREA_RATIOS = ["1:1", "4:5", "3:4", "2:3", "9:16", "5:4", "4:3", "3:2", "16:9", "21:9"];
 
 export function isKreaTask(taskId: string): boolean {
-  return /^krea-[0-9a-f-]{20,60}(_[124][hf]\d|_up)?$/i.test(taskId);
+  return /^krea-[0-9a-f-]{20,60}(_[124][hf]\d(?:_p[A-Za-z0-9_-]{16})?|_up)?$/i.test(taskId);
 }
 
 async function call(path: string, body?: unknown): Promise<any> {
@@ -64,21 +65,30 @@ export async function createKreaTask(opts: {
     resolution: ["1K", "2K", "4K"].includes(opts.res || "") ? opts.res : opts.quality === "low" ? "1K" : opts.quality === "high" ? "4K" : "2K",
   };
   const refs = opts.images?.length ? opts.images : opts.image ? [opts.image] : [];
+  const brush = !!opts.regions?.some((r) => r.mask);
   if (refs.length) {
     body.image_urls = refs.slice(0, 8).map((r) => `data:${r.mime};base64,${r.bytes.toString("base64")}`);
     if (opts.regional || opts.regions?.length) body.regional_edit = true;
-    if (opts.regions?.length) body.regions = opts.regions;
+    if (opts.regions?.length) body.regions = opts.regions.map(({ image_idx, label, note, x, y, width, height }) =>
+      ({ image_idx, label, note, x, y, width, height }));
   }
-  if (opts.width && opts.height) {
+  if (!brush && opts.width && opts.height) {
     body.aspect_ratio = nearestRatio(opts.width, opts.height);
   }
   if (opts.seed != null && Number.isFinite(opts.seed)) body.seed = Math.floor(opts.seed);
   if (opts.negative?.trim()) body.negative_prompt = opts.negative.trim().slice(0, 1024);
-  const json = await call("/generate/image/krea/krea-3", body);
-  if (!json?.job_id) throw new Error("Krea 没有返回任务编号");
+  const paintId = brush ? await stageBrush(refs[0].bytes, opts.regions!) : undefined;
+  let json;
+  try {
+    json = await call("/generate/image/krea/krea-3", body);
+    if (!json?.job_id) throw new Error("Krea 没有返回任务编号");
+  } catch (err) {
+    if (paintId) await releaseBrush(paintId);
+    throw err;
+  }
   // 用户 2026-11-11 (局部重绘后比例不对，感觉拉伸了): Krea snaps the output to its own size grid (597×848 came back
   // 864×1216), which squeezes the picture ~1%. Remember 图1's shape so the result is put back to it.
-  if ((opts.regional || opts.regions?.length) && refs[0]) {
+  if (!paintId && (opts.regional || opts.regions?.length) && refs[0]) {
     try {
       const sharp = (await import("sharp")).default;
       const m = await sharp(refs[0].bytes).rotate().metadata();
@@ -89,7 +99,7 @@ export async function createKreaTask(opts: {
   // The job API does not echo the request, so the price inputs ride along in the task id: _<1|2|4><h|f><refs>.
   const size = String(body.resolution)[0];
   const refsCount = Array.isArray(body.image_urls) ? body.image_urls.length : 0;
-  return `krea-${json.job_id}_${size}${body.thinking_mode === "high" ? "h" : "f"}${Math.min(9, refsCount)}`;
+  return `krea-${json.job_id}_${size}${body.thinking_mode === "high" ? "h" : "f"}${Math.min(9, refsCount)}${paintId ? "_p" + paintId : ""}`;
 }
 
 /**
@@ -136,14 +146,18 @@ export async function queryKreaTask(taskId: string): Promise<{
   errorMessage?: string;
 }> {
   const [jobId, meta = "2f0"] = taskId.slice(5).split("_");
+  const paintId = brushIdOf(taskId);
   const job = await call(`/jobs/${jobId}`);
   const status = String(job?.status || "");
   if (status === "completed") {
     const url = job?.result?.urls?.[0];
-    if (!url) return { status: "FAILED", outputs: [], errorMessage: "Krea 没有返回图片" };
+    if (!url) {
+      if (paintId) await releaseBrush(paintId);
+      return { status: "FAILED", outputs: [], errorMessage: "Krea 没有返回图片" };
+    }
     // 2026-11-06 (用户: Krea 卡在 98%): saving a big PNG from the US to Tencent timed out; one save routine now.
-    const saved = await copyRemoteImage(taskId, url);
-    await restoreShape(jobId, taskId).catch((e) => console.error("[krea] shape fix failed:", e?.message || e));
+    const saved = paintId ? await finishBrush(taskId, paintId, url) : await copyRemoteImage(taskId, url);
+    if (!paintId) await restoreShape(jobId, taskId).catch((e) => console.error("[krea] shape fix failed:", e?.message || e));
     // Estimate in ¥: $0.03 at 1K, $0.06 at 2K, +$0.02 per reference.
     if (meta === "up") return { status: "SUCCESS", outputs: [saved], cost: "0.72" }; // $0.10 per upscale
     const base = meta[0] === "1" ? 0.22 : meta[0] === "4" ? 0.86 : 0.43;
@@ -152,6 +166,7 @@ export async function queryKreaTask(taskId: string): Promise<{
     return { status: "SUCCESS", outputs: [saved], cost: (base + think + refs * 0.15).toFixed(2) };
   }
   if (status === "failed" || status === "cancelled") {
+    if (paintId) await releaseBrush(paintId);
     return { status: "FAILED", outputs: [], errorMessage: job?.error?.message || job?.error || "生成失败" };
   }
   return { status: "RUNNING", outputs: [] };

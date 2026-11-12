@@ -84,6 +84,10 @@ export async function readImage(id: string): Promise<Buffer | null> {
   return storeGet(`img-${safeId(id)}`, 20_000);
 }
 
+export async function hasSavedImage(id: string): Promise<boolean> {
+  return onNetlify() ? storeHas(`img-${safeId(id)}`) : fs.access(path.join(LOCAL_DIR, safeId(id))).then(() => true, () => false);
+}
+
 /**
  * 2026-11-06: store a finished picture that lives on another site (RunningHub, Banana…) under /api/img/<id>.
  * The Guangzhou mover is used first because RunningHub refuses the site's US server; a direct download is the
