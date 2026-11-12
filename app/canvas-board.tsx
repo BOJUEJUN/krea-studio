@@ -199,6 +199,8 @@ export function CanvasBoard({
   const boxRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodesRaw] = useState<Node[]>([]);
   const [view, setView] = useState<View>({ x: 0, y: 0, s: 1 });
+  /** The user scrolled, zoomed or dragged the board since it opened (a late cloud load must not move it). */
+  const userMoved = useRef(false);
   // 2026-11-11 (用户: 画布几百张图会不会卡): the board's size, so pictures far off screen are not loaded.
   const [boxWH, setBoxWH] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
@@ -337,7 +339,8 @@ export function CanvasBoard({
         else base.current = { rev: 0, nodes: new Map() };
         if (b && Array.isArray(b.nodes) && (b.updatedAt ?? 0) > editedAt.current) {
           setNodesRaw(b.nodes);
-          if (b.view) setView(b.view);
+          // Keep where the user already scrolled to while the board was loading.
+          if (b.view && !userMoved.current) setView(b.view);
           editedAt.current = b.updatedAt;
           lastPushed.current = JSON.stringify({ nodes: b.nodes, view: b.view });
         }
@@ -543,9 +546,12 @@ export function CanvasBoard({
       const now = performance.now();
       if (now - lastWheel > 220) {
         const wd = (e as any).wheelDeltaY as number | undefined;
-        wheelIsMouse = e.deltaMode !== 0 || (e.deltaX === 0 && !!wd && Math.abs(wd) % 120 === 0);
+        // 用户 2026-11-12 (滚轮移动画布时突然闪到别的位置): a trackpad scroll can begin with a step that looks like a
+        // wheel notch (deltaY 40 → wheelDelta 120) and was then zoomed in big jumps. A real notch is a big single step.
+        wheelIsMouse = e.deltaMode !== 0 || (e.deltaX === 0 && !!wd && Math.abs(wd) % 120 === 0 && Math.abs(e.deltaY) >= 50);
       } else if (e.deltaX !== 0) wheelIsMouse = false;
       lastWheel = now;
+      userMoved.current = true;
       navRef.current();
       if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-e.deltaY * 0.01));
       else if (wheelIsMouse && !e.shiftKey) zoomAt(e.clientX, e.clientY, viewRef.current.s * Math.exp(-Math.sign(e.deltaY) * Math.min(Math.abs(e.deltaY) * (e.deltaMode ? 33 : 1), 200) * 0.0015));
@@ -917,6 +923,7 @@ export function CanvasBoard({
     if (d.kind === "pan") {
       if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) d.moved = true;
       nav();
+      userMoved.current = true;
       setView((v) => ({ ...v, x: d.vx + e.clientX - d.sx, y: d.vy + e.clientY - d.sy }));
     } else if (d.kind === "marquee") {
       const w = toWorld(e.clientX, e.clientY);
