@@ -106,9 +106,9 @@ export function paramsOf(id: unknown): ModelParams {
 
 
 export type Quality = "low" | "medium" | "high";
-export type Res = "1K" | "2K" | "4K";
+export type Res = "1K" | "1.5K" | "2K" | "4K";
 /** Output pixels per 清晰度 tier for models that take a free size (GPT). */
-export const RES_PIXELS: Record<Res, number> = { "1K": 1_048_576, "2K": 4_194_304, "4K": 8_294_400 };
+export const RES_PIXELS: Record<Res, number> = { "1K": 1_048_576, "1.5K": 2_359_296, "2K": 4_194_304, "4K": 8_294_400 };
 export const QUALITY_LABELS: Record<Quality, string> = { low: "快速", medium: "标准", high: "精细" };
 /** Estimated ¥ per GPT image by quality (OpenAI bills by tokens; both 2.6 models share the rates). */
 export const GPT_PRICE: Record<Quality, number> = { low: 0.1, medium: 0.3, high: 1.0 };
@@ -209,8 +209,10 @@ const ALL_MODELS: ModelInfo[] = [
       denoise: false,
       customSize: false,
       ratios: ["1:1", "3:4", "4:3", "2:3", "3:2", "9:16", "16:9"],
-      resolutions: { "2K": 0.28 },
+      // Measured 2026-11-12: 1K / 1.5K new pictures ¥0.13, a 2K edit ¥0.28 (the input picture is billed too).
+      resolutions: { "1K": 0.13, "1.5K": 0.13, "2K": 0.28 },
       maxRefs: 8,
+      background: true,
     },
   },
   {

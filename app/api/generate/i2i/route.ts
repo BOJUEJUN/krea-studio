@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ ...shape, model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ ...shape, model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), background: text("background") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });

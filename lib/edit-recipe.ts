@@ -64,7 +64,7 @@ export function pictureParams(g: EditablePicture) {
   const p = paramsOf(model), s = g.settings ?? {};
   const size = /^(\d+)\s*[x×]\s*(\d+)$/i.exec(s["画幅"] || s["尺寸"] || "");
   const quality = (Object.keys(QUALITY_LABELS) as Quality[]).find((q) => q === s["画质"] || QUALITY_LABELS[q] === s["画质"]) ?? "medium";
-  const res = (["1K", "2K", "4K"] as Res[]).find((r) => r === s["清晰度"]) ?? "2K";
+  const res = (["1K", "1.5K", "2K", "4K"] as Res[]).find((r) => r === s["清晰度"]) ?? "2K";
   const background = s["背景"] === "透明" ? "transparent" : s["背景"] === "不透明" ? "opaque" : "auto";
   const complexity = s["构思"] === "低" ? "low" : s["构思"] === "中" ? "medium" : s["构思"] === "高" ? "high" : "auto";
   const denoise = Number(s["重绘幅度"]), lora = Number(s["风格强度"]);

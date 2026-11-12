@@ -82,6 +82,7 @@ export async function createRhHostedTask(opts: {
   images?: { bytes: Buffer; mime: string }[];
   quality?: string;
   res?: string;
+  background?: string;
 }): Promise<string> {
   const m = RH_HOSTED_MODELS[opts.model];
   if (!m) throw new Error("未知模型");
@@ -100,9 +101,13 @@ export async function createRhHostedTask(opts: {
     body.outputFormat = "png";
     body.watermark = "false";
     body.optimizePromptMode = "standard";
-    if (refs.length) body.resolution = "2K";
+    // 用户 2026-11-12 (即梦 5.5 的参数怎么只有这么少): 清晰度 1K / 1.5K / 2K and 背景 (自动 / 透明 / 不透明).
+    const res = ["1K", "1.5K", "2K"].includes(opts.res || "") ? opts.res! : "2K";
+    if (["auto", "transparent", "opaque"].includes(opts.background || "")) body.background = opts.background;
+    if (refs.length) body.resolution = res;
     else {
-      const scale = Math.sqrt((2048 * 2048) / (w * h));
+      const side = res === "1K" ? 1024 : res === "1.5K" ? 1536 : 2048;
+      const scale = Math.sqrt((side * side) / (w * h));
       body.width = Math.round((w * scale) / 16) * 16;
       body.height = Math.round((h * scale) / 16) * 16;
     }

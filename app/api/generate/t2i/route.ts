@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (hosted) {
-        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || ""), res: String(body.res || "") }), seed: s });
+        tasks.push({ taskId: await createRhHostedTask({ model: model.id, prompt, width, height, quality: String(body.quality || ""), res: String(body.res || ""), background: String(body.background || "") }), seed: s });
         continue;
       }
       const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, width, height, lora: body.lora != null && body.lora !== "" ? Number(body.lora) : undefined });
