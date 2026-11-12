@@ -202,7 +202,7 @@ const ALL_MODELS: ModelInfo[] = [
     id: "seedream-55",
     name: "即梦 5.5",
     tagline: "字节 Seedream · 约 16 秒 · 改图只动说的地方",
-    cover: "/models/seedream.svg",
+    cover: "/models/seedream.png",
     price: 0.28,
     billing: "RunningHub",
     params: {

@@ -3683,13 +3683,14 @@ export default function StudioPage() {
                   )}
                   {/* 用户 2026-11-10: 提示词润色 shows once there is a prompt to polish. */}
                   {(prompt.trim() || polishing) && (
-                  <div className="compose-split animate-pop-in flex h-8 items-center overflow-hidden rounded-full bg-accent/[0.08] text-[12px] font-medium text-accent ring-1 ring-accent/25 transition hover:ring-accent/50">
+                  // 用户 2026-11-12 (润色不要高亮，不然以为已经点了): same plain look as the other settings until it is used.
+                  <div className={`compose-split animate-pop-in flex h-8 items-center overflow-hidden rounded-full text-[12px] transition ${polishUndo || polishing ? "bg-accent/[0.08] font-medium text-accent ring-1 ring-accent/25" : "bg-edge/[0.04] text-ink"}`}>
                     <button
                       type="button"
                       onClick={runPolish}
                       disabled={!prompt.trim() || polishing}
                       data-tip="按当前提示词润色，@图 原样保留"
-                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-accent/[0.12] active:scale-[0.97] disabled:opacity-40"
+                      className="flex h-full items-center gap-1 pl-3 pr-2 transition hover:bg-edge/[0.08] active:scale-[0.97] disabled:opacity-40"
                     >
                       {polishing ? (
                         <span className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent" />
@@ -3707,7 +3708,7 @@ export default function StudioPage() {
                         setPanelLeft(Math.max(0, Math.min(x, (row?.clientWidth ?? 600) - 300)));
                         setOpenPanel((v) => (v === "polish" ? null : "polish"));
                       }}
-                      className={`flex h-full items-center gap-1 border-l border-accent/20 pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-accent/15" : "hover:bg-accent/[0.12]"}`}
+                      className={`flex h-full items-center gap-1 border-l border-edge/[0.1] pl-2 pr-2.5 transition ${openPanel === "polish" ? "bg-accent/10 text-accent" : "hover:bg-edge/[0.08]"}`}
                     >
                       {{ low: "低", medium: "中", high: "高" }[polishLevel]}
                       <svg className={`h-3 w-3 text-muted transition-transform ${openPanel === "polish" ? "rotate-180" : ""}`} viewBox="0 0 16 16" fill="none"><path d="M4 10l4-4 4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
