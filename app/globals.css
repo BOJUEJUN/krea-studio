@@ -244,15 +244,16 @@ html.theme-dark .canvas-compose-card[data-drag="zone"] {
 .picture-mention {
   display: inline-flex;
   align-items: center;
-  gap: .25em;
-  margin-inline: .2em;
+  gap: .32em;
+  margin: .08em .45em;
+  padding: .08em .42em .08em .1em;
   vertical-align: middle;
   line-height: 1.3;
-  border-radius: .3em;
+  border-radius: .36em;
   background: var(--color-well);
   user-select: all;
 }
-.picture-mention > span { padding-right: .35em; font-size: .78em; color: var(--color-secondary); white-space: nowrap; }
+.picture-mention > span { font-size: .78em; color: var(--color-secondary); white-space: nowrap; }
 .picture-mention > img {
   display: inline-block;
   width: auto;
