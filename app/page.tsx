@@ -39,6 +39,8 @@ import { pictureDraft, pictureParams, pictureRefs, recordWorkspace, restoredPoli
 type Readiness = Record<string, Record<Mode, boolean>>;
 
 type GalleryItem = EditMetadata & {
+  clientId?: string;
+  aspect?: number;
   id: string;
   mode: Mode;
   model?: string;
@@ -182,7 +184,10 @@ function formatDuration(ms?: number): string | null {
   return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${String(s % 60).padStart(2, "0")} 秒`;
 }
 
+type SingleSubmission = { id: string; draft: CanvasDraft; mode: Mode; refs: string[]; files: Promise<File[] | null>; aspect: number; createdAt: number };
 type PendingJob = EditMetadata & {
+  clientId?: string;
+  aspect?: number;
   renderTiming?: Timing;
   canvasBoard?: string;
   /** When 生成 was clicked (2026-11-06 用户: 用时比体感短 — it now includes 提示词优化 and the upload). */
@@ -830,6 +835,8 @@ export default function StudioPage() {
   const [compareOn, setCompareOn] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [currentId, setCurrentId] = useState<string | null>(null);
+  const currentIdRef = useRef(currentId);
+  currentIdRef.current = currentId;
   const [histMode, setHistMode] = useState<"all" | Mode>("all");
   // "all" | "ok" | "bad" | "model:<id>"
   const [histFilter, setHistFilter] = useState<string>("all");
@@ -877,10 +884,17 @@ export default function StudioPage() {
   const [progress, setProgress] = useState(0);
   const frameTimes = useRef(new Map<string, Timing>());
   const watchedCanvasTasks = useRef(new Set<string>());
+  const singleActive = useRef(new Set<string>());
+  const [singleCount, setSingleCount] = useState(0);
   const [frameProgress, setFrameProgress] = useState(new Map<string, number>());
   const paintProgress = useCallback(() => {
     setFrameProgress(new Map([...frameTimes.current].map(([id, t]) => [id, progressFor(t, Date.now())])));
   }, []);
+  const releaseSingle = useCallback((id: string) => {
+    singleActive.current.delete(id);
+    frameTimes.current.delete(id);
+    if (mounted.current) { setSingleCount(singleActive.current.size); paintProgress(); }
+  }, [paintProgress]);
   const hasFrameJobs = frameProgress.size > 0;
   useEffect(() => {
     if (!hasFrameJobs) return;
@@ -1707,13 +1721,14 @@ export default function StudioPage() {
         placeJobs([pending], terminal, issue);
         if (terminal) {
           const failed: GalleryItem = {
+            clientId: pending.clientId, aspect: pending.aspect,
             id: pending.taskId, taskId: pending.taskId, status: "failed", error: issue.detail, url: "",
             model: pending.model, mode: pending.mode, prompt: pending.prompt, seed: pending.seed, createdAt: pending.createdAt,
             refUrl: pending.refUrl, refUrls: pending.refUrls, editorDraft: pending.editorDraft, canvasLayout: pending.canvasLayout,
             workspace: pending.workspace, settings: pending.settings, durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
           };
           dropPending(pending.taskId);
-          setGallery((list) => list.some((g) => g.id === failed.id && g.url) ? list : [failed, ...list.filter((g) => g.id !== failed.id)].sort((a, b) => b.createdAt - a.createdAt));
+          setGallery((list) => list.some((g) => g.id === failed.id && g.url) ? list : [failed, ...list.filter((g) => g.id !== failed.id && (!pending.clientId || g.clientId !== pending.clientId))].sort((a, b) => b.createdAt - a.createdAt));
           void fetchJson("/api/history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(failed) }).catch(() => {});
         }
         throw err;
@@ -1722,6 +1737,7 @@ export default function StudioPage() {
       const url = done.outputs?.[0];
       if (!url) throw new Error(done.error || "任务完成但未返回图片");
       const item: GalleryItem = {
+        clientId: pending.clientId, aspect: pending.aspect,
         id: pending.taskId,
         taskId: pending.taskId,
         seed: pending.seed,
@@ -1734,7 +1750,7 @@ export default function StudioPage() {
         createdAt: pending.createdAt,
         durationMs: Date.now() - (pending.startedAt ?? pending.createdAt),
       };
-      setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url)].sort(
+      setGallery((g) => [item, ...g.filter((x) => x.taskId !== item.taskId && x.url !== item.url && (!pending.clientId || x.clientId !== pending.clientId))].sort(
         (a, b) => b.createdAt - a.createdAt
       ));
       if (job !== null) setBatchDone((n) => n + 1);
@@ -1794,6 +1810,44 @@ export default function StudioPage() {
     [finishPending, placeJobs]
   );
 
+  const showPendingSingle = useCallback((p: PendingJob) => {
+    const item: GalleryItem = { ...p, id: p.taskId, url: "", status: "pending" };
+    setGallery((list) => list.some((g) => g.id === p.taskId && g.url) ? list :
+      [item, ...list.filter((g) => g.id !== p.taskId && (!p.clientId || g.clientId !== p.clientId))].sort((a, b) => b.createdAt - a.createdAt));
+  }, []);
+  const watchSingle = useCallback(async (original: PendingJob) => {
+    if (watchedCanvasTasks.current.has(original.taskId)) return null;
+    const p = { ...original, clientId: original.clientId ?? `single-${original.taskId}` };
+    watchedCanvasTasks.current.add(p.taskId);
+    singleActive.current.add(p.clientId);
+    setSingleCount(singleActive.current.size);
+    const renderKey = `${p.model ?? "brown-dust"}:${p.mode}`;
+    if (!frameTimes.current.has(p.clientId)) frameTimes.current.set(p.clientId, p.renderTiming ?? {
+      step: "render", stepStart: p.createdAt, renderKey,
+      est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[p.mode]) },
+    });
+    paintProgress();
+    showPendingSingle(p);
+    if (currentIdRef.current === p.clientId || (!currentIdRef.current && !canvasOnRef.current)) {
+      setCurrentId(p.taskId); setResultUrl(null); setSingleIssue(null);
+    }
+    let terminal = false;
+    try {
+      const item = await finishPending(p, null, { v: true });
+      terminal = !!item;
+      if (item && [p.taskId, p.clientId].includes(currentIdRef.current ?? "")) showItem(item);
+      return item;
+    } catch (e) {
+      terminal = e instanceof FailedGeneration;
+      const issue = generationIssue(findModel(p.model)?.name, e);
+      if ([p.taskId, p.clientId].includes(currentIdRef.current ?? "")) setSingleIssue(issue);
+      if (!terminal) setGallery((list) => list.map((g) => g.id === p.taskId ? { ...g, error: issue.detail, label: "连接中断，刷新恢复" } : g));
+      return null;
+    } finally {
+      if (terminal) releaseSingle(p.clientId);
+    }
+  }, [finishPending, paintProgress, releaseSingle, showItem, showPendingSingle]);
+
   const resumePending = useCallback((jobs: PendingJob[]) => {
     for (const p of jobs) {
       const frame = p.canvasLayout?.frame.node;
@@ -1812,41 +1866,9 @@ export default function StudioPage() {
         if (mounted.current) paintProgress();
       });
     }
-    const pendings = jobs.filter((p) => !p.canvasLayout?.frame.node);
-    if (busyRef.current || !pendings.length) return;
-    busyRef.current = true;
-    const job = ++jobRef.current;
-    const first = pendings[0];
-    const renderKey = `${first.model ?? "brown-dust"}:${first.mode}`;
-    let saved: { ids?: string[]; t?: Timing; aspect?: number } | null = null;
-    try {
-      saved = JSON.parse(localStorage.getItem(TIMING_KEY) || "null");
-    } catch {}
-    timingRef.current =
-      saved?.t && saved.ids?.includes(first.taskId)
-        ? { ...saved.t, renderKey: "" } // same bar as before the reload; resumed runs don't teach the estimate
-        : {
-            step: "render",
-            stepStart: first.createdAt || Date.now(),
-            est: { describe: 0, submit: 0, render: estimateSeconds(renderKey, DEFAULT_SECONDS[first.mode]) },
-            renderKey: "",
-          };
-    setJobVisual({ aspect: saved?.aspect && saved.ids?.includes(first.taskId) ? saved.aspect : 1, reference: first.mode === "i2i" ? first.refUrl ?? null : null });
-    setJobCount(pendings.length);
-    setLoading(true);
-    setError(null);
-    finishBatch(pendings, job)
-      .catch((e: any) => {
-        if (jobRef.current !== job) return;
-        setSingleIssue(generationIssue(findModel(first.model)?.name, e));
-      })
-      .finally(() => {
-        if (jobRef.current === job) {
-          busyRef.current = false;
-          setLoading(false);
-        }
-      });
-  }, [finishBatch, finishPending, paintProgress, placeJobs]);
+    for (const p of jobs.filter((p) => !p.canvasLayout?.frame.node)) void watchSingle(p);
+
+  }, [finishPending, paintProgress, placeJobs, watchSingle]);
 
   /** 高清放大 (用户 2026-11-10): Topaz 2× through Krea; the result lands in history and on the board like any picture. */
   const upscaleItem = useCallback(
@@ -1885,20 +1907,20 @@ export default function StudioPage() {
   resumePendingRef.current = resumePending;
 
   const editorMode = mode;
-  const generate = useCallback(async (target?: RunFrame, urls: string[] = []) => {
-    const editorDraft = target?.draft ?? { ...composeSnapRef.current, summary: liveSummaryRef.current };
+  const generate = useCallback(async (target?: RunFrame, urls: string[] = [], single?: SingleSubmission) => {
+    const editorDraft = single?.draft ?? target?.draft ?? { ...composeSnapRef.current, summary: liveSummaryRef.current };
     const { model, res, quality, thinking, widthText, heightText, width, height, denoise, regional } = editorDraft;
     const prompt = normalizeMentions(editorDraft.prompt);
-    const mode = target ? (urls.length ? "i2i" : "t2i") : editorMode;
+    const mode = single?.mode ?? (target ? (urls.length ? "i2i" : "t2i") : editorMode);
     const editRegions = model === "krea-3" && mode === "i2i" ? editorDraft.regions ?? [] : [];
     const reverse = editorDraft.reverseOn && !findModel(model)?.billing;
     const editRatio = editRegions.some((r) => r.mask) ? "auto" : editorDraft.editRatio ?? "auto";
     const fixedEditAspect = editAspectOf(model, editRatio);
-    const canvasBoard = target || canvasOnRef.current ? boardId : undefined;
+    const canvasBoard = !single && (target || canvasOnRef.current) ? boardId : undefined;
     const workspace = workspaceAt(canvasBoard);
     const hasFrame = !!target || !!(canvasBoard && canvasApi.current?.layout()?.frame.node);
-    if (!hasFrame && busyRef.current) return;
-    const leftover = hasFrame ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
+    if (!hasFrame && !single && busyRef.current) return;
+    const leftover = hasFrame || single ? [] : readPending().filter((p) => !p.canvasLayout?.frame.node);
     if (leftover.length) { resumePending(leftover); return; }
     setError(null);
     if ((mode === "t2i" || !reverse) && !prompt.trim() && !editRegions.some((r) => r.note.trim())) { setError("请先输入描述"); return; }
@@ -1906,9 +1928,9 @@ export default function StudioPage() {
       setError(`${findModel(model)?.name ?? "该模型"}还在接入中，请先选择其他模型`);
       return;
     }
-    const refAtClick = refVersion.current, loadingRefs = target ? null : refLoadRef.current;
+    const refAtClick = refVersion.current, loadingRefs = single?.files ?? (target ? null : refLoadRef.current);
     const firstFile = target ? null : fileBlobRef.current, extraFiles = target ? [] : extraRefs.map((r) => r.file);
-    const refCount = mode === "i2i" ? Math.min(paramsOf(model).maxRefs ?? 1, target ? urls.length : canvasOnRef.current ? canvasSel.length : preview ? 1 + extraFiles.length : 0) : 0;
+    const refCount = mode === "i2i" ? Math.min(paramsOf(model).maxRefs ?? 1, single ? single.refs.length : target ? urls.length : canvasOnRef.current ? canvasSel.length : preview ? 1 + extraFiles.length : 0) : 0;
     const numbers = referenceNumbers(editorDraft.refNumbers, refCount);
     const absent = missingReference([prompt, ...editRegions.map((r) => r.note)].join("\n"), numbers);
     if (absent !== undefined) { const message = `缺少图${absent}，请重新连接或移除 @图${absent}`; setError(message); flash(message); return; }
@@ -1917,11 +1939,12 @@ export default function StudioPage() {
     const canvasLayout = target?.layout ?? (hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
       editorDraft, preview ? previewAspect : undefined) : undefined);
     const frameId = canvasLayout?.frame.node;
-    const job = frameId ? null : ++jobRef.current;
-    if (!frameId) busyRef.current = true;
+    const progressId = single?.id ?? frameId;
+    const job = frameId || single ? null : ++jobRef.current;
+    if (!frameId && !single) busyRef.current = true;
     let accepted = false;
-    const clickedAt = Date.now();
-    const useReverse = mode === "i2i" && reverse && (!!target || reversedForRef.current !== preview);
+    const clickedAt = single?.createdAt ?? Date.now();
+    const useReverse = mode === "i2i" && reverse && (!!single || !!target || reversedForRef.current !== preview);
     const renderKey = `${model}:${mode}`;
     let timing: Timing = {
       step: useReverse ? "describe" : "submit", stepStart: clickedAt,
@@ -1929,11 +1952,16 @@ export default function StudioPage() {
         submit: DEFAULT_SECONDS.submit, render: estimateSeconds(renderKey, DEFAULT_SECONDS[mode]) }, renderKey,
     };
     const step = (s: ProgressStep) => {
-      if (!frameId) return startStep(s);
+      if (!progressId) return startStep(s);
       timing = { ...timing, step: s, stepStart: Date.now() };
-      frameTimes.current.set(frameId, timing); paintProgress();
+      frameTimes.current.set(progressId, timing); paintProgress();
     };
-    if (frameId) { frameTimes.current.set(frameId, timing); paintProgress(); }
+    if (single) {
+      frameTimes.current.set(single.id, timing); paintProgress();
+      showPendingSingle({ clientId: single.id, aspect: single.aspect, taskId: single.id, model, mode, prompt, editorDraft,
+        workspace, refUrl: single.refs[0], refUrls: single.refs, createdAt: clickedAt, startedAt: clickedAt });
+      setCurrentId(single.id); setResultUrl(null); setSingleIssue(null); setBatchGrid(false); setCompareOn(false); setHistOffset(0);
+    } else if (frameId) { frameTimes.current.set(frameId, timing); paintProgress(); }
     else {
       timingRef.current = timing;
       setJobVisual({
@@ -1957,7 +1985,7 @@ export default function StudioPage() {
     }
     try {
       const restored = target ? await referenceFiles(urls.slice(0, paramsOf(model).maxRefs ?? 1)) : loadingRefs ? await loadingRefs : undefined;
-      if (restored === null || (!frameId && refVersion.current !== refAtClick)) {
+      if (restored === null || (!frameId && !single && refVersion.current !== refAtClick)) {
         if (frameId) throw new Error("参考图读取失败，请重新选择");
         return;
       }
@@ -1990,7 +2018,7 @@ export default function StudioPage() {
             prompt: finalPrompt, canvasLayout, editorDraft, workspace,
             editorWidth: clampRes(Number(widthText) || width), editorHeight: clampRes(Number(heightText) || height),
             model,
-            count: frameId ? 1 : count,
+            count: frameId || single ? 1 : count,
             ...sizeFor(model, res, clampRes(Number(widthText) || width) / clampRes(Number(heightText) || height), {
               width: clampRes(Number(widthText) || width),
               height: clampRes(Number(heightText) || height),
@@ -2015,7 +2043,7 @@ export default function StudioPage() {
           if (userPrompt) fd.append("userPrompt", userPrompt);
         }
         fd.append("model", model);
-        fd.append("count", String(frameId ? 1 : count));
+        fd.append("count", String(frameId || single ? 1 : count));
         fd.append("image", await prepareReferenceImage(imageFile as File));
         fd.append("denoise", String(denoise));
         if (paramsOf(model).denoise && speed === "fast") fd.append("speed", "fast");
@@ -2023,7 +2051,7 @@ export default function StudioPage() {
         fd.append("res", res);
         if (paramsOf(model).editRatio) fd.append("editRatio", fixedEditAspect ? editRatio : "auto");
         if (paramsOf(model).pricePerMegapixel) {
-          const sz = sizeFor(model, res, fixedEditAspect ?? (target ? target.aspect || 1 : previewAspect || 1));
+          const sz = sizeFor(model, res, fixedEditAspect ?? single?.aspect ?? (target ? target.aspect || 1 : previewAspect || 1));
           fd.append("width", String(sz.width));
           fd.append("height", String(sz.height));
         }
@@ -2045,6 +2073,7 @@ export default function StudioPage() {
           : [{ taskId: String(data.taskId), seed: data.seed }];
       const now = Date.now();
       const pendings: PendingJob[] = created.map((t, i) => ({
+        clientId: single?.id, aspect: single?.aspect,
         taskId: String(t.taskId),
         seed: t.seed,
         mode,
@@ -2052,11 +2081,15 @@ export default function StudioPage() {
         prompt: finalPrompt || regionDescription(editRegions, numbers),
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
         refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft, workspace,
-        createdAt: now + i,
+        createdAt: single ? clickedAt + i : now + i,
         startedAt: clickedAt,
-        renderTiming: frameId ? timing : undefined,
+        renderTiming: progressId ? timing : undefined,
       }));
       addPending(pendings);
+      if (single) {
+        const [item] = await Promise.all(pendings.map((p) => watchSingle(p)));
+        return item?.url;
+      }
       if (frameId) {
         for (const p of pendings) watchedCanvasTasks.current.add(p.taskId);
         placeJobs(pendings);
@@ -2070,23 +2103,27 @@ export default function StudioPage() {
       } catch {}
       await finishBatch(pendings, job!);
     } catch (e: any) {
-      if (mounted.current && (frameId || jobRef.current === job)) {
+      if (single && mounted.current) {
+        const issue = generationIssue(findModel(model)?.name, e);
+        setGallery((list) => list.map((g) => g.clientId === single.id ? { ...g, status: "failed", error: issue.detail } : g));
+        if (currentIdRef.current === single.id) setSingleIssue(issue);
+      } else if (mounted.current && (frameId || jobRef.current === job)) {
         const issue = generationIssue(findModel(model)?.name, e);
         if (!frameId) setSingleIssue(issue);
         else if (!accepted) setBoardJobs((list) => [...list, { board: canvasBoard, frame: frameId, failed: true, issue }]);
       }
     } finally {
-      if (frameId) { frameTimes.current.delete(frameId); if (mounted.current) paintProgress(); }
+      if (single) { if (!accepted) releaseSingle(single.id); }
+      else if (frameId) { frameTimes.current.delete(frameId); if (mounted.current) paintProgress(); }
       else if (jobRef.current === job) {
         busyRef.current = false;
         setLoading(false);
       }
     }
-  }, [editorMode, readiness, preview, previewAspect, canvasSel.length, flash, startStep, count, extraRefs, finishBatch, resumePending, boardId, workspaceAt, placeJobs, paintProgress, finishPending]);
+  }, [editorMode, readiness, preview, previewAspect, canvasSel.length, flash, startStep, count, extraRefs, finishBatch, resumePending, boardId, workspaceAt, placeJobs, paintProgress, finishPending, releaseSingle, showPendingSingle, watchSingle]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
-  const [queued, setQueued] = useState(0);
   /** 先反推到提示词框: describe the reference into the box; the next 生成 uses the box as it is. */
   const reverseToBox = async () => {
     const file = fileBlobRef.current;
@@ -2114,20 +2151,23 @@ export default function StudioPage() {
       reverseToBox();
       return;
     }
-    if (busyRef.current && !(canvasOnRef.current && canvasApi.current?.layout()?.frame.node)) {
-      setQueued((n) => Math.min(9, n + 1));
-      flash("已排队，这张画完就开始");
+    if (!canvasOnRef.current) {
+      if (singleActive.current.size >= 10) { flash("最多同时生成 10 张，请等一张完成"); return; }
+      const id = `single-${crypto.randomUUID()}`;
+      const refs = mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : [];
+      const files = refLoadRef.current ? referenceFiles(refs).catch(() => null) : Promise.resolve(
+        [fileBlobRef.current, ...extraRefs.map((r) => r.file)].filter((f): f is File => !!f));
+      const draft = structuredClone(composeSnapRef.current);
+      const aspect = mode === "i2i" ? editAspectOf(draft.model, draft.editRatio ?? "auto") ?? previewAspect : draft.width / draft.height;
+      singleActive.current.add(id); setSingleCount(singleActive.current.size);
+      void generate(undefined, [], { id, draft, mode, refs, files, aspect, createdAt: Date.now() }).finally(() => {
+        if (!frameTimes.current.has(id)) releaseSingle(id);
+      });
       return;
     }
     generate();
   };
   startOrQueueRef.current = startOrQueue;
-  useEffect(() => {
-    if (!loading && queued > 0 && !busyRef.current) {
-      setQueued((n) => n - 1);
-      generate();
-    }
-  }, [loading, queued, generate]);
 
   // Estimated price: median real cost of recent images from the same model
   // and mode (falls back to any recent image, then a default), times the count.
@@ -2154,6 +2194,7 @@ export default function StudioPage() {
     return total >= 1 ? total.toFixed(2) : total.toFixed(3).replace(/0$/, "");
   })();
   const currentItem = gallery.find((g) => g.id === currentId) ?? null;
+  const singlePending = !canvasOn && currentItem?.status === "pending" ? currentItem : null;
   const modelParams = paramsOf(model);
   refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
@@ -2713,7 +2754,7 @@ export default function StudioPage() {
   })();
   const query = histQuery.trim().toLowerCase();
   const visibleHistory = gallery.filter(
-    (g) =>
+    (g) => (g.status === "pending" && !!g.clientId) ||
       (histMode === "all" || g.mode === histMode) &&
       (histFilter === "all" ||
         (histFilter === "fav" && !!g.fav) ||
@@ -2738,7 +2779,7 @@ export default function StudioPage() {
   const knownAspects = visibleHistory.flatMap((g) => g.url && aspects[g.id] ? [Math.max(0.2, Math.min(4, aspects[g.id]))] : []);
   const historyAspect = knownAspects.length ? knownAspects.reduce((sum, a) => sum + a, 0) / knownAspects.length : 1;
   const historyPageSize = isDesktop && historyBounds.height
-    ? Math.min(192, historyColumns * Math.max(1, Math.ceil(historyBounds.height / (Math.max(60, historyCardWidth * historyAspect) + 8))))
+    ? Math.max(12, Math.min(192, historyColumns * Math.max(1, Math.ceil(historyBounds.height / (Math.max(60, historyCardWidth * historyAspect) + 8)))))
     : 12;
   const phonePages = Math.max(1, Math.ceil(visibleHistory.length / historyPageSize));
   // A resize keeps the old first record in view, rather than jumping past it.
@@ -3198,7 +3239,9 @@ export default function StudioPage() {
                 />
               </div>
             )}
-            {loading && jobCount > 1 ? (
+            {singlePending ? (
+              <GeneratingView key={singlePending.id} aspect={singlePending.aspect ?? 1} progress={frameProgress.get(singlePending.clientId ?? "") ?? 1} />
+            ) : loading && jobCount > 1 ? (
               // One cell per picture (2 side by side, 3 in a row, 4 as 2×2); each fills in as soon as it is ready.
               <BatchGrid
                 count={jobCount}
@@ -3718,7 +3761,7 @@ export default function StudioPage() {
                     <span className="text-[11px] text-hint">选中画布上的图，就会拿它当参考图改图</span>
                     <div className="ml-auto">
                       <button onClick={startOrQueue} disabled={!modelReady || !prompt.trim()} className="apple-btn-primary generate-button flex items-center justify-center gap-2 px-5 py-2.5 text-[14px]">
-                        {loading ? `${Math.floor(progress)}%` : "生成"}
+                        生成
                       </button>
                     </div>
                   </div>
@@ -3939,17 +3982,12 @@ export default function StudioPage() {
                     <button
               onClick={startOrQueue}
               disabled={
-                !modelReady || ((mode === "t2i" || !reverse) && !prompt.trim() && !hasRegionNote)
+                !modelReady || (!canvasOn && singleCount >= 10) || ((mode === "t2i" || !reverse) && !prompt.trim() && !hasRegionNote)
               }
               className="apple-btn-primary generate-button flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-4 text-[13px]"
             >
               {canvasOn && frameProgress.has(editingNode) ? (
                 <><span>继续生成</span><span className="generate-price">¥{btnPrice}</span></>
-              ) : loading && !(canvasOn && editingNode) ? (
-                <>
-                  <span className="animate-spin-slow h-3.5 w-3.5 rounded-full border-[1.5px] border-white/40 border-t-white" />
-                  {batchTotal > 1 ? `${batchDone}/${batchTotal} 张` : `${Math.floor(progress)}%`}{queued ? ` · 排队 ${queued}` : " · 再点排队"}
-                </>
               ) : !modelReady ? (
                 <span>{findModel(model)?.name} 待接入</span>
               ) : (
@@ -4257,6 +4295,7 @@ export default function StudioPage() {
                         e.dataTransfer.effectAllowed = "copy";
                       }}
                       onClick={() => {
+                        if (g.status === "pending") { setCurrentId(g.id); setResultUrl(null); setSingleIssue(null); setCompareOn(false); return; }
                         if (selMode) {
                           toggleSel(g.id);
                           return;
@@ -4283,8 +4322,14 @@ export default function StudioPage() {
                         on ? "outline outline-2 -outline-offset-2 outline-accent" : "ring-1 ring-edge/[0.08] hover:ring-edge/[0.2]"
                       }`}
                     >
-                      <span className={`relative block w-full bg-well ${g.url ? "min-h-[60px]" : "aspect-square"}`}>
-                        {g.url ? (
+                      <span className={`relative block w-full bg-well ${g.url ? "min-h-[60px]" : g.status === "pending" ? "" : "aspect-square"}`}
+                        style={g.status === "pending" ? { aspectRatio: g.aspect ?? 1 } : undefined}>
+                        {g.status === "pending" ? (
+                          <span className="absolute inset-0" aria-label="正在生成">
+                            <GeneratingView aspect={g.aspect ?? 1} progress={frameProgress.get(g.clientId ?? "") ?? 1} compact fill />
+                            {g.error && <span className="absolute left-2 top-2 rounded bg-panel/90 px-2 py-1 text-[10px] text-secondary">刷新恢复</span>}
+                          </span>
+                        ) : g.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={thumbOf(g.url, isDesktop && rightPx / nCols > 200 ? 640 : 320)} alt="" loading="lazy" decoding="async" className="block h-auto w-full" onLoad={(e) => noteAspect(g.id, e.currentTarget)} />
                         ) : (
