@@ -31,7 +31,7 @@ import {
 
 import type { RunFrame } from "@/lib/canvas-execution";
 import type { BoardNode, CanvasDraft } from "@/lib/canvas-workflow";
-import { pictureParams, pictureRefs, recordWorkspace, restoredPolishLevel, type EditMetadata, type RecordWorkspace } from "@/lib/edit-recipe";
+import { pictureDraft, pictureParams, pictureRefs, recordWorkspace, restoredPolishLevel, type EditMetadata, type RecordWorkspace } from "@/lib/edit-recipe";
 
 type Readiness = Record<string, Record<Mode, boolean>>;
 
@@ -253,6 +253,27 @@ const RATIOS = [
   { label: "1:8", w: 320, h: 2560, kind: "portrait" as const },
   { label: "8:1", w: 2560, h: 320, kind: "landscape" as const },
 ];
+
+function summaryOf(draft: CanvasDraft, hasPictures: boolean) {
+  const p = paramsOf(draft.model);
+  const parts: string[] = [];
+  if (hasPictures) {
+    if (p.editRatio && !draft.regions?.some((r) => r.mask) && editAspectOf(draft.model, draft.editRatio))
+      parts.push(draft.editRatio!);
+  } else if (draft.squareChosen || draft.width !== 1536 || draft.height !== 1536) {
+    parts.push(RATIOS.find((r) => r.w === draft.width && r.h === draft.height)?.label ?? `${draft.width}×${draft.height}`);
+  }
+  if (p.resolutions?.[draft.res] != null && draft.res !== "2K") parts.push(draft.res);
+  if (p.quality && draft.quality !== "medium" && QUALITY_LABELS[draft.quality]) parts.push(QUALITY_LABELS[draft.quality]);
+  if (p.thinking != null && draft.thinking) parts.push("深度思考");
+  if (p.background && draft.background !== "auto") parts.push(draft.background === "transparent" ? "透明背景" : "不透明背景");
+  if (p.complexity && draft.complexity !== "auto") parts.push("构思" + ({ low: "快", medium: "标准", high: "精细" } as const)[draft.complexity]);
+  if (hasPictures && p.regional && draft.regions?.length) parts.push(`局部重绘 ${draft.regions.length} 处`);
+  else if (hasPictures && p.regional && draft.regional) parts.push("局部修改");
+  if (hasPictures && p.denoise && draft.denoise !== 0.5) parts.push(`重绘 ${draft.denoise.toFixed(2)}`);
+  if (p.lora && draft.lora !== 2) parts.push(`风格 ${draft.lora.toFixed(1)}`);
+  return parts.join(" · ");
+}
 
 const MAX_RES = 2560;
 const MIN_RES = 256;
@@ -536,6 +557,7 @@ export default function StudioPage() {
   const reverse = reverseOn && !findModel(model)?.billing;
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [prompt, setPrompt] = useState("");
+  const [squareChosen, setSquareChosen] = useState(false);
   const [width, setWidth] = useState(1536);
   const [height, setHeight] = useState(1536);
   const [widthText, setWidthText] = useState("1536");
@@ -1436,6 +1458,7 @@ export default function StudioPage() {
 
   const applyEditorDraft = useCallback((v: CanvasDraft) => {
     setModel(v.model);
+    setSquareChosen(!!v.squareChosen);
     setPrompt(v.prompt);
     setDenoise(v.denoise);
     setQuality(v.quality);
@@ -1464,6 +1487,7 @@ export default function StudioPage() {
     if (g.editorDraft) return applyEditorDraft(g.editorDraft);
     const v = pictureParams(g);
     setModel(v.model);
+    setSquareChosen(false);
     setPrompt(v.prompt);
     setDenoise(v.denoise);
     setQuality(v.quality);
@@ -2380,7 +2404,7 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio: hasBrush ? "auto" : editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const composeSnap: CanvasDraft = { squareChosen, regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio: hasBrush ? "auto" : editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2537,7 +2561,7 @@ export default function StudioPage() {
     // 2026-11-10 (用户: 去掉生成张数，点一次就是生成一次): no 张数 chip; every click makes one picture.
   ];
   // 用户 2026-11-11 (小预览跟随我选择的参数): the short line under a picture on the board.
-  const liveSummary = chips.filter((c) => c.key !== "model").map((c) => c.label).join(" · ");
+  const liveSummary = summaryOf(composeSnap, mode === "i2i");
   liveSummaryRef.current = liveSummary;
   useEffect(() => {
     if (canvasOn && editingNode && editingNode === composeKey.current)
@@ -2545,14 +2569,11 @@ export default function StudioPage() {
   }, [canvasOn, editingNode, liveSummary, prompt, model, width, height, widthText, heightText, denoise, quality, res, seedText, negative, lora, polishLevel, thinking, regional, regions, background, complexity, reverseOn, reverseMode, editRatio]);
   const boardSummary = (n: BoardNode, hasPictures: boolean) => {
     if (n.id === editingNode) return null;
-    const saved = composeMem.current.get(n.id) ?? n.draft;
-    const g = !saved ? gallery.find((x) => x.id === (n.gid ?? n.editOf)) : undefined;
-    const md = findModel(saved?.model ?? (g ? pictureParams(g).model : DEFAULT_MODEL)) ?? MODELS[0];
-    const size = g && pictureParams(g);
-    const ratio = size ? RATIOS.find((r) => r.w === size.width && r.h === size.height)?.label ?? `${size.width}×${size.height}` : "1:1";
-    const s = g?.settings;
-    const detail = saved?.summary || [hasPictures ? (paramsOf(md.id).denoise ? `重绘 ${s?.["重绘幅度"] ?? "0.50"}` : s?.["改图比例"] || "自适应") : ratio, s?.["清晰度"], s?.["画质"]].filter(Boolean).join(" · ");
-    return { model: md.name, cover: md.cover, detail };
+    const saved = n.draft ?? composeMem.current.get(n.id);
+    const g = !saved ? gallery.find((item) => item.id === (n.gid ?? n.editOf)) : undefined;
+    const draft = saved ?? g?.editorDraft ?? (g ? pictureDraft(g) : undefined);
+    const md = findModel(draft?.model ?? DEFAULT_MODEL) ?? MODELS[0];
+    return { model: md.name, cover: md.cover, detail: draft ? summaryOf(draft, hasPictures || (!n.from && g?.mode === "i2i")) : "" };
   };
   // 用户 2026-11-10: 模型 + 两个参数 + 更多.
   const primaryChips = [
@@ -3555,7 +3576,7 @@ export default function StudioPage() {
                             <button
                               key={r.label}
                               type="button"
-                              onClick={() => { if (mode === "i2i") setEditRatio(r.label); else applyRatio(r.w, r.h); setOpenPanel(null); }}
+                              onClick={() => { if (mode === "i2i") setEditRatio(r.label); else { setSquareChosen(r.label === "1:1"); applyRatio(r.w, r.h); } setOpenPanel(null); }}
                               className={`rounded-lg py-1.5 text-[12px] font-medium transition ${(mode === "i2i" ? editRatio === r.label : width === r.w && height === r.h) ? "bg-accent text-panel" : "bg-edge/[0.04] text-ink hover:bg-edge/[0.08]"}`}
                             >
                               {r.label}

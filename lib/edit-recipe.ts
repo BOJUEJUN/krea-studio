@@ -78,7 +78,7 @@ export function pictureParams(g: EditablePicture) {
 }
 
 export type CanvasDraft = ReturnType<typeof pictureParams> & {
-  regions?: KreaRegion[];
+  regions?: KreaRegion[]; squareChosen?: boolean;
   widthText: string; heightText: string; polishLevel: "low" | "medium" | "high"; polishVersion?: number; editRatio?: string; reverseOn: boolean; reverseMode?: "direct" | "fill"; summary: string;
 };
 export function restoredPolishLevel(level: unknown, version: unknown): CanvasDraft["polishLevel"] {
@@ -101,6 +101,7 @@ export function readDraft(v: unknown): CanvasDraft | undefined {
     if (k !== "model" && typeof x === typeof fallback && (typeof x !== "number" || Number.isFinite(x)))
       out[k] = typeof x === "string" ? x.slice(0, 8000) : x;
   }
+  if (data.squareChosen === true) out.squareChosen = true;
   out.polishLevel = restoredPolishLevel(data.polishLevel, data.polishVersion);
   out.polishVersion = 2;
   if (out.model === "krea-3" && data.regions) {

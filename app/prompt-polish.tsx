@@ -60,7 +60,7 @@ export function PromptPolish({ level, busy, canUndo, onRun, onLevel, onUndo, onO
   }
 
   return <>
-    <div data-prompt-polish="" className={`compose-split inline-flex h-8 shrink-0 items-center overflow-hidden whitespace-nowrap rounded-full text-[12px] ${canUndo || busy ? "bg-accent/[0.08] text-accent ring-1 ring-accent/25" : "bg-edge/[0.05] text-ink"}`}>
+    <div data-prompt-polish="" className={`compose-split inline-flex h-8 shrink-0 items-center overflow-hidden whitespace-nowrap rounded-full text-[12px] ${busy ? "bg-accent/[0.08] text-accent ring-1 ring-accent/25" : "bg-edge/[0.05] text-ink"}`}>
       <button type="button" disabled={busy} onClick={onRun} title="按当前程度润色，保留 @图 编号"
         className="flex h-full items-center gap-1 hover:bg-edge/[0.08] disabled:opacity-60">
         {busy ? <span aria-hidden className="animate-spin-slow h-3 w-3 rounded-full border-[1.5px] border-accent/30 border-t-accent" /> :

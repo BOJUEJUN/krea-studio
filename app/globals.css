@@ -517,6 +517,7 @@ textarea {
 .studio-text-scroll, .studio-text-mirror { scrollbar-gutter: stable; }
 .studio-text-scroll { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
 .studio-text-scroll::-webkit-scrollbar, .studio-text-mirror::-webkit-scrollbar { width: 10px; }
+.studio-text-scroll::-webkit-scrollbar, .studio-text-scroll::-webkit-scrollbar-track, .studio-text-scroll::-webkit-scrollbar-thumb, .studio-text-scroll::-webkit-scrollbar-corner { cursor: default; }
 .studio-text-scroll::-webkit-scrollbar-track { margin-block: 5px; border-radius: 8px; background: color-mix(in srgb, var(--color-edge) 6%, transparent); }
 .studio-text-scroll::-webkit-scrollbar-thumb { min-height: 24px; border: 2px solid transparent; border-radius: 8px; background: color-mix(in srgb, var(--color-edge) 38%, transparent) padding-box; }
 .studio-text-scroll::-webkit-scrollbar-thumb:hover { background-color: var(--color-secondary); }
@@ -524,6 +525,27 @@ textarea {
   .studio-text-scroll, .studio-text-mirror { scrollbar-width: thin; scrollbar-color: var(--color-muted) transparent; }
 }
 textarea[data-node-text]:read-only { cursor: inherit; }
+
+/* Hit areas stay the same screen size at every canvas zoom. Only the hovered grip is visible. */
+.node-resize-handle {
+  position: absolute; z-index: 3; touch-action: none;
+  --hit: calc(14px * var(--handle-scale)); --half: calc(var(--hit) / -2);
+}
+.node-resize-handle::after {
+  content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
+  border: 1px solid white; border-radius: 50%; background: var(--color-accent);
+  transform: translate(-50%, -50%) scale(var(--handle-scale)); opacity: 0; pointer-events: none;
+}
+.node-resize-handle:hover::after, .node-resize-handle:active::after { opacity: 1; }
+.node-resize-handle[data-node-resize="n"], .node-resize-handle[data-node-resize="s"] { left: var(--hit); right: var(--hit); height: var(--hit); cursor: ns-resize; }
+.node-resize-handle[data-node-resize="e"], .node-resize-handle[data-node-resize="w"] { top: var(--hit); bottom: var(--hit); width: var(--hit); cursor: ew-resize; }
+.node-resize-handle[data-node-resize^="n"] { top: var(--half); }
+.node-resize-handle[data-node-resize^="s"] { bottom: var(--half); }
+.node-resize-handle[data-node-resize$="e"] { right: var(--half); }
+.node-resize-handle[data-node-resize$="w"] { left: var(--half); }
+.node-resize-handle:is([data-node-resize="nw"], [data-node-resize="se"], [data-node-resize="ne"], [data-node-resize="sw"]) { width: var(--hit); height: var(--hit); }
+.node-resize-handle:is([data-node-resize="nw"], [data-node-resize="se"]) { cursor: nwse-resize; }
+.node-resize-handle:is([data-node-resize="ne"], [data-node-resize="sw"]) { cursor: nesw-resize; }
 
 /* Panel resizers: invisible in the gap; a thin line shows on hover / drag. */
 .panel-resizer {

@@ -78,6 +78,9 @@ function NodePicture({ url, thumb, backup, onLoad }: {
     onLoad={(e) => onLoad(e.currentTarget)} onError={() => setAttempt((v) => v + 1)} />;
 }
 
+const resizeDirections = ["n", "s", "w", "e", "nw", "ne", "sw", "se"] as const;
+type ResizeDirection = typeof resizeDirections[number];
+
 const typing = (target: EventTarget | null) => target instanceof HTMLElement &&
   (target.matches("input,textarea:not([data-node-text][readonly]),select") || target.isContentEditable);
 function writeNodeCopy(e: ClipboardEvent, text: string) {
@@ -848,7 +851,7 @@ export function CanvasBoard({
     | { kind: "pan"; sx: number; sy: number; vx: number; vy: number; moved: boolean }
     | { kind: "marquee"; x0: number; y0: number; add: Set<string> }
     | { kind: "move"; sx: number; sy: number; start: Map<string, { x: number; y: number }>; before: Node[]; moved: boolean }
-    | { kind: "resize"; id: string; axis: "width" | "height" | "both"; sx: number; sy: number; w: number; h: number; before: Node[] }
+    | { kind: "resize"; id: string; direction: ResizeDirection; sx: number; sy: number; x: number; y: number; w: number; h: number; before: Node[] }
     | { kind: "link"; src: string }
     | null
   >(null);
@@ -900,12 +903,12 @@ export function CanvasBoard({
     const start = new Map(nodesRef.current.filter((m) => next.has(m.id)).map((m) => [m.id, { x: m.x, y: m.y }]));
     drag.current = { kind: "move", sx: e.clientX, sy: e.clientY, start, before: nodesRef.current, moved: false };
   };
-  const onHandleDown = (e: React.PointerEvent, n: Node, axis: "width" | "height" | "both") => {
+  const onHandleDown = (e: React.PointerEvent, n: Node, direction: ResizeDirection) => {
     if (e.button !== 0) return;
     e.stopPropagation();
     dragPointer.current = e.pointerId;
     boxRef.current?.setPointerCapture(e.pointerId);
-    drag.current = { kind: "resize", id: n.id, axis, sx: e.clientX, sy: e.clientY, w: n.w, h: n.h, before: nodesRef.current };
+    drag.current = { kind: "resize", id: n.id, direction, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y, w: n.w, h: n.h, before: nodesRef.current };
   };
   const onMove = (e: React.PointerEvent) => {
     lastPointer.current = { x: e.clientX, y: e.clientY };
@@ -987,11 +990,18 @@ export function CanvasBoard({
       const dx = (e.clientX - d.sx) / s, dy = (e.clientY - d.sy) / s;
       setNodesRaw((list) => list.map((n) => {
         if (n.id !== d.id) return n;
-        if (n.kind === "text") return { ...n,
-          w: d.axis === "height" ? d.w : Math.max(168, d.w + dx),
-          h: d.axis === "width" ? d.h : Math.max(104, d.h + dy) };
-        const w = Math.max(60, d.w + dx);
-        return { ...n, w, h: w * d.h / d.w, fit: false };
+        const horizontal = d.direction.includes("w") ? -1 : d.direction.includes("e") ? 1 : 0;
+        const vertical = d.direction.includes("n") ? -1 : d.direction.includes("s") ? 1 : 0;
+        let w = horizontal ? Math.max(168, d.w + horizontal * dx) : d.w;
+        let h = vertical ? Math.max(104, d.h + vertical * dy) : d.h;
+        if (n.kind !== "text") {
+          const scaleX = horizontal * dx / d.w, scaleY = vertical * dy / d.h;
+          const scale = Math.max(60 / d.w, 1 + (Math.abs(scaleX) >= Math.abs(scaleY) ? scaleX : scaleY));
+          w = d.w * scale; h = d.h * scale;
+        }
+        const x = d.x + (d.w - w) * (1 - horizontal) / 2;
+        const y = d.y + (d.h - h) * (1 - vertical) / 2;
+        return { ...n, x, y, w, h, fit: false };
       }));
     }
   };
@@ -1776,7 +1786,7 @@ export function CanvasBoard({
                     className="absolute left-0 top-full flex h-6 items-center gap-1.5 overflow-hidden rounded-md bg-panel px-2 text-[11px] text-secondary shadow-sm ring-1 ring-edge/10"
                     style={{ transform: "translateY(5px)", width: n.w }}>
                     {sm.cover && <img src={sm.cover} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm object-cover" />}
-                    <span className="max-w-[65%] shrink-0 truncate font-medium text-ink">{sm.model}</span>
+                    <span className={`shrink-0 truncate font-medium text-ink ${sm.detail ? "max-w-[65%]" : "min-w-0 max-w-[calc(100%-1.25rem)]"}`}>{sm.model}</span>
                     {sm.detail && <span className="truncate border-l border-edge/15 pl-1.5">{sm.detail}</span>}
                   </div>
                 );
@@ -1810,20 +1820,11 @@ export function CanvasBoard({
                   </svg>
                 </span>
               )}
-              {on && selected.length === 1 && (url || isText) && (
-                <>
-                  {isText && <>
-                    <span data-node-resize="width" title="拖动调整宽度" className="absolute bottom-2 left-full top-2 cursor-ew-resize"
-                      style={{ width: 8 * k }} onPointerDown={(e) => onHandleDown(e, n, "width")} />
-                    <span data-node-resize="height" title="拖动调整高度" className="absolute left-2 right-2 top-full cursor-ns-resize"
-                      style={{ height: 8 * k }} onPointerDown={(e) => onHandleDown(e, n, "height")} />
-                  </>}
-                  <span data-node-resize="both" title={isText ? "拖动调整宽高" : "拖动调整大小"}
-                    className="absolute bottom-0 right-0 h-3 w-3 cursor-nwse-resize rounded-full border border-white bg-accent shadow"
-                    style={{ transform: `translate(50%, 50%) scale(${k})`, transformOrigin: "center" }}
-                    onPointerDown={(e) => onHandleDown(e, n, "both")} />
-                </>
-              )}
+              {on && selected.length === 1 && (url || isText || isGen) && resizeDirections.map((direction) => (
+                <span key={direction} data-node-resize={direction} title="拖动调整大小"
+                  className="node-resize-handle" style={{ "--handle-scale": k } as React.CSSProperties}
+                  onPointerDown={(e) => onHandleDown(e, n, direction)} />
+              ))}
             </div>
           );
         })}
