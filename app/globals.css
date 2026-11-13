@@ -547,8 +547,16 @@ textarea[data-node-text]:read-only { cursor: inherit; }
   transform: translate(-50%, -50%) scale(var(--handle-scale)); opacity: 0; pointer-events: none;
   transition: opacity 0.15s ease;
 }
-.compose-resize-host:hover .node-resize-handle::after { opacity: 0.45; }
-.node-resize-handle:hover::after, .node-resize-handle:active::after { opacity: 1 !important; }
+/* 用户 2026-11-12 (鼠标进卡片不要显示拉伸点，要在边缘才显示；各处统一): every box — picture, text, generate node and
+   the floating compose box — shows nothing until the pointer is on an edge or corner; then that edge lights a thin
+   line and a corner lights its dot. */
+.node-resize-handle:hover::after, .node-resize-handle:active::after { opacity: 1; }
+.node-resize-handle:is([data-node-resize="n"], [data-node-resize="s"])::after {
+  width: calc(100% - var(--hit)); height: calc(2px * var(--handle-scale)); border: 0; border-radius: 999px; transform: translate(-50%, -50%);
+}
+.node-resize-handle:is([data-node-resize="e"], [data-node-resize="w"])::after {
+  width: calc(2px * var(--handle-scale)); height: calc(100% - var(--hit)); border: 0; border-radius: 999px; transform: translate(-50%, -50%);
+}
 .node-resize-handle[data-node-resize="n"], .node-resize-handle[data-node-resize="s"] { left: var(--hit); right: var(--hit); height: var(--hit); cursor: ns-resize; }
 .node-resize-handle[data-node-resize="e"], .node-resize-handle[data-node-resize="w"] { top: var(--hit); bottom: var(--hit); width: var(--hit); cursor: ew-resize; }
 .node-resize-handle[data-node-resize^="n"] { top: var(--half); }

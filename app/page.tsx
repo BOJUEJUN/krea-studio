@@ -3087,11 +3087,13 @@ export default function StudioPage() {
           <span className="h-6 w-6 animate-spin rounded-full border-2 border-accent/25 border-t-accent" />
         </div>
       )}
-      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 overflow-y-auto lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "p-0" : "p-2"}`}>
-        <div ref={leftColRef} className="relative flex min-w-0 shrink-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink">
+      <main className={`relative z-10 flex min-h-0 w-full flex-1 flex-col gap-2 lg:flex-row lg:gap-0 lg:overflow-hidden ${restored ? "" : "invisible"} ${canvasOn ? "overflow-hidden p-0" : "overflow-y-auto p-2"}`}>
+        {/* 用户 2026-11-12 (网页拉窄后画布下半截没了): below the wide layout the board used to stop at 55% of the window;
+            the canvas now always fills the page. */}
+        <div ref={leftColRef} className={`relative flex min-w-0 flex-col gap-2 lg:min-h-0 lg:flex-1 lg:shrink ${canvasOn ? "min-h-0 flex-1" : "shrink-0"}`}>
         <section
           ref={resultRef_}
-          className={`stagger-2 flex h-[55vh] min-w-0 flex-col overflow-hidden lg:h-auto lg:min-h-0 lg:flex-1 ${canvasOn ? "" : "apple-card rounded-[22px]"}`}>
+          className={`stagger-2 flex min-w-0 flex-col overflow-hidden lg:h-auto lg:min-h-0 lg:flex-1 ${canvasOn ? "min-h-0 flex-1" : "h-[55vh] apple-card rounded-[22px]"}`}>
                     <div
             className={`relative flex min-h-0 flex-1 items-center justify-center overflow-hidden ${canvasOn ? "" : "result-box m-2 rounded-[16px] sm:m-3"}`}
 
