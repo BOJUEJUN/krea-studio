@@ -73,11 +73,11 @@ function setCursor(root: HTMLElement, cursor: Cursor) {
 }
 
 export function MentionEditor({ ref, value, pictures, onChange, onPointerDown, onSubmit, onFocus, onBlur,
-  className = "", style, id, placeholder, nodeText, maxLength = 8000, autoFocus }: {
+  className = "", style, id, placeholder, nodeText, maxLength = 8000, autoFocus, readOnly = false }: {
   ref?: Ref<MentionEditorHandle>; value: string; pictures: MentionPicture[]; onChange: (text: string) => void;
   onPointerDown?: (event: PointerEvent<HTMLDivElement>) => void; onSubmit?: () => void;
   onFocus?: () => void; onBlur?: () => void; className?: string; style?: CSSProperties; id?: string;
-  placeholder?: string; nodeText?: boolean; maxLength?: number; autoFocus?: boolean;
+  placeholder?: string; nodeText?: boolean; maxLength?: number; autoFocus?: boolean; readOnly?: boolean;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const latest = useRef(value), cursor = useRef<Cursor>(emptyCursor), composing = useRef(false), signature = useRef("");
@@ -99,13 +99,15 @@ export function MentionEditor({ ref, value, pictures, onChange, onPointerDown, o
       const n = Number(part.slice(2)), picture = pictures.find((p) => p.n === n);
       const token = document.createElement("span");
       token.dataset.mention = part; token.contentEditable = "false";
-      token.title = picture ? "图" + n : "缺少图" + n;
+      token.title = picture ? "图片" + n : "缺少图" + n;
       token.setAttribute("aria-label", token.title);
       if (picture) {
         token.className = "picture-mention";
         const img = document.createElement("img");
         img.src = picture.url; img.alt = "图" + n; img.draggable = false;
-        token.append(img);
+        const label = document.createElement("span");
+        label.textContent = "图片" + n;
+        token.append(img, label);
       } else {
         token.className = "text-danger underline decoration-dashed underline-offset-2";
         token.textContent = part;
@@ -178,9 +180,13 @@ export function MentionEditor({ ref, value, pictures, onChange, onPointerDown, o
     if (text !== value) onChange(text);
   });
 
-  useLayoutEffect(() => { if (autoFocus) root.current?.focus({ preventScroll: true }); }, [autoFocus]);
+  useLayoutEffect(() => {
+    if (readOnly) { if (document.activeElement === root.current) root.current?.blur(); }
+    else if (autoFocus) root.current?.focus({ preventScroll: true });
+  }, [autoFocus, readOnly]);
 
   function keyDown(e: KeyboardEvent<HTMLDivElement>) {
+    if (readOnly) return;
     e.stopPropagation();
     if (composing.current || e.nativeEvent.isComposing) return;
     remember();
@@ -200,7 +206,7 @@ export function MentionEditor({ ref, value, pictures, onChange, onPointerDown, o
   return <>
     <div ref={root} id={id} role="textbox" aria-label={nodeText ? "文本节点内容" : "提示词"} aria-multiline="true"
       data-node-text={nodeText ? "" : undefined} data-placeholder={placeholder} data-empty={!normalizeMentions(value)}
-      contentEditable suppressContentEditableWarning spellCheck={false}
+      contentEditable={!readOnly} aria-readonly={readOnly} title={readOnly ? "双击编辑，拖动移动" : undefined} suppressContentEditableWarning spellCheck={false}
       className={"mention-editor studio-text-scroll whitespace-pre-wrap break-words text-ink caret-ink outline-none " + className}
       style={style} onPointerDown={onPointerDown}
       onFocus={() => { onFocus?.(); }} onBlur={() => { remember(); setPicker(null); onBlur?.(); }}

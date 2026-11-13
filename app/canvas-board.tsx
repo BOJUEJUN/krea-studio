@@ -1,6 +1,6 @@
 "use client";
 
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RegionMark } from "./brush-overlay";
@@ -890,6 +890,7 @@ export function CanvasBoard({
   const onBgDown = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
     setCtx(null);
+    setEditing(null);
     setLinkMenu(null);
     dragPointer.current = e.pointerId;
     boxRef.current?.setPointerCapture(e.pointerId);
@@ -906,6 +907,7 @@ export function CanvasBoard({
   const onNodeDown = (e: React.PointerEvent, n: Node) => {
     if (e.button !== 0) return;
     setCtx(null);
+    setEditing(null);
     e.stopPropagation();
     if (spaceDown) return onBgDown(e);
     if (!e.shiftKey && (e.target as Element).closest("[data-node-summary]")) {
@@ -1116,31 +1118,13 @@ export function CanvasBoard({
     commit((n) => n.filter((m) => !sel.has(m.id)));
     setSel(new Set());
   }, [sel, commit]);
-  const copyPicture = async (url: string) => {
-    try {
-      const png = (async () => {
-        const source = /^\/api\/(img|ref)\//.test(url) ? url.split("?")[0] + "?raw=1" : url;
-        const response = await fetch(source);
-        if (!response.ok) throw new Error("图片读取失败");
-        const blob = await response.blob();
-        if (blob.type === "image/png") return blob;
-        const image = await createImageBitmap(blob);
-        try {
-          const canvas = document.createElement("canvas");
-          canvas.width = image.width; canvas.height = image.height;
-          canvas.getContext("2d")!.drawImage(image, 0, 0);
-          return await new Promise<Blob>((resolve, reject) => canvas.toBlob((bytes) =>
-            bytes ? resolve(bytes) : reject(new Error("图片转换失败")), "image/png"));
-        } finally { image.close(); }
-      })();
-      // Start the clipboard write in the click gesture, including on Safari.
-      await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
-      flash("图片已复制");
-    } catch (error) { flash(error instanceof Error ? "图片复制失败，请重试" : "图片复制失败"); }
-  };
-
-  const duplicateSel = useCallback(() => {
-    const clip = selectionClip();
+  const duplicateSel = useCallback((picture?: Node) => {
+    const url = picture && urlOfRef.current(picture);
+    const clip = picture && url ? {
+      selected: [picture.id],
+      nodes: [{ id: picture.id, kind: "image" as const, src: url, x: picture.x, y: picture.y,
+        w: picture.w, h: picture.h, nw: picture.nw, nh: picture.nh, fit: true }],
+    } : selectionClip();
     const selected = new Set(clip.selected);
     const group = clip.nodes.filter((n) => selected.has(n.id));
     const board = boxRef.current;
@@ -1161,22 +1145,6 @@ export function CanvasBoard({
     placeClip(clip, center);
     if (!visible(target)) setView({ ...v, x: board.clientWidth / 2 - center.x * v.s, y: board.clientHeight / 2 - center.y * v.s });
   }, [selectionClip, placeClip]);
-  const copySel = async () => {
-    const clip = selectionClip();
-    if (!clip.selected.length) return;
-    const text = encodeNodes(clip);
-    // Write in the click gesture so even an immediate Paste reads this selection.
-    let copied = false;
-    const copy = (e: ClipboardEvent) => { copied = writeNodeCopy(e, text); };
-    document.addEventListener("copy", copy, true);
-    try { document.execCommand("copy"); } catch {} finally { document.removeEventListener("copy", copy, true); }
-    try {
-      if (!copied) await navigator.clipboard.writeText(text);
-      flash("节点已复制");
-    } catch {
-      flash("请用系统复制快捷键");
-    }
-  };
   const pasteMenu = async (at: { x: number; y: number }) => {
     try {
       if (!pasteText(await navigator.clipboard.readText(), at)) flash("剪贴板里没有节点或分享口令");
@@ -1405,6 +1373,7 @@ export function CanvasBoard({
     onSelTextRef.current?.(selTextKey, selTexts.map((n) => ({ id: n.id, text: n.text ?? "" })));
   }, [selTextKey, textInputIds, selIdKey]);
   const [editing, setEditing] = useState<string | null>(null);
+  useEffect(() => { if (editing && !sel.has(editing)) setEditing(null); }, [editing, sel]);
   const picsForText = (textId: string): { n: number; url: string }[] => {
     const target = nodes.find((n) => isGeneration(n) && generationInputs(n, nodes).some((m) => m.id === textId));
     if (!target) return [];
@@ -1475,6 +1444,7 @@ export function CanvasBoard({
     e.stopPropagation();
     if (e.button !== 0) return;
     setCtx(null);
+    setEditing(null);
     setLinkMenu(null);
     dragPointer.current = e.pointerId;
     boxRef.current?.setPointerCapture(e.pointerId);
@@ -1643,7 +1613,18 @@ export function CanvasBoard({
               className={`group/node absolute rounded-[10px] ${isGen && !running ? (on ? "bg-accent/[0.03]" : "border border-dashed border-accent/40 bg-accent/[0.03]") : "bg-panel shadow-[0_6px_24px_rgba(0,0,0,0.12)]"} ${on || linkHover === n.id ? "" : isGen ? "" : "ring-1 ring-edge/[0.06]"}`}
               style={{ left: n.x, top: n.y, width: n.w, height: n.h, boxShadow: on || linkHover === n.id ? `0 0 0 ${1.25 * k}px ${on ? "var(--color-accent)" : "#34c759"}` : undefined }}
               onPointerDown={(e) => onNodeDown(e, n)}
-              onDoubleClick={() => (isText ? setEditing(n.id) : url && onView(url))}
+              onDoubleClick={(e) => {
+                if (!isText) { if (url) onView(url); return; }
+                flushSync(() => setEditing(n.id));
+                const input = boxRef.current?.querySelector<HTMLElement>('[data-node-id="' + n.id + '"] [data-node-text]');
+                if (!input) return;
+                input.focus({ preventScroll: true });
+                const range = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+                if (range && input.contains(range.startContainer)) {
+                  const selection = window.getSelection();
+                  selection?.removeAllRanges(); selection?.addRange(range);
+                }
+              }}
             >
               {/* 用户 2026-11-11: what the node is and its size, above it. */}
               <div
@@ -1663,14 +1644,21 @@ export function CanvasBoard({
               {isText ? (
                 <div className="flex h-full w-full flex-col rounded-[10px]">
                   <div className="relative min-h-0 flex-1">
-                  <MentionEditor nodeText value={n.text ?? ""} maxLength={2000}
+                  <MentionEditor nodeText value={n.text ?? ""} maxLength={2000} readOnly={editing !== n.id}
                     pictures={picsForText(n.id).map((p) => ({ n: p.n, url: p.url.startsWith("data:") ? p.url : thumb(p.url, 160) }))}
                     autoFocus={editing === n.id} placeholder="写下描述，输入 @ 引用参考图"
                     onPointerDown={(e) => {
-                      if (spaceDown) { e.preventDefault(); return; }
+                      const input = e.currentTarget, bounds = input.getBoundingClientRect();
+                      const textRight = bounds.left + bounds.width * input.clientWidth / input.offsetWidth;
+                      if (!spaceDown && input.scrollHeight > input.clientHeight && e.clientX >= textRight) {
+                        e.stopPropagation();
+                        if (!sel.has(n.id)) setSel(new Set([n.id]));
+                        return;
+                      }
+                      if (spaceDown || editing !== n.id) { e.preventDefault(); return; }
                       e.stopPropagation();
-                      if (!sel.has(n.id)) setSel(new Set([n.id]));
                     }}
+                    onBlur={() => setEditing((current) => current === n.id ? null : current)}
                     onChange={(text) => setNodesRaw((list) => list.map((m) => m.id === n.id && m.text !== text ? { ...m, text } : m))}
                     className="h-full w-full rounded-[10px] bg-transparent p-3 text-[13px] leading-[20px]" />
                   </div>
@@ -1853,12 +1841,12 @@ export function CanvasBoard({
               </button>
             </>
           )}
-          {selected.length === 1 && urlOf(selected[0]) && <button type="button" aria-label="复制图片" data-tip="复制图片到剪贴板" className={ibtn}
-            onClick={() => void copyPicture(urlOf(selected[0])!)}>
+          {selected.length === 1 && urlOf(selected[0]) && <button type="button" aria-label="复制图片" data-tip="复制图片为画布素材" className={ibtn}
+            onClick={() => duplicateSel(selected[0])}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="2.5" y="3" width="12" height="11" rx="2" /><path d="m3 11 3-3 3 3 2-2 3 3M7 17h8a2 2 0 0 0 2-2V7" /><circle cx="11" cy="6.5" r=".75" /></svg>
           </button>}
           {selected.length === 1 && urlOf(selected[0]) && <span className="mx-0.5 h-4 w-px bg-edge/10" />}
-          <button type="button" aria-label="复制节点" data-tip="复制节点（在旁边创建副本）" className={ibtn} onClick={duplicateSel}>
+          <button type="button" aria-label="复制节点" data-tip="复制节点（在旁边创建副本）" className={ibtn} onClick={() => duplicateSel()}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><rect x="3.5" y="3.5" width="9.5" height="9.5" rx="2" /></svg>
           </button>
           {onShare && selected.length >= 2 && <button type="button" aria-label="分享选中节点" data-tip="分享选中节点（复制口令）" className={ibtn} onClick={() => onShare(true)}>
@@ -1927,11 +1915,10 @@ export function CanvasBoard({
                 {one.gid && onReedit && url && <button type="button" className={item} onClick={go(() => onReedit(one.gid!))}>重新编辑</button>}
                 {one.gid && onAgain && <button type="button" className={item} onClick={go(() => onAgain(one.gid!, linkedText(one), linkedRefs(one)))}>再来一张</button>}
                 {one.gid && onUpscale && <button type="button" className={item} onClick={go(() => onUpscale(one.gid!))}>高清放大 2 倍</button>}
-                {url && <button type="button" className={item} onClick={go(() => void copyPicture(url))}>复制图片</button>}
+                {url && <button type="button" className={item} onClick={go(() => duplicateSel(one))}>复制图片</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
                 <div className="my-1 h-px bg-edge/[0.07]" />
-                <button type="button" className={item} onClick={go(copySel)}>复制节点到剪贴板</button>
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制节点</button>
                 {onShare && selected.length >= 2 && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的 {selected.length} 个节点…</button>}
                 <button type="button" className={`${item} text-danger`} onClick={go(removeSel)}>移出画布</button>
