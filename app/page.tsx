@@ -489,17 +489,25 @@ export default function StudioPage() {
         setIsOwnerUser(!!me.owner);
       }
     } catch {}
-    fetch("/api/auth", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        setUser(d?.user ?? null);
-        setIsOwnerUser(!!d?.owner);
-        try {
-          if (d?.user) localStorage.setItem(ME_KEY, JSON.stringify({ user: d.user, owner: !!d.owner }));
-          else localStorage.removeItem(ME_KEY);
-        } catch {}
-      })
-      .catch(() => setUser(null));
+    // 用户 2026-11-12 (每次进去都要重新登录): only a clear "not signed in" from the server signs the page out. A failed
+    // or slow check keeps the account remembered on this browser and asks again.
+    const ask = (tries: number) =>
+      fetch("/api/auth", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+        .then((d) => {
+          if (!d?.ok) throw new Error("auth check failed");
+          setUser(d.user ?? null);
+          setIsOwnerUser(!!d.owner);
+          try {
+            if (d.user) localStorage.setItem(ME_KEY, JSON.stringify({ user: d.user, owner: !!d.owner }));
+            else localStorage.removeItem(ME_KEY);
+          } catch {}
+        })
+        .catch(() => {
+          if (tries > 0) window.setTimeout(() => void ask(tries - 1), 1500);
+          else setUser((u) => u ?? null);
+        });
+    void ask(3);
     const onNeed = () => {
       setUser(null);
       try {
@@ -999,9 +1007,9 @@ export default function StudioPage() {
       setCanvasOn(true);
       setHistHidden(true);
     }
-    // A browser that has never chosen waits briefly for the account's choice from the server.
+    // 用户 2026-11-12 (重新进页面先卡一下单图再进画布): a browser that has never chosen keeps the loading spinner
+    // until the account's choice comes back from the server (no short timeout that showed 单图 first).
     if (knownMode !== null) setRestored(true);
-    else window.setTimeout(() => setRestored(true), 800);
     if (localStorage.getItem("ais-reverse-mode") === "fill") setReverseMode("fill");
     const pl = localStorage.getItem("ais-polish-level-v2");
     setPolishLevel(restoredPolishLevel(pl ?? localStorage.getItem("ais-polish-level"), pl ? 2 : 1));
@@ -2159,6 +2167,15 @@ export default function StudioPage() {
       const cur = localStorage.getItem(`ais-canvas-current:${user}`);
       if (cur) setBoardId(cur);
     } catch {}
+    // 用户 2026-11-12: each account remembers 单图 / 画布 on this browser, so signing in opens the right one at once;
+    // an account seen for the first time here waits for the server instead of showing 单图 first.
+    const mine = localStorage.getItem(`ais-canvas-on:${user}`);
+    if (mine !== null) {
+      setCanvasOn(mine === "1");
+      setHistHidden(mine === "1");
+      setRestored(true);
+    } else setRestored(false);
+    const giveUp = window.setTimeout(() => setRestored(true), 8000);
     // 用户 2026-11-11 (云端保存): the board list on the server wins; a first visit uploads this browser's list.
     let alive = true;
     fetchJson("/api/canvas")
@@ -2169,7 +2186,7 @@ export default function StudioPage() {
         if (idx && typeof idx.canvas === "boolean") {
           setCanvasOn(idx.canvas);
           setHistHidden(idx.canvas);
-          try { localStorage.setItem("ais-canvas-on", idx.canvas ? "1" : "0"); } catch {}
+          try { localStorage.setItem("ais-canvas-on", idx.canvas ? "1" : "0"); localStorage.setItem(`ais-canvas-on:${user}`, idx.canvas ? "1" : "0"); } catch {}
         }
         setRestored(true);
         if (idx && Array.isArray(idx.boards) && idx.boards.length) {
@@ -2194,10 +2211,12 @@ export default function StudioPage() {
         setBoardsLoadedFor(user);
       })
       .catch(() => {
+        if (alive) setRestored(true);
         if (alive && new URLSearchParams(location.search).has("editRecord")) flash("工作区加载失败，请刷新重试");
       });
     return () => {
       alive = false;
+      window.clearTimeout(giveUp);
     };
   }, [user]);
   /** 用户 2026-11-11 (分享画布): a link to a copy of the board on screen. */
@@ -2254,7 +2273,7 @@ export default function StudioPage() {
       saveBoards([...list, { id, name }], id);
       setCanvasOn(true);
       try {
-        localStorage.setItem("ais-canvas-on", "1");
+        localStorage.setItem("ais-canvas-on", "1"); if (user) localStorage.setItem(`ais-canvas-on:${user}`, "1");
       } catch {}
       flash(phone ? `已放进你的画布「${name}」，在电脑上打开就能编辑` : `已放进你的画布「${name}」，可以接着改了`);
     } catch (e: any) {
@@ -2312,7 +2331,7 @@ export default function StudioPage() {
       setHistHidden(canvas);
       if (!wantsCanvas || canvas) {
         saveBoards(list, board, canvas);
-        try { localStorage.setItem("ais-canvas-on", canvas ? "1" : "0"); } catch {}
+        try { localStorage.setItem("ais-canvas-on", canvas ? "1" : "0"); if (user) localStorage.setItem(`ais-canvas-on:${user}`, canvas ? "1" : "0"); } catch {}
       }
       if (canvas) setRequestedEdit({ board, item, snapshot: true });
       else {
@@ -2361,7 +2380,7 @@ export default function StudioPage() {
       pendingImport.current = refs.length || result ? { refs, result } : null;
     }
     setCanvasOn(on);
-    try { localStorage.setItem("ais-canvas-on", on ? "1" : "0"); } catch {}
+    try { localStorage.setItem("ais-canvas-on", on ? "1" : "0"); if (user) localStorage.setItem(`ais-canvas-on:${user}`, on ? "1" : "0"); } catch {}
     pushBoardIndex(boardsRef.current, boardIdRef.current, on);
     // 2026-11-10 (用户: 进入画布全屏，历史默认收起；回到单图历史也回来).
     toggleHistory(on);

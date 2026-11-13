@@ -7,7 +7,9 @@ export const dynamic = "force-dynamic";
 /** Who is signed in (null when nobody). */
 export async function GET(req: NextRequest) {
   const user = sessionUser(req);
-  return NextResponse.json({ ok: true, user, owner: user ? await isOwner(user) : false }, { headers: { "Cache-Control": "no-store" } });
+  // 用户 2026-11-12 (每次进去都要重新登录): a slow read of the accounts file must not answer "not signed in".
+  const owner = user ? await isOwner(user).catch(() => false) : false;
+  return NextResponse.json({ ok: true, user, owner }, { headers: { "Cache-Control": "no-store" } });
 }
 
 // 2026-11-06 (安全): at most 8 wrong sign-ins per address per 10 minutes (per warm server; enough to stop guessing).
