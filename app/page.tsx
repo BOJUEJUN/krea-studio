@@ -16,6 +16,7 @@ import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
 import { referenceNumbers, missingReference } from "@/lib/reference-numbers";
 import { MentionEditor, type MentionEditorHandle } from "./mention-editor";
 import { normalizeMentions } from "@/lib/image-mentions";
+import { buildZip } from "@/lib/zip";
 import { CanvasBoard, type BoardApi, type BoardJob, type BoardSource } from "./canvas-board";
 import {
   DEFAULT_MODEL,
@@ -677,6 +678,8 @@ export default function StudioPage() {
   const [textInputs, setTextInputs] = useState<{ id: string; text: string }[]>([]);
   const dragRefSlot = useRef<number | null>(null);
   const [dropSlot, setDropSlot] = useState<number | null>(null);
+  const [refDragThumb, setRefDragThumb] = useState<{ from: number; over: number; x: number; y: number; url: string; label: number } | null>(null);
+  const suppressRefClick = useRef(false);
   const [editingNode, setEditingNode] = useState("");
   const [multiOnly, setMultiOnly] = useState(false);
   const textSelRef = useRef(false);
@@ -694,6 +697,12 @@ export default function StudioPage() {
   const [hugOn, setHugOn] = useState(false);
   const leftColRef = useRef<HTMLDivElement>(null);
   const composeRef = useRef<HTMLElement>(null);
+  const [composeCustomSize, setComposeCustomSize] = useState<{ width?: number; promptH?: number } | null>(null);
+  const [composeCustomPos, setComposeCustomPos] = useState<{ left: number; top: number } | null>(null);
+  const composeCustomSizeRef = useRef(composeCustomSize);
+  composeCustomSizeRef.current = composeCustomSize;
+  const composeCustomPosRef = useRef(composeCustomPos);
+  composeCustomPosRef.current = composeCustomPos;
   const [polishLevel, setPolishLevel] = useState<"low" | "medium" | "high">("low");
   const [polishing, setPolishing] = useState(false);
   const [polishUndo, setPolishUndo] = useState<{ before: string; after: string } | null>(null);
@@ -918,7 +927,10 @@ export default function StudioPage() {
   const promptRef = useRef<MentionEditorHandle>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOverflows, setPromptOverflows] = useState(false);
-  useEffect(() => { setPromptExpanded(false); }, [editingNode, canvasOn]);
+  useEffect(() => {
+    setPromptExpanded(false);
+    setComposeCustomPos(null);
+  }, [editingNode, canvasOn]);
   useEffect(() => {
     const el = promptRef.current?.element;
     if (!el || !canvasOn || !editingNode) return;
@@ -2448,6 +2460,57 @@ export default function StudioPage() {
     },
     [gallery, downloadItem]
   );
+  const zipDownloadingRef = useRef(false);
+  const boardDownloadMany = useCallback(
+    async (items: { gid: string | null; url: string }[]) => {
+      if (!items.length || zipDownloadingRef.current) return;
+      zipDownloadingRef.current = true;
+      flash(`正在打包 ${items.length} 张图片…`);
+      try {
+        const entries: { name: string; data: Uint8Array }[] = [];
+        const used = new Set<string>();
+        await Promise.all(
+          items.map(async (item, index) => {
+            const href = item.url.startsWith("data:") ? item.url : rawOf(item.url);
+            const res = await fetch(href);
+            if (!res.ok) throw new Error("fetch failed");
+            const buf = new Uint8Array(await res.arrayBuffer());
+            const mime = (res.headers.get("content-type") || "").toLowerCase();
+            const ext = mime.includes("png") || item.url.toLowerCase().includes(".png") ? "png"
+              : mime.includes("webp") || item.url.toLowerCase().includes(".webp") ? "webp" : "jpg";
+            const g = item.gid ? gallery.find((x) => x.id === item.gid) : undefined;
+            const rawBase = g
+              ? `AI-Studio_${(findModel(g.model)?.name ?? g.label ?? "image").replace(/\s+/g, "-")}_${formatTime(g.createdAt).replace(/[: ]/g, "-")}`
+              : `canvas-${index + 1}`;
+            const safeBase = rawBase.replace(/[\\/:*?"<>|]/g, "-");
+            let name = `${String(index + 1).padStart(2, "0")}_${safeBase}.${ext}`;
+            let suffix = 2;
+            while (used.has(name)) {
+              name = `${String(index + 1).padStart(2, "0")}_${safeBase}-${suffix++}.${ext}`;
+            }
+            used.add(name);
+            entries[index] = { name, data: buf };
+          })
+        );
+        const zipBlob = buildZip(entries.filter(Boolean));
+        const href = URL.createObjectURL(zipBlob);
+        const a = document.createElement("a");
+        a.href = href;
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "-");
+        a.download = `AI-Studio_批量_${entries.length}张_${stamp}.zip`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(href), 5000);
+        flash(`已打包下载 ${entries.length} 张图片`);
+      } catch {
+        flash("打包下载失败，请稍后重试");
+      } finally {
+        zipDownloadingRef.current = false;
+      }
+    },
+    [gallery, flash]
+  );
 
   // Under the selection when it fits, else above it, else at the bottom; always inside the board.
   const hugFor = (selBox: Box | null): { left: number; top: number; width: number } | null => {
@@ -2457,7 +2520,7 @@ export default function StudioPage() {
     // 用户 2026-11-11 (输入框也适当缩小): narrower when the board is zoomed out, never under 440 px; the settings row
     // shrinks itself to fit, the text keeps its size.
     const zf = Math.min(1, Math.max(0.7, canvasScaleRef.current));
-    const w = Math.min(col.width - 32, Math.max(440, 640 * zf));
+    const w = Math.min(col.width - 32, Math.max(340, composeCustomSizeRef.current?.width ?? Math.max(440, 640 * zf)));
     const h = composeRef.current?.offsetHeight || 200;
     const cx = (selBox.left + selBox.right) / 2 - col.left;
     const left = Math.max(16, Math.min(cx - w / 2, col.width - w - 16));
@@ -2476,17 +2539,68 @@ export default function StudioPage() {
   const hugForRef = useRef(hugFor);
   hugForRef.current = hugFor;
   const hugStyle = hugOn && editingNode ? hugFor(selBoxRef.current) : null;
+  const composeBoxStyle = canvasOn && composeCustomPos
+    ? {
+        left: composeCustomPos.left,
+        top: composeCustomPos.top,
+        width: composeCustomSize?.width ?? hugStyle?.width ?? 640,
+      }
+    : hugStyle ?? (canvasOn && composeCustomSize?.width ? { width: composeCustomSize.width } : undefined);
   const onSelectionBox = useCallback((r: Box | null) => {
     selBoxRef.current = r;
     setHugOn(!!r);
     const el = composeRef.current;
     const st = hugForRef.current(r);
-    if (el && st) {
+    if (el && st && !composeCustomPosRef.current) {
       el.style.left = `${st.left}px`;
       el.style.top = `${st.top}px`;
       el.style.width = `${st.width}px`;
     }
   }, []);
+  const onComposeHandleDown = (e: React.PointerEvent, dir: string) => {
+    if (e.button !== 0 || !canvasOn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const col = leftColRef.current?.getBoundingClientRect();
+    const card = composeRef.current?.getBoundingClientRect();
+    const editor = promptRef.current?.element?.getBoundingClientRect();
+    if (!col || !card) return;
+    const sx = e.clientX, sy = e.clientY;
+    const startLeft = card.left - col.left;
+    const startTop = card.top - col.top;
+    const startW = card.width;
+    const startPromptH = editor?.height ?? composeCustomSizeRef.current?.promptH ?? 76;
+    const horiz = dir.includes("w") ? -1 : dir.includes("e") ? 1 : 0;
+    const vert = dir.includes("n") ? -1 : dir.includes("s") ? 1 : 0;
+    document.body.style.userSelect = "none";
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      const maxW = Math.max(340, col.width - 32);
+      const nextW = horiz ? Math.min(maxW, Math.max(340, Math.round(startW + horiz * dx))) : Math.round(startW);
+      const nextLeft = dir.includes("w")
+        ? Math.max(16, Math.min(Math.round(startLeft + (startW - nextW)), col.width - nextW - 16))
+        : Math.max(16, Math.min(Math.round(startLeft), col.width - nextW - 16));
+      const maxPromptH = Math.max(240, Math.round(col.height * 0.65));
+      const nextPromptH = vert ? Math.min(maxPromptH, Math.max(56, Math.round(startPromptH + vert * dy))) : Math.round(startPromptH);
+      const nextTop = dir.includes("n")
+        ? Math.max(12, Math.min(Math.round(startTop - (nextPromptH - startPromptH)), col.height - 140))
+        : Math.max(12, Math.round(startTop));
+      setComposeCustomSize((prev) => ({
+        width: horiz ? nextW : (prev?.width ?? Math.round(startW)),
+        promptH: vert ? nextPromptH : prev?.promptH,
+      }));
+      setComposeCustomPos({ left: nextLeft, top: nextTop });
+    };
+    const onUp = () => {
+      document.body.style.userSelect = "";
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
 
   const changePolishLevel = (level: CanvasDraft["polishLevel"]) => {
     setPolishLevel(level);
@@ -2645,6 +2759,21 @@ export default function StudioPage() {
           className="fixed left-1/2 top-3 z-[60] -translate-x-1/2 rounded-full bg-ink px-4 py-2 text-[13px] text-panel shadow-lg hover:opacity-90">
           网站已更新 · 点这里刷新
         </button>
+      )}
+      {refDragThumb && createPortal(
+        <div
+          className="pointer-events-none fixed z-[200] -translate-x-1/2 -translate-y-1/2 -rotate-2 scale-110"
+          style={{ left: refDragThumb.x, top: refDragThumb.y }}
+        >
+          <span className="relative block h-12 w-12 overflow-hidden rounded-lg border-2 border-accent bg-panel shadow-[0_14px_32px_rgba(0,0,0,0.28)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={refDragThumb.url} alt="" draggable={false} className="h-full w-full object-cover" />
+            <span className="absolute inset-x-0 bottom-0 bg-accent/90 text-center text-[9px] font-medium leading-[14px] text-white">
+              图{refDragThumb.label}
+            </span>
+          </span>
+        </div>,
+        document.body
       )}
       {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} numbers={labels} initial={regions} initialLabel={regionSession.label}
         onClose={() => setRegionSession(null)} onSave={(next) => {
@@ -3000,6 +3129,7 @@ export default function StudioPage() {
                   onUseAsRef={boardUseAsRef}
                   onView={(u) => setViewer(u)}
                   onDownload={boardDownload}
+                  onDownloadMany={boardDownloadMany}
                   flash={flash}
                   apiRef={canvasApi}
                   onScale={setCanvasScale}
@@ -3200,11 +3330,21 @@ export default function StudioPage() {
               ? "hidden"
               : canvasOn
               ? // 画布: the compose box floats over the board (用户: 输入框也是画布里的功能), hugging the selection.
-                `absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-panel shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${hugStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
+                `compose-resize-host absolute z-40 m-0 flex flex-col overflow-visible rounded-[22px] bg-panel shadow-[0_18px_50px_rgba(0,0,0,0.18)] ${composeBoxStyle ? "" : "bottom-4 left-1/2 w-[min(860px,calc(100%-32px))] -translate-x-1/2"}`
               : "stagger-1 m-0 flex w-full shrink-0 flex-col overflow-visible"
           }
-          style={hugStyle ?? undefined}
+          style={composeBoxStyle}
         >
+          {canvasOn && (["n", "s", "w", "e", "nw", "ne", "sw", "se"] as const).map((direction) => (
+            <span
+              key={direction}
+              data-node-resize={direction}
+              title="拖动调整大小"
+              className="node-resize-handle z-50"
+              style={{ "--handle-scale": 1 } as React.CSSProperties}
+              onPointerDown={(e) => onComposeHandleDown(e, direction)}
+            />
+          ))}
 
           <div className="min-h-0">
             {/* 2026-11-05 (用户: 极简，参考图跟提示词在同一个框): one compose box — pictures on top, words below, + to add. */}
@@ -3282,40 +3422,85 @@ export default function StudioPage() {
                 )}
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
-                    {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => (
-                      <span key={r.url + ":" + labels[i]} tabIndex={0} data-ref-slot={i} data-drop-slot={dropSlot === i || undefined}
-                        draggable={labels.length > 1}
-                        onDragStart={(e) => {
-                          dragRefSlot.current = i; setDropSlot(null); setDragState("none");
-                          e.dataTransfer.effectAllowed = "move";
-                          e.dataTransfer.setData(REF_ORDER_DRAG, String(i));
-                          // Capture only the picture, outside the composer's transformed / blurred layers.
-                          const image = e.currentTarget.querySelector("img");
-                          if (image?.complete && image.naturalWidth) {
-                            const ghost = document.createElement("canvas");
-                            const scale = 64 / Math.max(image.naturalWidth, image.naturalHeight);
-                            ghost.width = Math.max(1, Math.round(image.naturalWidth * scale));
-                            ghost.height = Math.max(1, Math.round(image.naturalHeight * scale));
-                            const ctx = ghost.getContext("2d");
-                            if (ctx) {
-                              ctx.drawImage(image, 0, 0, ghost.width, ghost.height);
-                              e.dataTransfer.setDragImage(ghost, ghost.width / 2, ghost.height / 2);
+                    {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => {
+                      const thumbUrl = /^\/api\/(img|ref)\//.test(r.url) ? thumbOf(r.url.replace(/\?raw=1$/, ""), 160) : r.url;
+                      const draggingThis = refDragThumb?.from === i;
+                      const dropHere = refDragThumb && refDragThumb.over === i && refDragThumb.from !== i;
+                      return (
+                      <span key={r.url + ":" + labels[i]} tabIndex={0} data-ref-slot={i} data-drop-slot={(dropSlot === i || dropHere) || undefined}
+                        onPointerDown={(e) => {
+                          if (labels.length <= 1 || e.button !== 0) return;
+                          if ((e.target as HTMLElement).closest("[data-ref-delete]")) return;
+                          const sx = e.clientX, sy = e.clientY;
+                          let active = false;
+                          let currentOver = i;
+                          const findSlot = (x: number, y: number) => {
+                            const slots = [...(composeRef.current?.querySelectorAll<HTMLElement>("[data-ref-slot]") ?? [])];
+                            let best = currentOver;
+                            let bestDist = Infinity;
+                            for (const el of slots) {
+                              const idx = Number(el.dataset.refSlot);
+                              if (!Number.isFinite(idx)) continue;
+                              const rect = el.getBoundingClientRect();
+                              if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return idx;
+                              const cx = (rect.left + rect.right) / 2, cy = (rect.top + rect.bottom) / 2;
+                              const dist = Math.hypot(x - cx, y - cy);
+                              if (dist < bestDist && dist < 96) { bestDist = dist; best = idx; }
                             }
-                          }
-                          e.stopPropagation();
+                            return best;
+                          };
+                          const onMove = (ev: PointerEvent) => {
+                            if (!active) {
+                              if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
+                              active = true;
+                              suppressRefClick.current = true;
+                              document.body.style.cursor = "grabbing";
+                              document.body.style.userSelect = "none";
+                            }
+                            currentOver = findSlot(ev.clientX, ev.clientY);
+                            setRefDragThumb({ from: i, over: currentOver, x: ev.clientX, y: ev.clientY, url: thumbUrl, label: labels[i] });
+                          };
+                          const onUp = (ev: PointerEvent) => {
+                            window.removeEventListener("pointermove", onMove);
+                            window.removeEventListener("pointerup", onUp);
+                            window.removeEventListener("pointercancel", onUp);
+                            if (active) {
+                              const target = ev.type === "pointerup" ? findSlot(ev.clientX, ev.clientY) : i;
+                              document.body.style.cursor = "";
+                              document.body.style.userSelect = "";
+                              setRefDragThumb(null);
+                              if (target !== i) reorderReference(i, target);
+                              window.setTimeout(() => { suppressRefClick.current = false; }, 0);
+                            }
+                          };
+                          window.addEventListener("pointermove", onMove);
+                          window.addEventListener("pointerup", onUp);
+                          window.addEventListener("pointercancel", onUp);
                         }}
-                        onDragEnter={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); setDropSlot(i); } }}
-                        onDragOver={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
-                        onDragLeave={(e) => { if (isReferenceReorder(e.dataTransfer) && !e.currentTarget.contains(e.relatedTarget as Node)) setDropSlot(null); }}
-                        onDrop={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); reorderReference(dragRefSlot.current, i); dragRefSlot.current = null; setDropSlot(null); } }}
-                        onDragEnd={() => { dragRefSlot.current = null; setDropSlot(null); }}
+                        onClickCapture={(e) => {
+                          if (suppressRefClick.current) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }
+                        }}
                         onKeyDown={(e) => { if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); reorderReference(i, i + (e.key === "ArrowLeft" ? -1 : 1)); } }}
-                        title={labels.length > 1 ? "拖动调整参考图顺序" : undefined} className="group/ref relative h-12 w-12 data-[drop-slot=true]:ring-2 data-[drop-slot=true]:ring-accent overflow-hidden rounded-lg border border-edge/[0.08] outline-none [&[draggable=true]]:cursor-grab [&[draggable=true]]:active:cursor-grabbing">
+                        title={labels.length > 1 ? "拖动调整参考图顺序" : undefined}
+                        className={`group/ref relative h-12 w-12 rounded-lg border outline-none transition-transform duration-150 ${
+                          draggingThis
+                            ? "scale-95 border-dashed border-accent/60 opacity-30"
+                            : dropHere
+                              ? "scale-105 border-accent ring-2 ring-accent"
+                              : "border-edge/[0.08]"
+                        } ${labels.length > 1 ? "cursor-grab active:cursor-grabbing" : ""}`}>
+                        {dropHere && (
+                          <span aria-hidden className={`pointer-events-none absolute -top-0.5 -bottom-0.5 z-20 w-[3px] rounded-full bg-accent shadow-[0_0_8px_rgba(0,113,227,0.6)] ${refDragThumb.over < refDragThumb.from ? "-left-[5px]" : "-right-[5px]"}`} />
+                        )}
+                        <span className="relative block h-full w-full overflow-hidden rounded-[7px]">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           // 用户 2026-11-11 (图1 显示 bug): "?raw=1" sent the whole original through the site (too big, failed);
                           // the 48px tile only needs the small copy.
-                          src={/^\/api\/(img|ref)\//.test(r.url) ? thumbOf(r.url.replace(/\?raw=1$/, ""), 160) : r.url}
+                          src={thumbUrl}
                           draggable={false} alt={`图${labels[i]}`}
                           onLoad={
                             i === 0
@@ -3366,6 +3551,7 @@ export default function StudioPage() {
                         )}
                         <button
                           type="button"
+                          data-ref-delete=""
                           onClick={() => {
                             if (canvasOn && editingNode) return canvasApi.current?.removeInput(i);
                             if (i === 0) return removeMainRef();
@@ -3378,8 +3564,10 @@ export default function StudioPage() {
                         >
                           ×
                         </button>
+                        </span>
                       </span>
-                    ))}
+                      );
+                    })}
                                       {canvasOn && editingNode && textInputs.map((t, i) => (
                       <span key={t.id} title={t.text} className="relative grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-edge/10 bg-well text-secondary">
                         <svg aria-hidden width="18" height="18" className="mb-2" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 4h12M2 8h12M2 12h7" /></svg>
@@ -3462,9 +3650,14 @@ export default function StudioPage() {
                   placeholder={mode === "t2i" ? "描述你想要的画面，或点 + 放参考图改图…" :
                     hasBoxes ? "整张图的补充要求（选填）" : reverse ? "可不填，会根据参考图优化提示词；输入 @ 引用图片" : "想怎么改？输入 @ 引用图片"}
                   className="relative block w-full bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed selection:bg-accent/25"
-                  style={{ minHeight: 76, maxHeight: canvasOn ? promptExpanded ? "48vh" : "calc(3lh + 1.5rem)" : "22vh" }} />
+                  style={{
+                    minHeight: composeCustomSize?.promptH ?? 76,
+                    ...(composeCustomSize?.promptH
+                      ? { height: composeCustomSize.promptH, maxHeight: composeCustomSize.promptH }
+                      : { maxHeight: canvasOn ? promptExpanded ? "48vh" : "calc(3lh + 1.5rem)" : "22vh" }),
+                  }} />
 
-                {canvasOn && promptOverflows && <button type="button" aria-expanded={promptExpanded} aria-controls="studio-prompt"
+                {canvasOn && promptOverflows && !composeCustomSize?.promptH && <button type="button" aria-expanded={promptExpanded} aria-controls="studio-prompt"
                   aria-label={promptExpanded ? "收起提示词" : "展开提示词"} title={promptExpanded ? "收起提示词" : "展开提示词"}
                   className="mb-1 ml-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-secondary hover:bg-edge/[0.06] hover:text-ink"
                   onClick={() => {

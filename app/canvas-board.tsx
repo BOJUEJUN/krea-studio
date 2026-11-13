@@ -133,6 +133,7 @@ export function CanvasBoard({
   onUseAsRef,
   onView,
   onDownload,
+  onDownloadMany,
   flash,
   apiRef,
   onSelectionChange,
@@ -203,6 +204,7 @@ export function CanvasBoard({
   onUseAsRef: (urls: string[]) => void;
   onView: (url: string) => void;
   onDownload: (id: string | null, url: string) => void;
+  onDownloadMany?: (items: { gid: string | null; url: string }[]) => void;
   flash: (text: string) => void;
 }) {
   const boxRef = useRef<HTMLDivElement>(null);
@@ -1836,13 +1838,27 @@ export function CanvasBoard({
               <svg viewBox="0 0 20 20" className={ico}><rect x="3" y="4" width="14" height="12" rx="2.5" /><path d="M10 2.5v15" /><path d="M5.5 10h2M12.5 10h2" /></svg>
             </button>
           )}
-          {selected.length === 1 && urlOf(selected[0]) && (
-            <>
-              <button type="button" aria-label="下载" data-tip="下载" className={ibtn} onClick={() => onDownload(selected[0].gid ?? null, urlOf(selected[0])!)}>
+          {(() => {
+            const downloadable = selected.map((m) => ({ node: m, url: urlOf(m) })).filter((x): x is { node: Node; url: string } => !!x.url);
+            if (!downloadable.length) return null;
+            if (selected.length === 1) {
+              return (
+                <button type="button" aria-label="下载" data-tip="下载" className={ibtn} onClick={() => onDownload(downloadable[0].node.gid ?? null, downloadable[0].url)}>
+                  <svg viewBox="0 0 20 20" className={ico}><path d="M10 3.5v9" /><path d="M6 8.8l4 4 4-4" /><path d="M4 16.5h12" /></svg>
+                </button>
+              );
+            }
+            return (
+              <button type="button" aria-label={downloadable.length > 1 ? "打包下载" : "下载"}
+                data-tip={downloadable.length > 1 ? `打包下载 ${downloadable.length} 张图片` : "下载图片"}
+                className={ibtn}
+                onClick={() => downloadable.length > 1 && onDownloadMany
+                  ? onDownloadMany(downloadable.map(({ node, url }) => ({ gid: node.gid ?? null, url })))
+                  : onDownload(downloadable[0].node.gid ?? null, downloadable[0].url)}>
                 <svg viewBox="0 0 20 20" className={ico}><path d="M10 3.5v9" /><path d="M6 8.8l4 4 4-4" /><path d="M4 16.5h12" /></svg>
               </button>
-            </>
-          )}
+            );
+          })()}
           {selected.length === 1 && urlOf(selected[0]) && <button type="button" aria-label="复制图片" data-tip="复制图片为画布素材" className={ibtn}
             onClick={() => duplicateSel(selected[0])}>
             <svg viewBox="0 0 20 20" className={ico}><rect x="2.5" y="3" width="12" height="11" rx="2" /><path d="m3 11 3-3 3 3 2-2 3 3M7 17h8a2 2 0 0 0 2-2V7" /><circle cx="11" cy="6.5" r=".75" /></svg>
@@ -1920,6 +1936,14 @@ export function CanvasBoard({
                 {url && <button type="button" className={item} onClick={go(() => duplicateSel(one))}>复制图片</button>}
                 {url && <button type="button" className={item} onClick={go(() => onView(url))}>看大图</button>}
                 {url && <button type="button" className={item} onClick={go(() => onDownload(one.gid ?? null, url))}>下载</button>}
+                {(() => {
+                  const downloadable = selected.map((m) => ({ node: m, url: urlOf(m) })).filter((x): x is { node: Node; url: string } => !!x.url);
+                  return selected.length >= 2 && downloadable.length >= 2 && onDownloadMany ? (
+                    <button type="button" className={item} onClick={go(() => onDownloadMany(downloadable.map(({ node, url: u }) => ({ gid: node.gid ?? null, url: u }))))}>
+                      打包下载 ({downloadable.length} 张)
+                    </button>
+                  ) : null;
+                })()}
                 <div className="my-1 h-px bg-edge/[0.07]" />
                 <button type="button" className={item} onClick={go(duplicateSel)}>复制节点</button>
                 {onShare && selected.length >= 2 && <button type="button" className={item} onClick={go(() => onShare(true))}>分享选中的 {selected.length} 个节点…</button>}

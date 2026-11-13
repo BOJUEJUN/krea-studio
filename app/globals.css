@@ -545,8 +545,10 @@ textarea[data-node-text]:read-only { cursor: inherit; }
   content: ""; position: absolute; top: 50%; left: 50%; width: 8px; height: 8px;
   border: 1px solid white; border-radius: 50%; background: var(--color-accent);
   transform: translate(-50%, -50%) scale(var(--handle-scale)); opacity: 0; pointer-events: none;
+  transition: opacity 0.15s ease;
 }
-.node-resize-handle:hover::after, .node-resize-handle:active::after { opacity: 1; }
+.compose-resize-host:hover .node-resize-handle::after { opacity: 0.45; }
+.node-resize-handle:hover::after, .node-resize-handle:active::after { opacity: 1 !important; }
 .node-resize-handle[data-node-resize="n"], .node-resize-handle[data-node-resize="s"] { left: var(--hit); right: var(--hit); height: var(--hit); cursor: ns-resize; }
 .node-resize-handle[data-node-resize="e"], .node-resize-handle[data-node-resize="w"] { top: var(--hit); bottom: var(--hit); width: var(--hit); cursor: ew-resize; }
 .node-resize-handle[data-node-resize^="n"] { top: var(--half); }
