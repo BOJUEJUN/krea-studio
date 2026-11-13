@@ -85,7 +85,7 @@ const modelIcon = (id: string) => {
 let DIRECT: Record<string, Record<string, string>> = {};
 const thumb = (url: string, w: number | "full" | "download") => DIRECT[url]?.[w] ?? (url.startsWith("/api/img/") && w !== "full" ? `${url}?w=${w}` : url);
 
-function RecordPreview({ result, refs }: { result: string; refs: string[] }) {
+function RecordPreview({ result, refs, onViewingChange }: { result: string; refs: string[]; onViewingChange?: (open: boolean) => void }) {
   const [viewing, setViewing] = useState(false);
   const [mode, setMode] = useState<CompareMode>("slider");
   const [index, setIndex] = useState(0);
@@ -101,11 +101,12 @@ function RecordPreview({ result, refs }: { result: string; refs: string[] }) {
   const close = () => {
     dialog.current?.close();
     setViewing(false);
+    onViewingChange?.(false);
     trigger.current?.focus({ preventScroll: true });
   };
 
   return <>
-    <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => setViewing(true)} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">
+    <button ref={trigger} type="button" aria-haspopup="dialog" onClick={() => { setViewing(true); onViewingChange?.(true); }} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] hover:bg-black/[0.08]">
       {before ? "对比原图" : "看原图"}
     </button>
     {viewing && (before ? (
@@ -257,7 +258,11 @@ export default function AdminPage() {
   const [fWorkspace, setFWorkspace] = useState("all");
   const [fText, setFText] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
-  const [limit, setLimit] = useState(60);
+  const [recordPage, setRecordPage] = useState(0);
+  const [recordPageSize, setRecordPageSize] = useState(24);
+  const recordTop = useRef<HTMLDivElement>(null);
+  const detailScroll = useRef<HTMLDivElement>(null);
+  const [detailPreviewOpen, setDetailPreviewOpen] = useState(false);
   const [metric, setMetric] = useState<"cost" | "images">("cost");
   const [userQuery, setUserQuery] = useState("");
   const [inviteDraft, setInviteDraft] = useState("");
@@ -311,7 +316,7 @@ export default function AdminPage() {
     setFTime("all");
     setFWorkspace("all");
     setFText("");
-    setLimit(60);
+    setRecordPage(0);
     go("records");
   };
 
@@ -331,6 +336,45 @@ export default function AdminPage() {
     );
   }, [data, fUser, fModel, fStatus, fTime, fText, fWorkspace]);
   const recCost = records.reduce((s, r) => s + (Number(r.cost) || 0), 0);
+  const recordPages = Math.max(1, Math.ceil(records.length / recordPageSize));
+  const activeRecordPage = Math.min(recordPage, recordPages - 1);
+  const pageRecords = records.slice(activeRecordPage * recordPageSize, (activeRecordPage + 1) * recordPageSize);
+  useEffect(() => { setRecordPage(0); }, [fUser, fModel, fStatus, fTime, fText, fWorkspace, recordPageSize]);
+  const browsable = useMemo(() => (tab === "records" ? records : data?.records ?? []).filter((r) => !!r.url), [tab, records, data]);
+  const openIndex = open ? browsable.findIndex((r) => r.id === open.id && r.owner === open.owner) : -1;
+  const stepRecord = useCallback((delta: number) => {
+    const next = browsable[openIndex + delta];
+    if (!next || openIndex < 0) return;
+    setOpen(next);
+    if (tab === "records") setRecordPage(Math.floor(records.indexOf(next) / recordPageSize));
+  }, [browsable, openIndex, records, recordPageSize, tab]);
+  useEffect(() => {
+    setDetailPreviewOpen(false);
+    detailScroll.current?.scrollTo({ top: 0 });
+  }, [open?.id, open?.owner]);
+  useEffect(() => {
+    if (!open || detailPreviewOpen) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey ||
+          (e.target as HTMLElement).closest("input,textarea,select,[contenteditable=true]")) return;
+      if (e.key === "Escape") { e.preventDefault(); setOpen(null); }
+      else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); stepRecord(e.key === "ArrowLeft" ? -1 : 1); }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [open, detailPreviewOpen, stepRecord]);
+  const changeRecordPage = (page: number) => {
+    setRecordPage(Math.max(0, Math.min(recordPages - 1, page)));
+    recordTop.current?.scrollIntoView({ block: "start" });
+  };
+  const recordPagination = records.length > 0 && <nav aria-label="生图记录分页" className="flex flex-wrap items-center justify-center gap-2 text-[12px]">
+    <select aria-label="每页记录数" value={recordPageSize} onChange={(e) => { setRecordPageSize(Number(e.target.value)); recordTop.current?.scrollIntoView({ block: "start" }); }}
+      className="rounded-full bg-white px-3 py-2 ring-1 ring-black/[0.06]">{[24, 48, 96].map((n) => <option key={n} value={n}>每页 {n} 条</option>)}</select>
+    <button type="button" disabled={activeRecordPage === 0} onClick={() => changeRecordPage(activeRecordPage - 1)} className="rounded-full bg-white px-4 py-2 ring-1 ring-black/[0.06] disabled:opacity-35">上一页</button>
+    <span className="tabular-nums text-[#6e6e73]">第 {activeRecordPage + 1} / {recordPages} 页</span>
+    <button type="button" disabled={activeRecordPage + 1 >= recordPages} onClick={() => changeRecordPage(activeRecordPage + 1)} className="rounded-full bg-white px-4 py-2 ring-1 ring-black/[0.06] disabled:opacity-35">下一页</button>
+  </nav>;
+
 
   const exportCsv = () => {
     const head = ["时间", "账号", "工作区", "模型", "方式", "状态", "花费", "用时(秒)", "提示词", "图片"];
@@ -548,22 +592,22 @@ export default function AdminPage() {
               </div>
             </Card>
           ) : tab === "records" ? (
-            <div className="space-y-3">
+            <div ref={recordTop} className="space-y-3 scroll-mt-4">
               <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white p-3 ring-1 ring-black/[0.05]">
-                <input value={fText} onChange={(e) => { setFText(e.target.value); setLimit(60); }} placeholder="搜索提示词" className={`${select} w-full sm:w-52`} />
-                <select value={fUser} onChange={(e) => { setFUser(e.target.value); setLimit(60); }} className={select} aria-label="账号">
+                <input value={fText} onChange={(e) => { setFText(e.target.value); setRecordPage(0); }} placeholder="搜索提示词" className={`${select} w-full sm:w-52`} />
+                <select value={fUser} onChange={(e) => { setFUser(e.target.value); setRecordPage(0); }} className={select} aria-label="账号">
                   <option value="all">全部账号</option>
                   {data.users.map((u) => <option key={u.name} value={u.name}>{u.name}</option>)}
                 </select>
-                <select value={fModel} onChange={(e) => { setFModel(e.target.value); setLimit(60); }} className={select} aria-label="模型">
+                <select value={fModel} onChange={(e) => { setFModel(e.target.value); setRecordPage(0); }} className={select} aria-label="模型">
                   <option value="all">全部模型</option>
                   {[...new Set([...MODELS.map((m) => m.id as string), ...data.models.map((m) => m.model)])].map((id) => <option key={id} value={id}>{modelName(id)}</option>)}
                 </select>
-                <select value={fWorkspace} onChange={(e) => { setFWorkspace(e.target.value); setLimit(60); }} className={select} aria-label="工作区">
+                <select value={fWorkspace} onChange={(e) => { setFWorkspace(e.target.value); setRecordPage(0); }} className={select} aria-label="工作区">
                   <option value="all">全部工作区</option><option value="canvas">画布</option><option value="single">单图</option><option value="unknown">未记录</option>
                 </select>
-                <Seg value={fStatus} options={[["all", "全部"], ["done", "成功"], ["failed", "失败"], ["fav", "收藏"]]} onPick={(v) => { setFStatus(v); setLimit(60); }} />
-                <Seg value={fTime} options={[["all", "全部时间"], ["today", "今天"], ["7", "7 天"], ["30", "30 天"]]} onPick={(v) => { setFTime(v); setLimit(60); }} />
+                <Seg value={fStatus} options={[["all", "全部"], ["done", "成功"], ["failed", "失败"], ["fav", "收藏"]]} onPick={(v) => { setFStatus(v); setRecordPage(0); }} />
+                <Seg value={fTime} options={[["all", "全部时间"], ["today", "今天"], ["7", "7 天"], ["30", "30 天"]]} onPick={(v) => { setFTime(v); setRecordPage(0); }} />
                 <div className="ml-auto flex items-center gap-2">
                   <Seg value={view} options={[["grid", "图"], ["list", "表"]]} onPick={setView} />
                   <button type="button" onClick={exportCsv} className="rounded-full bg-[#f2f2f4] px-3 py-1.5 text-[12px] text-[#1d1d1f] hover:bg-black/[0.08]">导出表格</button>
@@ -575,11 +619,12 @@ export default function AdminPage() {
                   <button type="button" onClick={() => { setFUser("all"); setFModel("all"); setFStatus("all"); setFTime("all"); setFWorkspace("all"); setFText(""); }} className="ml-2 text-[#0071e3]">清除筛选</button>
                 )}
               </div>
+              {recordPagination}
               {records.length === 0 ? (
                 <div className="rounded-2xl bg-white py-16 text-center text-[13px] text-[#aeaeb2] ring-1 ring-black/[0.05]">没有符合条件的记录</div>
               ) : view === "grid" ? (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6">
-                  {records.slice(0, limit).map((r) => (
+                  {pageRecords.map((r) => (
                     <button key={r.id} type="button" onClick={() => setOpen(r)} className="group overflow-hidden rounded-2xl bg-white text-left ring-1 ring-black/[0.05] transition hover:shadow-[0_8px_24px_rgba(0,0,0,0.08)]">
                       <span className="relative block aspect-square bg-[#f2f2f4]">
                         {r.url ? (
@@ -623,7 +668,7 @@ export default function AdminPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-black/[0.05]">
-                      {records.slice(0, limit).map((r) => (
+                      {pageRecords.map((r) => (
                         <tr key={r.id} onClick={() => setOpen(r)} className="cursor-pointer hover:bg-black/[0.02]">
                           <td className="px-3 py-1.5">
                             {r.url ? (
@@ -646,13 +691,7 @@ export default function AdminPage() {
                   </table>
                 </div>
               )}
-              {records.length > limit && (
-                <div className="text-center">
-                  <button type="button" onClick={() => setLimit((n) => n + 60)} className="rounded-full bg-white px-4 py-1.5 text-[13px] text-[#0071e3] ring-1 ring-black/[0.06]">
-                    再看 60 条（还有 {records.length - limit}）
-                  </button>
-                </div>
-              )}
+              {recordPagination}
             </div>
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
@@ -706,17 +745,25 @@ export default function AdminPage() {
       </main>
 
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && setOpen(null)}>
+        <div role="dialog" aria-modal="true" aria-label="生图记录详情" className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && setOpen(null)}>
           <div className="flex max-h-[92vh] w-full max-w-[1000px] flex-col overflow-hidden rounded-[22px] bg-white md:flex-row">
-            <div className="flex min-h-[240px] min-w-0 flex-1 items-center justify-center bg-[#f2f2f4]">
+            <div className="relative flex min-h-[240px] min-w-0 flex-1 items-center justify-center bg-[#f2f2f4]">
               {open.url ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={thumb(open.url, 1600)} alt="" className="max-h-[80vh] max-w-full object-contain" />
               ) : (
                 <div className="p-10 text-center text-[13px] text-[#d70015]">{open.status === "pending" ? "还在生成" : open.error || "生成失败"}</div>
               )}
+              {openIndex >= 0 && browsable.length > 1 && <>
+                <span className="absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-black/45 px-3 py-1 text-[12px] tabular-nums text-white">{openIndex + 1} / {browsable.length}</span>
+                {([-1, 1] as const).map((delta) => <button key={delta} type="button" aria-label={delta < 0 ? "上一张" : "下一张"}
+                  disabled={openIndex + delta < 0 || openIndex + delta >= browsable.length} onClick={() => stepRecord(delta)}
+                  className={`absolute top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-white/90 text-[#1d1d1f] shadow-lg transition hover:bg-white disabled:opacity-30 ${delta < 0 ? "left-3" : "right-3"}`}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path d={delta < 0 ? "M15 5l-7 7 7 7" : "M9 5l7 7-7 7"} /></svg>
+                </button>)}
+              </>}
             </div>
-            <div className="w-full shrink-0 overflow-y-auto p-5 text-[13px] md:w-[300px]">
+            <div ref={detailScroll} className="w-full shrink-0 overflow-y-auto p-5 text-[13px] md:w-[300px]">
               <div className="flex items-center gap-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 {modelIcon(open.model) && <img src={modelIcon(open.model)!} alt="" className="h-7 w-7 rounded-lg" />}
@@ -780,7 +827,7 @@ export default function AdminPage() {
                 {open.url && (
                   <a href={DIRECT[open.url]?.download ?? `${open.url}${open.url.includes("?") ? "&" : "?"}raw=1`} download={`${open.owner}-${open.id}.png`} className="rounded-full bg-[#0071e3] px-3 py-1.5 text-[12px] text-white">下载</a>
                 )}
-                {open.url && <RecordPreview key={open.id} result={open.url} refs={openRefs} />}
+                {open.url && <RecordPreview key={open.id} result={open.url} refs={openRefs} onViewingChange={setDetailPreviewOpen} />}
               </div>
             </div>
           </div>

@@ -845,7 +845,9 @@ export default function StudioPage() {
     setAspects((m) => (Math.abs((m[id] ?? 0) - a) < 0.01 ? m : { ...m, [id]: a }));
   };
   const [histQuery, setHistQuery] = useState("");
-  const [histPage, setHistPage] = useState(0);
+  const [histOffset, setHistOffset] = useState(0);
+  const historyViewport = useRef<HTMLDivElement>(null);
+  const [historyBounds, setHistoryBounds] = useState({ width: 0, height: 0 });
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
   const [count, setCount] = useState(1);
@@ -2729,12 +2731,31 @@ export default function StudioPage() {
           : (b.durationMs || 0) - (a.durationMs || 0)
     );
   }
-  // 用户 2026-11-11 (手机历史不能无限往下拉; 电脑端也要上下页): real pages with 上一页 / 下一页 —
-  // 12 per page on phones, 24 on desktop.
-  const PHONE_PAGE = phone ? 12 : 24;
-  const phonePages = Math.max(1, Math.ceil(visibleHistory.length / PHONE_PAGE));
-  const phonePage = Math.min(histPage, phonePages - 1);
-  const pageItems = visibleHistory.slice(phonePage * PHONE_PAGE, phonePage * PHONE_PAGE + PHONE_PAGE);
+  // Fit the available pane instead of leaving most of a wide or tall history empty.
+  const historyWidth = historyBounds.width || Math.max(1, rightPx - 16);
+  const historyColumns = isDesktop ? Math.max(2, Math.min(12, Math.floor((historyWidth + 8) / 208))) : 2;
+  const historyCardWidth = (historyWidth - (historyColumns - 1) * 8) / historyColumns;
+  const knownAspects = visibleHistory.flatMap((g) => g.url && aspects[g.id] ? [Math.max(0.2, Math.min(4, aspects[g.id]))] : []);
+  const historyAspect = knownAspects.length ? knownAspects.reduce((sum, a) => sum + a, 0) / knownAspects.length : 1;
+  const historyPageSize = isDesktop && historyBounds.height
+    ? Math.min(192, historyColumns * Math.max(1, Math.ceil(historyBounds.height / (Math.max(60, historyCardWidth * historyAspect) + 8))))
+    : 12;
+  const phonePages = Math.max(1, Math.ceil(visibleHistory.length / historyPageSize));
+  // A resize keeps the old first record in view, rather than jumping past it.
+  const phonePage = Math.min(Math.floor(histOffset / historyPageSize), phonePages - 1);
+  const pageItems = visibleHistory.slice(phonePage * historyPageSize, (phonePage + 1) * historyPageSize);
+  useEffect(() => {
+    const el = historyViewport.current;
+    if (!el || !isDesktop || histOff) return;
+    const measure = () => {
+      const width = Math.round(el.clientWidth - 16), height = Math.round(el.clientHeight - 16);
+      if (width > 0 && height > 0) setHistoryBounds((old) => old.width === width && old.height === height ? old : { width, height });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isDesktop, histOff]);
   const isReady = (id: ModelId, m: Mode = mode) => !readiness || !!readiness[id]?.[m];
   const modelReady = isReady(model);
   const regionOwner = canvasOn ? boardId + "/" + editingNode : "single";
@@ -4106,7 +4127,7 @@ export default function StudioPage() {
                 value={histQuery}
                 onChange={(e) => {
                   setHistQuery(e.target.value);
-                  setHistPage(0);
+                  setHistOffset(0);
                 }}
                 placeholder="搜索描述"
                 className="min-w-0 flex-1 bg-transparent text-[12px] text-ink outline-none placeholder:text-hint"
@@ -4126,7 +4147,7 @@ export default function StudioPage() {
                   onClick={() => {
                     setHistFilter(key);
                     setHistMode("all");
-                    setHistPage(0);
+                    setHistOffset(0);
                   }}
                   className={`rounded-full px-2.5 py-1 ${histFilter === key ? "bg-ink text-panel" : "bg-well text-[color:light-dark(#3a3a3c,#d3d3d6)] hover:bg-edge/[0.08]"}`}
                 >
@@ -4141,7 +4162,7 @@ export default function StudioPage() {
                   value={histFilter.startsWith("model:") ? histFilter : ""}
                   onChange={(e) => {
                     setHistFilter(e.target.value || "all");
-                    setHistPage(0);
+                    setHistOffset(0);
                   }}
                   className="absolute inset-0 cursor-pointer opacity-0"
                   aria-label="按模型筛选"
@@ -4166,7 +4187,7 @@ export default function StudioPage() {
                   value={histSort}
                   onChange={(e) => {
                     setHistSort(e.target.value as typeof histSort);
-                    setHistPage(0);
+                    setHistOffset(0);
                   }}
                   className="absolute inset-0 cursor-pointer opacity-0"
                   aria-label="排序"
@@ -4182,7 +4203,7 @@ export default function StudioPage() {
           </div>
           )}
 
-          <div
+          <div ref={historyViewport}
             className="min-h-0 flex-1 overflow-y-auto p-2"
           >
             {visibleHistory.length === 0 ? (
@@ -4190,12 +4211,12 @@ export default function StudioPage() {
                 {gallery.length ? "没有符合条件的记录" : "生成的图片会保存在这里"}
               </p>
             ) : (
-              <div key={`${histMode}-${histFilter}-${histSort}`} className="history-grid flex flex-col gap-2">
+              <div key={`${histMode}-${histFilter}-${histSort}`} className="history-grid flex flex-col gap-2" data-page-size={historyPageSize} data-columns={historyColumns}>
                 {(() => {
                   // 2026-11-05 (用户: 历史图片之间缺一块): columns stacked by picture height, no gaps.
-                  const heightOf = (g: GalleryItem) => (g.url ? aspects[g.id] ?? 1 : 1) + 0.05;
+                  const heightOf = (g: GalleryItem) => Math.max(60, historyCardWidth * (g.url ? aspects[g.id] ?? historyAspect : 1)) + 8;
                   // More columns as the panel is dragged wider.
-                  const nCols = !isDesktop ? 2 : rightPx >= 900 ? 4 : rightPx >= 620 ? 3 : 2;
+                  const nCols = historyColumns;
                   const place = (list: GalleryItem[]) => {
                     const h = Array(nCols).fill(0) as number[];
                     return list.map((g) => {
@@ -4382,8 +4403,12 @@ export default function StudioPage() {
                     </div>
                   );
                 })()}
+
+              </div>
+            )}
+          </div>
                 {phonePages > 1 && (
-                  <div className={`mt-3 flex items-center gap-2 px-1 pb-1 ${phone ? "justify-between" : "justify-center"}`}>
+                  <nav aria-label="历史分页" className={`flex shrink-0 items-center gap-2 border-t border-edge/[0.06] px-3 py-2 ${phone ? "justify-between" : "justify-center"}`}>
                     {(["上一页", "下一页"] as const).map((label, i) => {
                       const to = phonePage + (i ? 1 : -1);
                       const off = to < 0 || to >= phonePages;
@@ -4393,8 +4418,8 @@ export default function StudioPage() {
                           type="button"
                           disabled={off}
                           onClick={(e) => {
-                            setHistPage(to);
-                            const box = e.currentTarget.closest(".overflow-y-auto") as HTMLElement | null;
+                            setHistOffset(to * historyPageSize);
+                            const box = historyViewport.current;
                             if (phone) (e.currentTarget.closest("aside, section") as HTMLElement | null)?.scrollIntoView({ block: "start", behavior: "smooth" });
                             else box?.scrollTo({ top: 0 });
                           }}
@@ -4410,11 +4435,8 @@ export default function StudioPage() {
                         </Fragment>
                       ) : btn;
                     })}
-                  </div>
+                  </nav>
                 )}
-              </div>
-            )}
-          </div>
           {selMode && (
             <div className="animate-pop-in flex shrink-0 items-center gap-1.5 border-t border-edge/[0.06] px-3 py-2 text-[12px]">
               <span className="tabular-nums text-secondary">已选 {selected.size}</span>
