@@ -1208,6 +1208,7 @@ export function CanvasBoard({
   // ---- drop from history or the computer
   const onPictureDrag = (e: React.DragEvent) => {
     const data = e.dataTransfer;
+    if (data.types.includes("application/x-studio-ref-order")) return;
     const image = data.types.includes(dragType) || (data.types.includes("Files") &&
       (!data.items.length || Array.from(data.items).some((item) => item.kind === "file" && (!item.type || item.type.startsWith("image/")))));
     if (!image) return;
@@ -1224,6 +1225,7 @@ export function CanvasBoard({
     e.stopPropagation();
     setDropHover(false);
     setDropResource(null);
+    if (e.dataTransfer.types.includes("application/x-studio-ref-order")) return;
     const at = toWorld(e.clientX, e.clientY);
     const frameId = (e.target as Element).closest?.("[data-node-id]")?.getAttribute("data-node-id");
     const target = frameId ? nodesRef.current.find((n) => n.id === frameId) : undefined;

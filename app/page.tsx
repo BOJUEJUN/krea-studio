@@ -245,6 +245,10 @@ const HIST_CACHE_KEY = "krea-studio.history-cache";
 const ME_KEY = "krea-studio.me";
 /** Drag type for a history picture dropped into the compose box (2026-11-05 用户: 拖历史图进来没反应). */
 const HIST_DRAG = "application/x-studio-item";
+const REF_ORDER_DRAG = "application/x-studio-ref-order";
+const isReferenceReorder = (data: DataTransfer | null) => data?.types.includes(REF_ORDER_DRAG) ?? false;
+const isReferenceUpload = (data: DataTransfer | null) => !isReferenceReorder(data) &&
+  !!data && (data.types.includes("Files") || data.types.includes(HIST_DRAG));
 // 2026-11-05 (用户: 刷新后进度从 22% 掉回 11%): the running job's timing, so a reload continues the same bar.
 const TIMING_KEY = "krea-studio.pending-timing";
 const MODEL_KEY = "krea-studio.model";
@@ -1595,10 +1599,7 @@ export default function StudioPage() {
     window.addEventListener("paste", onPaste);
     let depth = 0;
     // Files from the computer, or a picture dragged from history (its id rides along).
-    const hasFiles = (e: DragEvent) => {
-      const t = Array.from(e.dataTransfer?.types ?? []);
-      return t.includes("Files") || t.includes(HIST_DRAG);
-    };
+    const hasFiles = (e: DragEvent) => isReferenceUpload(e.dataTransfer);
     const onEnter = (e: DragEvent) => {
       if (!hasFiles(e)) return;
       depth++;
@@ -1613,6 +1614,11 @@ export default function StudioPage() {
       depth = 0;
       setDragState("none");
     };
+    const onDragEnd = () => {
+      onEnd();
+      dragRefSlot.current = null;
+      setDropSlot(null);
+    };
     // Dropping outside the zone must not navigate the tab to the image.
     const onOver = (e: DragEvent) => {
       if (hasFiles(e)) e.preventDefault();
@@ -1621,14 +1627,14 @@ export default function StudioPage() {
     window.addEventListener("dragleave", onLeave);
     window.addEventListener("dragover", onOver);
     window.addEventListener("drop", onEnd, true);
-    window.addEventListener("dragend", onEnd, true);
+    window.addEventListener("dragend", onDragEnd, true);
     return () => {
       window.removeEventListener("paste", onPaste);
       window.removeEventListener("dragenter", onEnter);
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onEnd, true);
-      window.removeEventListener("dragend", onEnd, true);
+      window.removeEventListener("dragend", onDragEnd, true);
     };
   }, [addRefs]);
 
@@ -3196,15 +3202,34 @@ export default function StudioPage() {
             <div>
               <div
                 onDragOver={(e) => {
+                  if (isReferenceReorder(e.dataTransfer)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = "move";
+                    setDropSlot(null);
+                    return;
+                  }
+                  if (!isReferenceUpload(e.dataTransfer)) return;
                   e.preventDefault();
+                  e.stopPropagation();
                   e.dataTransfer.dropEffect = "copy";
                   if (dragState !== "zone") setDragState("zone");
                 }}
                 onDragLeave={(e) => {
+                  if (!isReferenceUpload(e.dataTransfer)) return;
                   if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragState("page");
                 }}
                 onDrop={(e) => {
+                  if (isReferenceReorder(e.dataTransfer)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dragRefSlot.current = null;
+                    setDropSlot(null);
+                    return;
+                  }
+                  if (!isReferenceUpload(e.dataTransfer)) return;
                   e.preventDefault();
+                  e.stopPropagation();
                   setDragState("none");
                   const sid = e.dataTransfer.getData(HIST_DRAG);
                   const fromHistory = sid ? gallery.find((x) => x.id === sid) : undefined;
@@ -3251,12 +3276,14 @@ export default function StudioPage() {
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => (
                       <span key={r.url + ":" + labels[i]} tabIndex={0} data-ref-slot={i} data-drop-slot={dropSlot === i || undefined}
                         draggable={labels.length > 1}
-                        onDragStart={(e) => { dragRefSlot.current = i; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("application/x-studio-ref-order", String(i)); e.stopPropagation(); }}
-                        onDragOver={(e) => { if (dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
-                        onDrop={(e) => { if (dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); reorderReference(dragRefSlot.current, i); dragRefSlot.current = null; setDropSlot(null); } }}
+                        onDragStart={(e) => { dragRefSlot.current = i; setDropSlot(null); setDragState("none"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData(REF_ORDER_DRAG, String(i)); e.stopPropagation(); }}
+                        onDragEnter={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); setDropSlot(i); } }}
+                        onDragOver={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
+                        onDragLeave={(e) => { if (isReferenceReorder(e.dataTransfer) && !e.currentTarget.contains(e.relatedTarget as Node)) setDropSlot(null); }}
+                        onDrop={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); reorderReference(dragRefSlot.current, i); dragRefSlot.current = null; setDropSlot(null); } }}
                         onDragEnd={() => { dragRefSlot.current = null; setDropSlot(null); }}
                         onKeyDown={(e) => { if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); reorderReference(i, i + (e.key === "ArrowLeft" ? -1 : 1)); } }}
-                        title={labels.length > 1 ? "拖动调整参考图顺序" : undefined} className="group/ref relative h-12 w-12 data-[drop-slot=true]:ring-2 data-[drop-slot=true]:ring-accent overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
+                        title={labels.length > 1 ? "拖动调整参考图顺序" : undefined} className="group/ref relative h-12 w-12 data-[drop-slot=true]:ring-2 data-[drop-slot=true]:ring-accent overflow-hidden rounded-lg border border-edge/[0.08] outline-none [&[draggable=true]]:cursor-grab [&[draggable=true]]:active:cursor-grabbing">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           // 用户 2026-11-11 (图1 显示 bug): "?raw=1" sent the whole original through the site (too big, failed);
