@@ -1,3 +1,5 @@
+import { normalizeMentions } from "@/lib/image-mentions";
+import { referenceNumbers, readNumbers, missingReference, providerMentions } from "@/lib/reference-numbers";
 import { randomUUID } from "node:crypto";
 import { pictureDraft, readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
 import { readKreaRegions, regionDescription, type KreaRegion } from "@/lib/krea-regions";
@@ -28,7 +30,7 @@ export async function POST(req: NextRequest) {
   const user = who.user;
   try {
     const form = await req.formData();
-    const prompt = String(form.get("prompt") || "").trim();
+    const prompt = normalizeMentions(String(form.get("prompt") || "")).trim();
     const file = form.get("image") as File | null;
     const denoiseRaw = Number(form.get("denoise") || 0.5);
     const denoise = Number.isFinite(denoiseRaw)
@@ -65,6 +67,17 @@ export async function POST(req: NextRequest) {
       if (!parsed) return NextResponse.json({ ok: false, error: "框选区域无效，请检查参考图、选框和提示词" }, { status: 400 });
       regions = parsed;
     }
+    let suppliedNumbers: number[] | undefined;
+    if (form.has("refNumbers")) {
+      try { suppliedNumbers = readNumbers(JSON.parse(String(form.get("refNumbers")))); } catch {}
+      if (!suppliedNumbers || suppliedNumbers.length !== 1 + extraFiles.length)
+        return NextResponse.json({ ok: false, error: "参考图编号与上传图片不一致，请重新打开节点" }, { status: 400 });
+    }
+    const numbers = referenceNumbers(suppliedNumbers, 1 + extraFiles.length);
+    regions = regions.map((r) => ({ ...r, note: normalizeMentions(r.note) }));
+    const missing = missingReference([prompt, ...regions.map((r) => r.note)].join("\n"), numbers);
+    if (missing !== undefined) return NextResponse.json({ ok: false, error: `缺少图${missing}，请重新连接或移除 @图${missing}` }, { status: 400 });
+    const requestRegions = regions.map((r) => ({ ...r, note: providerMentions(r.note, numbers) }));
     if (!prompt && !regions.some((r) => r.note)) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
     }
@@ -95,7 +108,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const images = gptImage ? [gptImage, ...extras] : undefined;
-    const modelPrompt = expandImageMentions(prompt, images?.length ?? 1);
+    const modelPrompt = expandImageMentions(providerMentions(prompt, numbers), images?.length ?? 1);
     const text = (k: string) => String(form.get(k) || "");
     const loraRaw = Number(form.get("lora"));
     const ratioLabel = regions.some((r) => r.mask) ? "auto" : text("editRatio");
@@ -113,14 +126,14 @@ export async function POST(req: NextRequest) {
         continue;
       }
       if (krea) {
-        tasks.push({ taskId: await createKreaTask({ ...shape, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1", regions }), seed: s });
+        tasks.push({ taskId: await createKreaTask({ ...shape, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), thinking: form.get("thinking") === "1", seed: s, negative: text("negative"), regional: form.get("regional") === "1", regions: requestRegions }), seed: s });
         continue;
       }
       if (hosted) {
         tasks.push({ taskId: await createRhHostedTask({ ...shape, model: model.id, prompt: modelPrompt, images, quality: text("quality"), res: text("res"), background: text("background") }), seed: s });
         continue;
       }
-      const nodeInfoList = buildWorkflowNodes(spec!, { prompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });
+      const nodeInfoList = buildWorkflowNodes(spec!, { prompt: modelPrompt, seed: s, denoise, imageFileName, lora: form.get("lora") ? loraRaw : undefined });
       tasks.push({ taskId: await createCustomTask({ workflowId: spec!.workflowId, nodeInfoList, fast: form.get("speed") === "fast" }), seed: s });
     }
 
@@ -150,6 +163,7 @@ export async function POST(req: NextRequest) {
       editorDraft ??= pictureDraft({ id: "", mode: "i2i", model: model.id, prompt, settings, seed });
       editorDraft.regions = regions;
     } else if (editorDraft) delete editorDraft.regions;
+    if (editorDraft) editorDraft.refNumbers = numbers;
     const workspace = readWorkspace(form.get("workspace"));
     const encodedLayout = form.get("canvasLayout");
     let canvasLayout;

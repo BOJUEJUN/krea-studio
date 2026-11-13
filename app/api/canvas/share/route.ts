@@ -1,3 +1,4 @@
+import { readNumbers } from "@/lib/reference-numbers";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 import { randomInt } from "crypto";
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
         y: Number(n.y) || 0,
         w: Math.max(20, Number(n.w) || 320),
         h: Math.max(20, Number(n.h) || 320),
+        refNumbers: readNumbers(n.refNumbers),
         from: Array.isArray(n.from) ? n.from.map(String).slice(0, 20) : undefined,
         nw: Number(n.nw) || undefined,
         nh: Number(n.nh) || undefined,

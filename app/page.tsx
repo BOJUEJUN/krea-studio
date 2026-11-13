@@ -13,7 +13,9 @@ import { FailedGeneration, UnavailableProgress, generationIssue, type Generation
 import { LoginView } from "./login-view";
 import { loadDraft, saveDraft } from "@/lib/draft";
 import { COMPARE_MODES, CompareView, type CompareMode } from "./compare-view";
-import { PictureMention } from "./picture-mention";
+import { referenceNumbers, missingReference } from "@/lib/reference-numbers";
+import { MentionEditor, type MentionEditorHandle } from "./mention-editor";
+import { normalizeMentions } from "@/lib/image-mentions";
 import { CanvasBoard, type BoardApi, type BoardJob, type BoardSource } from "./canvas-board";
 import {
   DEFAULT_MODEL,
@@ -53,26 +55,6 @@ type GalleryItem = EditMetadata & {
   fav?: boolean;
 };
 
-/**
- * Text with every "@图N" marked. 2026-11-10 (用户: @图片不要显示文字，要显示图片的小图): when picture N is known
- * the token shows that picture's thumbnail. The chip keeps the exact width of the hidden "@图N" text, so the
- * textarea underneath (which holds the real text) keeps its caret where the eye expects it.
- */
-function withMentions(text: string, thumbs: (string | null | undefined)[] = []) {
-  return text.split(/(@图\d+)/g).map((part, i) => {
-    if (!/^@图\d+$/.test(part)) return part;
-    const src = thumbs[Number(part.slice(2)) - 1];
-    if (!src)
-      // No picture N uploaded yet: say so instead of looking broken (用户: 怎么只有图1是图片).
-      return (
-        <span key={i} className="rounded bg-[#ff3b30]/10 text-danger underline decoration-dashed underline-offset-2" title={`还没放${part.slice(1)}，点 + 加图`}>
-          {part}
-        </span>
-      );
-    return <PictureMention key={i} token={part} src={src} />;
-  });
-}
-
 /** A reference file shrunk to a data URL, so it can live on the canvas (kept in browser storage). */
 async function fileToDataUrl(file: File, max = 1024): Promise<string> {
   const bmp = await createImageBitmap(file);
@@ -110,29 +92,6 @@ function Choice({ options, value, onPick, note }: { options: ([string, string] |
 /** 96 px model icon (the full cover is ~100 KB). */
 function iconOf(cover: string): string {
   return cover.replace("/models/", "/models/icon/") + "?v=2";
-}
-
-/** Pixel position of the caret inside a textarea (a hidden copy measures where the text before it ends). */
-function caretXY(el: HTMLTextAreaElement, pos: number): { x: number; y: number } {
-  const cs = getComputedStyle(el);
-  const div = document.createElement("div");
-  for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding", "border", "boxSizing", "whiteSpace", "wordWrap", "width"] as const) {
-    (div.style as any)[k] = (cs as any)[k];
-  }
-  div.style.width = el.clientWidth + "px";
-  div.style.position = "absolute";
-  div.style.visibility = "hidden";
-  div.style.whiteSpace = "pre-wrap";
-  div.style.overflowWrap = "break-word";
-  div.textContent = el.value.slice(0, pos);
-  const mark = document.createElement("span");
-  mark.textContent = "\u200b";
-  div.appendChild(mark);
-  document.body.appendChild(div);
-  const x = mark.offsetLeft;
-  const y = mark.offsetTop - el.scrollTop;
-  div.remove();
-  return { x: Math.min(x, el.clientWidth - 200), y };
 }
 
 /** Same picture as bytes on this site (for fetch(): download, 当参考图, 重新编辑); <img> loads go straight to COS. */
@@ -548,6 +507,11 @@ export default function StudioPage() {
   // 2026-11-05 (用户: 不分了，合成吧): one form — a reference image makes it 图生图, none makes it 文生图.
   const [mode, setMode] = useState<Mode>("t2i");
   const [model, setModel] = useState<ModelId>(DEFAULT_MODEL);
+  const preferredModel = useRef<ModelId>(DEFAULT_MODEL);
+  useEffect(() => {
+    const last = findModel(localStorage.getItem(MODEL_KEY));
+    if (last && !last.retired) { preferredModel.current = last.id; setModel(last.id); }
+  }, []);
   // A retired model (e.g. Nano Banana, 用户 2026-11-11) coming back from saved settings or an old picture → default.
   useEffect(() => {
     if (findModel(model)?.retired) setModel(DEFAULT_MODEL);
@@ -705,6 +669,10 @@ export default function StudioPage() {
   }, [boardMenu]);
   // In canvas mode the settings show once pictures are selected (用户: 点击图片之后才显示参数) or on request.
   const [canvasSel, setCanvasSel] = useState<string[]>([]);
+  const [inputNumbers, setInputNumbers] = useState<number[]>([]);
+  const [textInputs, setTextInputs] = useState<{ id: string; text: string }[]>([]);
+  const dragRefSlot = useRef<number | null>(null);
+  const [dropSlot, setDropSlot] = useState<number | null>(null);
   const [editingNode, setEditingNode] = useState("");
   const [multiOnly, setMultiOnly] = useState(false);
   const textSelRef = useRef(false);
@@ -942,13 +910,12 @@ export default function StudioPage() {
   }, []);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const promptRef = useRef<HTMLTextAreaElement>(null);
-  const promptMirrorRef = useRef<HTMLDivElement>(null);
+  const promptRef = useRef<MentionEditorHandle>(null);
   const [promptExpanded, setPromptExpanded] = useState(false);
   const [promptOverflows, setPromptOverflows] = useState(false);
   useEffect(() => { setPromptExpanded(false); }, [editingNode, canvasOn]);
   useEffect(() => {
-    const el = promptRef.current;
+    const el = promptRef.current?.element;
     if (!el || !canvasOn || !editingNode) return;
     const measure = () => {
       if (!el.clientWidth) return;
@@ -1175,29 +1142,11 @@ export default function StudioPage() {
 
   /** The first picture becomes the main reference; more go to the extra references (up to the model's limit). */
 
-  const [mentionOpen, setMentionOpen] = useState(false);
-  // 2026-11-06 (用户: @ 的菜单在我 @ 的旁边出来): where the caret is, inside the description box.
-  const [mentionAt, setMentionAt] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  /** Inserts "@图N " at the caret in the description. */
-  const insertMention = (n: number, replaceAt?: boolean) => {
-    const el = promptRef.current;
-    const tag = `@图${n} `;
-    const start = el?.selectionStart ?? prompt.length;
-    const end = el?.selectionEnd ?? prompt.length;
-    // When opened by typing "@", replace that "@".
-    const from = replaceAt && prompt[start - 1] === "@" ? start - 1 : start;
-    const next = prompt.slice(0, from) + tag + prompt.slice(end);
-    editPrompt(next);
-    setMentionOpen(false);
-    requestAnimationFrame(() => {
-      el?.focus();
-      const pos = from + tag.length;
-      el?.setSelectionRange(pos, pos);
-    });
-  };
+  const insertMention = (n: number) => promptRef.current?.insertReference(n);
 
   /** Removing the first picture promotes the next one. */
   const removeMainRef = () => {
+    setInputNumbers(referenceNumbers(inputNumbers, 1 + extraRefs.length).slice(1));
     const [next, ...others] = extraRefs;
     onPickFile(next ? next.file : null, true);
     setExtraRefs(others);
@@ -1283,6 +1232,7 @@ export default function StudioPage() {
       const limit = refLimitRef.current;
       if (limit <= 1) {
         onPickFile(files[0]);
+        setInputNumbers([]);
         setExtraRefs([]);
         setRegions([]);
         if (!quiet || files.length > 1)
@@ -1313,6 +1263,7 @@ export default function StudioPage() {
         const files = d.images.map((x) => new File([x.blob], x.name || "ref.png", { type: x.blob.type }));
         if (files[0]) onPickFile(files[0]);
         if (files.length > 1) setExtraRefs(files.slice(1).map((file) => ({ file, url: URL.createObjectURL(file) })));
+        if (!canvasOnRef.current) setInputNumbers(referenceNumbers(d.refNumbers, files.length));
         const savedRegions = readKreaRegions(d.regions, files.length);
         if (files.length && savedRegions?.length && !canvasOnRef.current) {
           setRegions(savedRegions);
@@ -1327,10 +1278,10 @@ export default function StudioPage() {
     if (!user || !draftReady.current) return;
     const t = window.setTimeout(() => {
       const files = [fileBlobRef.current, ...extraRefs.map((r) => r.file)].filter((f): f is File => !!f);
-      saveDraft(user, { prompt, regions: !canvasOn && hasBoxes ? regions : undefined, images: files.map((f) => ({ blob: f, name: f.name })) });
+      saveDraft(user, { prompt, refNumbers: referenceNumbers(inputNumbers, files.length), regions: !canvasOn && hasBoxes ? regions : undefined, images: files.map((f) => ({ blob: f, name: f.name })) });
     }, 400);
     return () => clearTimeout(t);
-  }, [user, prompt, preview, extraRefs, canvasOn, hasBoxes, regions]);
+  }, [user, prompt, preview, extraRefs, inputNumbers, canvasOn, hasBoxes, regions]);
 
   /** 2026-11-05 (用户: 历史加收藏，能筛选找到): star a picture; saved on the server. */
   const toggleFav = useCallback(
@@ -1536,6 +1487,7 @@ export default function StudioPage() {
 
   const reuseItem = useCallback((g: GalleryItem, refs = pictureRefs(g)) => {
     restorePictureParams(g);
+    setInputNumbers(referenceNumbers(g.editorDraft?.refNumbers, refs.length));
     replaceReferenceUrls(refs);
   }, [restorePictureParams, replaceReferenceUrls]);
 
@@ -1551,7 +1503,6 @@ export default function StudioPage() {
 
   const editHistoryItem = (g: GalleryItem) => {
     setOpenPanel(null);
-    setMentionOpen(false);
     if (canvasOnRef.current) {
       setRequestedEdit({ board: boardId, item: g });
     } else {
@@ -1907,7 +1858,8 @@ export default function StudioPage() {
   const editorMode = mode;
   const generate = useCallback(async (target?: RunFrame, urls: string[] = []) => {
     const editorDraft = target?.draft ?? { ...composeSnapRef.current, summary: liveSummaryRef.current };
-    const { model, prompt, res, quality, thinking, widthText, heightText, width, height, denoise, regional } = editorDraft;
+    const { model, res, quality, thinking, widthText, heightText, width, height, denoise, regional } = editorDraft;
+    const prompt = normalizeMentions(editorDraft.prompt);
     const mode = target ? (urls.length ? "i2i" : "t2i") : editorMode;
     const editRegions = model === "krea-3" && mode === "i2i" ? editorDraft.regions ?? [] : [];
     const reverse = editorDraft.reverseOn && !findModel(model)?.billing;
@@ -1927,6 +1879,10 @@ export default function StudioPage() {
     }
     const refAtClick = refVersion.current, loadingRefs = target ? null : refLoadRef.current;
     const firstFile = target ? null : fileBlobRef.current, extraFiles = target ? [] : extraRefs.map((r) => r.file);
+    const refCount = mode === "i2i" ? Math.min(paramsOf(model).maxRefs ?? 1, target ? urls.length : canvasOnRef.current ? canvasSel.length : preview ? 1 + extraFiles.length : 0) : 0;
+    const numbers = referenceNumbers(editorDraft.refNumbers, refCount);
+    const absent = missingReference([prompt, ...editRegions.map((r) => r.note)].join("\n"), numbers);
+    if (absent !== undefined) { const message = `缺少图${absent}，请重新连接或移除 @图${absent}`; setError(message); flash(message); return; }
     if (!target && mode === "i2i" && !loadingRefs && !firstFile) { setError("请先上传参考图"); return; }
     if (target && frameTimes.current.has(target.id)) return;
     const canvasLayout = target?.layout ?? (hasFrame ? canvasApi.current?.startFrame(new Set(frameTimes.current.keys()),
@@ -2019,6 +1975,7 @@ export default function StudioPage() {
       } else {
         const fd = new FormData();
         fd.append("prompt", finalPrompt);
+        fd.append("refNumbers", JSON.stringify(numbers));
         fd.append("editorDraft", JSON.stringify(editorDraft));
         if (editRegions.length) fd.append("regions", JSON.stringify(editRegions));
         fd.append("workspace", JSON.stringify(workspace));
@@ -2095,7 +2052,7 @@ export default function StudioPage() {
         setLoading(false);
       }
     }
-  }, [editorMode, readiness, preview, previewAspect, startStep, count, extraRefs, finishBatch, resumePending, boardId, workspaceAt, placeJobs, paintProgress, finishPending]);
+  }, [editorMode, readiness, preview, previewAspect, canvasSel.length, flash, startStep, count, extraRefs, finishBatch, resumePending, boardId, workspaceAt, placeJobs, paintProgress, finishPending]);
 
   // 2026-11-05 (用户: 生成时能继续排队): clicks while a picture is being made wait in line and run next,
   // with the settings on screen at that moment.
@@ -2404,7 +2361,8 @@ export default function StudioPage() {
   // Selected pictures become the references (in canvas mode only).
   // 用户 2026-11-11 (每个图片点进去的编辑是独立的): each picture (or group of pictures) on the board keeps its own
   // description and settings; a picture opened for the first time starts clean instead of reusing the last one's.
-  const composeSnap: CanvasDraft = { squareChosen, regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio: hasBrush ? "auto" : editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
+  const labels = referenceNumbers(inputNumbers, canvasOn ? canvasSel.length : preview ? 1 + extraRefs.length : 0);
+  const composeSnap: CanvasDraft = { refNumbers: labels, squareChosen, regions: hasBoxes ? regions : undefined, prompt, model, denoise, quality, res, seedText, negative, lora, width, height, widthText, heightText, polishLevel, polishVersion: 2, editRatio: hasBrush ? "auto" : editRatio, thinking, regional, background, complexity, reverseOn, reverseMode, summary: "" };
   const composeSnapRef = useRef(composeSnap);
   composeSnapRef.current = composeSnap;
   const composeMem = useRef(new Map<string, typeof composeSnap>());
@@ -2427,12 +2385,13 @@ export default function StudioPage() {
   const switchComposeRef = useRef(switchCompose);
   switchComposeRef.current = switchCompose;
   const onBoardSelection = useCallback(
-    (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean, draft?: CanvasDraft) => {
+    (urls: string[], nodeKey?: string, frame?: boolean, editOf?: string, restore?: boolean, draft?: CanvasDraft, numbers?: number[]) => {
       if (!canvasOnRef.current) return;
       const key = frame ? nodeKey ?? "" : "";
       switchComposeRef.current(key, editOf, restore, draft);
       setEditingNode(key);
       setCanvasSel(urls);
+      setInputNumbers(referenceNumbers(numbers, urls.length));
       setComposeOpen(false);
       replaceReferenceUrls(urls);
     },
@@ -2572,7 +2531,7 @@ export default function StudioPage() {
     const saved = n.draft ?? composeMem.current.get(n.id);
     const g = !saved ? gallery.find((item) => item.id === (n.gid ?? n.editOf)) : undefined;
     const draft = saved ?? g?.editorDraft ?? (g ? pictureDraft(g) : undefined);
-    const md = findModel(draft?.model ?? DEFAULT_MODEL) ?? MODELS[0];
+    const md = findModel(draft?.model ?? preferredModel.current) ?? MODELS[0];
     return { model: md.name, cover: md.cover, detail: draft ? summaryOf(draft, hasPictures || (!n.from && g?.mode === "i2i")) : "" };
   };
   // 用户 2026-11-10: 模型 + 两个参数 + 更多.
@@ -2640,10 +2599,27 @@ export default function StudioPage() {
     regionSession.images.length === regionImages.length && regionSession.images.every((src, i) => src === regionImages[i]);
   useEffect(() => { if (regionSession && !sessionValid) setRegionSession(null); }, [regionSession, sessionValid]);
   const pickModel = (id: ModelId) => {
+    preferredModel.current = id;
     setModel(id);
     setError(null);
     localStorage.setItem(MODEL_KEY, id);
   };
+
+  function reorderReference(from: number, to: number) {
+    if (from === to || !labels[from] || !labels[to]) return;
+    if (canvasOn && editingNode) { canvasApi.current?.reorderInput(from, to); return; }
+    const first = fileBlobRef.current;
+    if (!preview || !first) return;
+    const files = [{ file: first, url: preview }, ...extraRefs];
+    const order = files.map((_, i) => i);
+    order.splice(to, 0, order.splice(from, 1)[0]);
+    const sorted = order.map((i) => files[i]);
+    refVersion.current++; refLoadRef.current = null;
+    fileBlobRef.current = sorted[0].file;
+    setPreview(sorted[0].url); setExtraRefs(sorted.slice(1));
+    setInputNumbers(order.map((i) => labels[i]));
+    setRegions((list) => reindexRegions(list, (i) => order.indexOf(i)));
+  }
 
   return (
     <div className="flex h-[100dvh] w-full flex-col overflow-hidden">
@@ -2960,6 +2936,7 @@ export default function StudioPage() {
             {canvasOn && user && (
               <div className="absolute inset-0 z-20">
                 <CanvasBoard
+                  newDraft={() => ({ ...pictureDraft({ id: "", mode: "t2i", model: preferredModel.current, prompt: "" }), reverseOn: true })}
                   regionMarks={canvasOn && hasBoxes ? regions.reduce<Record<string, (KreaRegion & { color: string })[]>>((acc, r, idx) => {
                     const u = canvasSel[r.image_idx];
                     if (u) (acc[u] ??= []).push({ ...r, color: REGION_COLORS[idx % REGION_COLORS.length] });
@@ -3020,7 +2997,8 @@ export default function StudioPage() {
                   onShare={shareBoard}
                   prefs={boardPrefs}
                   summaryFor={boardSummary}
-                  onSelectionText={(t) => {
+                  onSelectionText={(t, inputs) => {
+                    setTextInputs(inputs);
                     // 用户 2026-11-11 (文本节点): a selected text node is the description; the box edits it.
                     textSelRef.current = t !== null;
                     if (t !== null) setPrompt((p) => (p === t ? p : t));
@@ -3271,13 +3249,20 @@ export default function StudioPage() {
                 {(
                   <div className="flex flex-wrap gap-1.5 px-2.5 pt-2.5">
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => (
-                      <span key={i + ":" + r.url} tabIndex={0} className="group/ref relative h-12 w-12 overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
+                      <span key={r.url + ":" + labels[i]} tabIndex={0} data-ref-slot={i} data-drop-slot={dropSlot === i || undefined}
+                        draggable={labels.length > 1}
+                        onDragStart={(e) => { dragRefSlot.current = i; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("application/x-studio-ref-order", String(i)); e.stopPropagation(); }}
+                        onDragOver={(e) => { if (dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
+                        onDrop={(e) => { if (dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); reorderReference(dragRefSlot.current, i); dragRefSlot.current = null; setDropSlot(null); } }}
+                        onDragEnd={() => { dragRefSlot.current = null; setDropSlot(null); }}
+                        onKeyDown={(e) => { if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) { e.preventDefault(); reorderReference(i, i + (e.key === "ArrowLeft" ? -1 : 1)); } }}
+                        title={labels.length > 1 ? "拖动调整参考图顺序" : undefined} className="group/ref relative h-12 w-12 data-[drop-slot=true]:ring-2 data-[drop-slot=true]:ring-accent overflow-hidden rounded-lg border border-edge/[0.08] outline-none">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           // 用户 2026-11-11 (图1 显示 bug): "?raw=1" sent the whole original through the site (too big, failed);
                           // the 48px tile only needs the small copy.
                           src={/^\/api\/(img|ref)\//.test(r.url) ? thumbOf(r.url.replace(/\?raw=1$/, ""), 160) : r.url}
-                          alt={`图${i + 1}`}
+                          draggable={false} alt={`图${labels[i]}`}
                           onLoad={
                             i === 0
                               ? (e) => {
@@ -3293,7 +3278,7 @@ export default function StudioPage() {
                           <button
                             type="button"
                             data-tip="查看大图"
-                            aria-label={`查看图${i + 1}`}
+                            aria-label={`查看图${labels[i]}`}
                             onClick={() => setViewer(r.url)}
                             className="flex h-5 w-5 items-center justify-center rounded-full text-white hover:bg-white/25"
                           >
@@ -3302,7 +3287,7 @@ export default function StudioPage() {
                           <button
                             type="button"
                             data-tip="换一张"
-                            aria-label={`换掉图${i + 1}`}
+                            aria-label={`换掉图${labels[i]}`}
                             onClick={() => {
                               replaceSlot.current = i;
                               fileRef.current?.click();
@@ -3315,15 +3300,15 @@ export default function StudioPage() {
                         {(modelParams.maxRefs ?? 1) > 1 ? (
                           <button
                             type="button"
-                            onClick={() => insertMention(i + 1)}
+                            onClick={() => insertMention(labels[i])}
                             data-tip="在描述里 @ 这张图" data-tip-start=""
                             className="absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white hover:bg-accent"
                           >
-                            图{i + 1}
+                            图{labels[i]}
                           </button>
                         ) : (
                           // One-picture models don't take @, so the label is only a label.
-                          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white">{canvasOn ? `图${i + 1}` : "参考图"}</span>
+                          <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-black/55 text-center text-[9px] leading-[14px] text-white">{canvasOn ? `图${labels[i]}` : "参考图"}</span>
                         )}
                         <button
                           type="button"
@@ -3331,16 +3316,25 @@ export default function StudioPage() {
                             if (canvasOn && editingNode) return canvasApi.current?.removeInput(i);
                             if (i === 0) return removeMainRef();
                             setRegions((list) => reindexRegions(list, (n) => n === i ? -1 : n > i ? n - 1 : n));
+                            setInputNumbers(labels.filter((_, slot) => slot !== i));
                             setExtraRefs((list) => list.filter((_, slot) => slot !== i - 1));
                           }}
                           className="absolute right-0.5 top-0.5 z-10 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
-                          aria-label={`删除图${i + 1}`}
+                          aria-label={`删除图${labels[i]}`}
                         >
                           ×
                         </button>
                       </span>
                     ))}
-                                      {(() => {
+                                      {canvasOn && editingNode && textInputs.map((t, i) => (
+                      <span key={t.id} title={t.text} className="relative grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-edge/10 bg-well text-secondary">
+                        <svg aria-hidden width="18" height="18" className="mb-2" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M2 4h12M2 8h12M2 12h7" /></svg>
+                        <span className="absolute bottom-0.5 text-[9px]">文本{textInputs.length > 1 ? i + 1 : ""}</span>
+                        <button type="button" aria-label={`断开文本${i + 1}`} title="断开文本" className="absolute right-0.5 top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-black/60 text-[9px] text-white"
+                          onClick={() => canvasApi.current?.removeTextInput(t.id)} >×</button>
+                      </span>
+                    ))}
+                    {(() => {
                       const limit = modelParams.maxRefs ?? 1;
                       const used = (preview ? 1 : 0) + Math.min(extraRefs.length, limit - 1);
                       const full = !!preview && used >= limit;
@@ -3407,101 +3401,20 @@ export default function StudioPage() {
                     })}
                   </div>
                 )}
-                <div className="relative">
-                  {prompt && (
-                    <div
-                      ref={promptMirrorRef}
-                      aria-hidden
-                      className="studio-text-mirror pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-ink"
-                    >
-                      {withMentions(prompt, [preview, ...extraRefs.map((r) => r.url)])}
-                      {"\n"}
-                    </div>
-                  )}
-                  <textarea
-                    ref={promptRef}
-                    id="studio-prompt"
-                    onScroll={(e) => {
-                      if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = e.currentTarget.scrollTop;
-                    }}
-                    value={prompt}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      editPrompt(v);
-                      const at = e.target.selectionStart ?? v.length;
-                      const open = !!preview && (modelParams.maxRefs ?? 1) > 1 && v[at - 1] === "@";
-                      if (open) setMentionAt(caretXY(e.target, at));
-                      setMentionOpen(open);
-                    }}
-                    onKeyDown={(e) => {
-                      if (mentionOpen && e.key === "Escape") setMentionOpen(false);
-                      // A picture token deletes as one piece (it shows as one thumbnail).
-                      if (e.key === "Backspace" && !e.metaKey && !e.altKey) {
-                        const el = e.currentTarget;
-                        const at = el.selectionStart ?? 0;
-                        if (at === el.selectionEnd) {
-                          const m = /@图\d+$/.exec(prompt.slice(0, at));
-                          if (m && m[0].length > 1) {
-                            e.preventDefault();
-                            const next = prompt.slice(0, at - m[0].length) + prompt.slice(at);
-                            editPrompt(next);
-                            requestAnimationFrame(() => el.setSelectionRange(at - m[0].length, at - m[0].length));
-                          }
-                        }
-                      }
-                      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                        e.preventDefault();
-                        startOrQueue();
-                      }
-                    }}
-                    rows={2}
-                    placeholder={
-                      mode === "t2i"
-                        ? "描述你想要的画面，或点 + 放参考图改图…"
-                        : hasBoxes ? "整张图的补充要求（选填）" : reverse
-                          ? `可不填，会根据参考图优化提示词${(modelParams.maxRefs ?? 1) > 1 ? "；输入 @ 指定哪张图" : ""}`
-                          : `想怎么改？${(modelParams.maxRefs ?? 1) > 1 ? "输入 @ 指定哪张图" : ""}`
-                    }
-                    className="studio-text-scroll relative block w-full resize-none bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed text-transparent caret-ink outline-none placeholder:text-hint selection:bg-accent/25"
-                    style={{
-                      // Grows with the text, 3 lines to ~22% of the screen (then scrolls).
-                      fieldSizing: "content",
-                      minHeight: 76,
-                      maxHeight: canvasOn ? (promptExpanded ? "48vh" : "calc(3lh + 1.5rem)") : "22vh",
-                      ...(prompt ? {} : { color: "var(--color-ink)" }),
-                    } as React.CSSProperties}
-                  />
-                  {mentionOpen && (
-                    <div
-                      className="animate-pop-in absolute z-40 flex gap-1 rounded-2xl bg-panel p-1 shadow-[0_10px_30px_rgba(0,0,0,0.14)] ring-1 ring-edge/[0.06]"
-                      style={{ left: Math.max(4, mentionAt.x), top: mentionAt.y + 22 }}
-                    >
-                      {[preview, ...extraRefs.map((r) => r.url)].filter(Boolean).map((url, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => insertMention(i + 1, true)}
-                          className="flex items-center gap-1.5 rounded-xl px-1.5 py-1 text-[12px] text-ink hover:bg-accent/10"
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={url as string} alt="" className="h-7 w-7 rounded-lg object-cover" />
-                          图{i + 1}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
+                <MentionEditor ref={promptRef} id="studio-prompt" key={canvasOn ? editingNode || "canvas" : "single"}
+                  value={prompt} onChange={editPrompt}
+                  pictures={regionImages.map((url, i) => ({ n: labels[i], url: /^\/api\/(img|ref)\//.test(url) ? thumbOf(url.replace(/\?raw=1$/, ""), 160) : url }))}
+                  onSubmit={startOrQueue}
+                  placeholder={mode === "t2i" ? "描述你想要的画面，或点 + 放参考图改图…" :
+                    hasBoxes ? "整张图的补充要求（选填）" : reverse ? "可不填，会根据参考图优化提示词；输入 @ 引用图片" : "想怎么改？输入 @ 引用图片"}
+                  className="relative block w-full bg-transparent px-3.5 py-3 text-[16px] md:text-[14px] leading-relaxed selection:bg-accent/25"
+                  style={{ minHeight: 76, maxHeight: canvasOn ? promptExpanded ? "48vh" : "calc(3lh + 1.5rem)" : "22vh" }} />
 
                 {canvasOn && promptOverflows && <button type="button" aria-expanded={promptExpanded} aria-controls="studio-prompt"
                   aria-label={promptExpanded ? "收起提示词" : "展开提示词"} title={promptExpanded ? "收起提示词" : "展开提示词"}
                   className="mb-1 ml-2 inline-flex h-7 w-7 items-center justify-center rounded-full text-secondary hover:bg-edge/[0.06] hover:text-ink"
                   onClick={() => {
-                    if (promptExpanded && promptRef.current) {
-                      promptRef.current.scrollTop = 0;
-                      if (promptMirrorRef.current) promptMirrorRef.current.scrollTop = 0;
-                    }
+                    if (promptExpanded && promptRef.current?.element) promptRef.current.element.scrollTop = 0;
                     setPromptExpanded((v) => !v);
                   }}>
                   <svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className={promptExpanded ? "rotate-180" : ""}><path d="m4 6 4 4 4-4" /></svg>

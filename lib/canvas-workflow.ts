@@ -1,3 +1,4 @@
+import { referenceNumbers } from "./reference-numbers";
 import { canvasImagePath, pictureRefs, pictureDraft, type CanvasLayout, type EditablePicture, type CanvasDraft } from "./edit-recipe";
 export { pictureDraft, readDraft, type CanvasDraft } from "./edit-recipe";
 import { reindexRegions } from "./krea-regions";
@@ -7,7 +8,7 @@ export type BoardNode = {
   issue?: GenerationIssue;
   id: string; gid?: string; src?: string; pendingGid?: string;
   x: number; y: number; w: number; h: number;
-  from?: string[]; fit?: boolean;
+  from?: string[]; refNumbers?: number[]; fit?: boolean;
   kind?: "text" | "gen" | "result" | "image";
   text?: string; nw?: number; nh?: number; editOf?: string; draft?: CanvasDraft;
 };
@@ -34,10 +35,29 @@ export function updateRegionInputs(before: BoardNode[], after: BoardNode[], urlO
       isGeneration(n) ? n.id : n.id + ":" + (n.gid ?? n.src ?? ""));
   }
   return after.map((frame) => {
-    const draft = frame.draft;
-    if (!draft?.regions?.length) return frame;
+    if (!isGeneration(frame)) return frame;
     const old = before.find((n) => n.id === frame.id);
-    if (!old || old.draft !== draft) return frame;
+    if (!old) return frame;
+    const previousIds = generationInputs(old, before).filter((n) => urlOf(n)).map((n) => n.id);
+    const currentIds = generationInputs(frame, after).filter((n) => urlOf(n)).map((n) => n.id);
+    if (previousIds.length !== currentIds.length || previousIds.some((id, i) => id !== currentIds[i])) {
+      const prior = referenceNumbers(old.refNumbers ?? old.draft?.refNumbers, previousIds.length);
+      const used = new Set(prior);
+      let next = Math.max(0, ...prior) + 1;
+      const numbers = currentIds.map((id, i) => {
+        const same = previousIds.indexOf(id);
+        if (same >= 0) return prior[same];
+        // An explicit in-place replacement inherits the slot. Appended references get a fresh number.
+        if (previousIds.length === currentIds.length && !currentIds.includes(previousIds[i])) return prior[i];
+        // An undo or reconnect can fill the old hole when the same source node returns.
+        while (used.has(next)) next++;
+        used.add(next);
+        return next++;
+      });
+      frame = { ...frame, refNumbers: numbers };
+    }
+    const draft = frame.draft;
+    if (!draft?.regions?.length || old.draft !== draft) return frame;
     const previous = imageKeys(old, before), current = imageKeys(frame, after);
     if (previous.length === current.length && previous.every((id, i) => id === current[i])) return frame;
     const regions = reindexRegions(draft.regions, (i) => current.indexOf(previous[i]));
@@ -127,6 +147,7 @@ export function restoreWorkflow(list: BoardNode[], g: EditablePicture, urlOf: (n
     return { list, frame: result, focus: [...inputs, result] };
   }
   const frame: BoardNode = { ...(result ?? { id: uid(), gid: g.id, ...box(frameBox), fit: true }), kind: "result", from, editOf: g.id };
+  if (g.editorDraft?.refNumbers) frame.refNumbers = [...g.editorDraft.refNumbers];
   if (snapshot) {
     frame.draft = g.editorDraft ?? pictureDraft(g);
     if (g.url) frame.src = g.url;

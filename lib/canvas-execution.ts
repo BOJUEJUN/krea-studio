@@ -13,8 +13,9 @@ export function planSelection(frames: BoardNode[], nodes: BoardNode[], urlOf: (n
   return frames.map((n) => {
     const gid = n.gid ?? n.editOf;
     const recipe = gid ? recipeOf(gid) : undefined;
-    const draft = n.draft ?? recipe?.editorDraft ?? (recipe ? pictureDraft(recipe) :
+    const settings = n.draft ?? recipe?.editorDraft ?? (recipe ? pictureDraft(recipe) :
       { ...pictureDraft({ id: n.id, mode: "t2i", model: DEFAULT_MODEL, prompt: "" }), reverseOn: true });
+    const draft = { ...settings, refNumbers: n.refNumbers ?? settings.refNumbers };
     const branch = generationInputs(n, nodes, selected);
     const texts = branch.filter((p) => p.kind === "text");
     const inputs: Input[] = branch.filter((p) => p.kind !== "text").map((p) => ({

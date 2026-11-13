@@ -1,3 +1,4 @@
+import { normalizeMentions } from "@/lib/image-mentions";
 import { readCanvasLayout, readDraft, readWorkspace } from "@/lib/edit-recipe";
 import { activeUser } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
@@ -20,7 +21,8 @@ export async function POST(req: NextRequest) {
   const user = who.user;
   try {
     const body = (await req.json()) as Record<string, unknown>;
-    const prompt = String(body.prompt || "").trim();
+    const prompt = normalizeMentions(String(body.prompt || "")).trim();
+    if (/@图\d+/.test(prompt)) return NextResponse.json({ ok: false, error: "提示词中有图片引用，请先连接参考图" }, { status: 400 });
     if (!prompt) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
     }

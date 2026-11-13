@@ -4,7 +4,7 @@
  */
 import type { KreaRegion } from "./krea-regions";
 
-export type Draft = { prompt: string; regions?: KreaRegion[]; images: { blob: Blob; name: string }[] };
+export type Draft = { prompt: string; refNumbers?: number[]; regions?: KreaRegion[]; images: { blob: Blob; name: string }[] };
 
 const DB = "ai-studio";
 const STORE = "draft";
