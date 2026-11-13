@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, useState, type PointerEvent as ReactPointe
 import { MAX_KREA_REGIONS, MAX_REGION_NOTE, REGION_COLORS as colors, type KreaRegion, type RegionBox } from "@/lib/krea-regions";
 import { BRUSH_LIMITS, brushBounds, rounded, transformBrush, type BrushMask, type BrushPoint, type BrushStroke } from "@/lib/brush-mask";
 import { BrushOverlay } from "./brush-overlay";
+import { referenceNumbers } from "@/lib/reference-numbers";
 
 type Point = { x: number; y: number };
 type Drag = { pointer: number; start: Point; region?: KreaRegion; action: "draw" | "move" | "resize" };
@@ -50,9 +51,10 @@ function boxAt(drag: Drag, p: Point): RegionBox {
   return { x: Math.min(start.x, p.x), y: Math.min(start.y, p.y), width: Math.abs(p.x - start.x), height: Math.abs(p.y - start.y) };
 }
 
-export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClose }: {
-  images: string[]; initial: KreaRegion[]; initialLabel?: string; onSave: (regions: KreaRegion[]) => void; onClose: () => void;
+export function KreaRegionEditor({ images, numbers, initial, initialLabel, onSave, onClose }: {
+  images: string[]; numbers?: number[]; initial: KreaRegion[]; initialLabel?: string; onSave: (regions: KreaRegion[]) => void; onClose: () => void;
 }) {
+  const labels = referenceNumbers(numbers, images.length);
   const dialog = useRef<HTMLDialogElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   const surface = useRef<HTMLDivElement>(null);
@@ -234,10 +236,10 @@ export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClos
         </div>
       </header>
       {images.length > 1 && <nav aria-label="选择标注图片" className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-edge/10 px-4 py-2">
-        {images.map((src, i) => <button key={i} type="button" aria-pressed={i === index} aria-label={`标注图${i + 1}`}
+        {images.map((src, i) => <button key={i} type="button" aria-pressed={i === index} aria-label={`标注图${labels[i]}`}
           onClick={() => { chooseTool("box"); setFailed(false); setIndex(i); setActive(null); }}
           className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${i === index ? "border-accent bg-accent/10 text-accent" : "border-transparent text-secondary hover:bg-well"}`}>
-          <img src={src} alt="" className="h-6 w-6 rounded object-cover" />图{i + 1}
+          <img src={src} alt="" className="h-6 w-6 rounded object-cover" />图{labels[i]}
         </button>)}
       </nav>}
       {index === 0 && <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge/10 px-3 py-1.5">
@@ -257,7 +259,7 @@ export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClos
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(0,1.2fr)_minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_260px] md:grid-rows-1">
         <div className="min-h-0 bg-page p-2 md:p-4">
           <div ref={stage} className="grid h-full w-full place-items-center">
-            <div ref={surface} data-region-surface="" aria-label={`图${index + 1}重绘画面`}
+            <div ref={surface} data-region-surface="" aria-label={`图${labels[index]}重绘画面`}
               style={scale ? { width: loaded.w * scale, height: loaded.h * scale } : { width: "100%", height: "100%" }}
               className={`relative touch-none select-none overflow-hidden ${tool === "box" ? "cursor-crosshair" : "cursor-none"}`}
               onPointerDown={start} onPointerUp={finish} onPointerCancel={cancelDrag} onLostPointerCapture={cancelDrag}
@@ -276,7 +278,7 @@ export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClos
                 const d = drag.current;
                 if (d?.pointer === e.pointerId && (d.region || !atLimit)) setSketch(boxAt(d, p));
               }}>
-              <img key={url} src={url} draggable={false} alt={`待修改的图${index + 1}`} className="pointer-events-none h-full w-full object-contain"
+              <img key={url} src={url} draggable={false} alt={`待修改的图${labels[index]}`} className="pointer-events-none h-full w-full object-contain"
                 onLoad={(e) => setLoaded({ url, w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })} onError={() => setFailed(true)} />
               {failed && <span role="alert" className="absolute inset-0 grid place-items-center bg-page text-sm text-secondary">图片加载失败，请重新打开</span>}
               {ready && displayed.map((r) => {
@@ -309,14 +311,14 @@ export function KreaRegionEditor({ images, initial, initialLabel, onSave, onClos
                 onClick={() => { if (tool === "box") add({ x: 0.25, y: 0.25, width: 0.5, height: 0.5 }); else { chooseTool("paint"); setActive(null); setHint("画下一笔以新建区域"); } }}
                 className="grid h-7 w-7 place-items-center rounded-full bg-well text-lg leading-none disabled:opacity-40">+</button>
             </div>
-            <p className="mt-1 text-xs text-secondary">{hint || (atLimit ? "最多 24 个区域" : index !== 0 ? "在图1的要求里用 @编号 引用素材。" : tool === "erase" ? "擦除当前区域里不想改的部分。" : tool === "paint" ? active ? `正在涂区域 @${active}，点 + 可另建区域。` : "涂出要修改的部分。" : "拖出一个框，写上这里怎么改。")}</p>
+            <p className="mt-1 text-xs text-secondary">{hint || (atLimit ? "最多 24 个区域" : index !== 0 ? `在图${labels[0]}的要求里用 @编号 引用素材。` : tool === "erase" ? "擦除当前区域里不想改的部分。" : tool === "paint" ? active ? `正在涂区域 @${active}，点 + 可另建区域。` : "涂出要修改的部分。" : "拖出一个框，写上这里怎么改。")}</p>
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-3 pb-3">
             {visible.map((r) => <div key={r.label} className={`rounded-xl border p-2 ${missing.includes(r.label) ? "border-danger/60" : r.label === active ? "border-accent/60" : "border-edge/10"}`}>
               <div className="mb-1 flex items-center justify-between">
                 <label htmlFor={`region-note-${r.label}`} className="flex items-center gap-2 text-xs font-semibold">
                   <span className="rounded px-1.5 py-0.5 text-white" style={{ background: colors[regions.indexOf(r) % colors.length] }}>@{r.label}</span>
-                  图{index + 1}
+                  图{labels[index]}
                 </label>
                 <button type="button" aria-label={`删除区域 ${r.label}`} title="删除区域" className="h-6 w-6 rounded-full text-sm text-secondary hover:bg-well"
                   onClick={() => remove(r.label)}>×</button>

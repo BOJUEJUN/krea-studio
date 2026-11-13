@@ -46,6 +46,6 @@ export function reindexRegions(regions: KreaRegion[], newIndex: (old: number) =>
   });
 }
 
-export function regionDescription(regions: KreaRegion[]) {
-  return regions.filter((r) => r.note).map((r) => `图${r.image_idx + 1} @${r.label}：${r.note}`).join("\n");
+export function regionDescription(regions: KreaRegion[], numbers?: number[]) {
+  return regions.filter((r) => r.note).map((r) => `图${numbers?.[r.image_idx] ?? r.image_idx + 1} @${r.label}：${r.note}`).join("\n");
 }

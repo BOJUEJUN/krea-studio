@@ -807,6 +807,7 @@ export default function StudioPage() {
   const [resultRef, setResultRef] = useState<string | null>(null);
   // Every reference of the latest batch (图1, 图2, …) so 对比 can pick which one.
   const [jobRefs, setJobRefs] = useState<string[]>([]);
+  const [jobRefNumbers, setJobRefNumbers] = useState<number[]>([]);
   const [compareIdx, setCompareIdx] = useState(0);
   const [resultSize, setResultSize] = useState<{ w: number; h: number } | null>(null);
   const [compareOn, setCompareOn] = useState(false);
@@ -1917,7 +1918,8 @@ export default function StudioPage() {
         aspect: mode === "i2i" && preview ? fixedEditAspect ?? previewAspect : width / height,
         reference: mode === "i2i" ? preview : null,
       });
-      setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)] : []);
+      setJobRefs(mode === "i2i" && preview ? [preview, ...extraRefs.map((r) => r.url)].slice(0, refCount) : []);
+      setJobRefNumbers(numbers);
       setCompareIdx(0);
       setLoading(true);
       // On phones the result sits below the form: bring it into view.
@@ -2025,7 +2027,7 @@ export default function StudioPage() {
         seed: t.seed,
         mode,
         model,
-        prompt: finalPrompt || regionDescription(editRegions),
+        prompt: finalPrompt || regionDescription(editRegions, numbers),
         refUrl: typeof data.refUrl === "string" ? data.refUrl : undefined,
         refUrls: data.refUrls, settings: data.settings, canvasLayout: canvasLayout ?? data.canvasLayout, canvasBoard, editorDraft, workspace,
         createdAt: now + i,
@@ -2133,7 +2135,9 @@ export default function StudioPage() {
   const modelParams = paramsOf(model);
   refLimitRef.current = modelParams.maxRefs ?? 1;
   /** References this result can be compared with: the whole batch's pictures, or the saved one from history. */
-  const compareRefs = currentId && batch.includes(currentId) && jobRefs.length ? jobRefs : currentItem ? pictureRefs(currentItem) : resultRef ? [resultRef] : [];
+  const compareJob = currentId && batch.includes(currentId) && jobRefs.length;
+  const compareRefs = compareJob ? jobRefs : currentItem ? pictureRefs(currentItem) : resultRef ? [resultRef] : [];
+  const compareNumbers = referenceNumbers(compareJob ? jobRefNumbers : currentItem?.editorDraft?.refNumbers, compareRefs.length);
   useEffect(() => {
     if (!user) return;
     try {
@@ -2620,11 +2624,16 @@ export default function StudioPage() {
     const order = files.map((_, i) => i);
     order.splice(to, 0, order.splice(from, 1)[0]);
     const sorted = order.map((i) => files[i]);
+    const numbers = order.map((i) => labels[i]);
+    const movedRegions = reindexRegions(regions, (i) => order.indexOf(i));
     refVersion.current++; refLoadRef.current = null;
     fileBlobRef.current = sorted[0].file;
     setPreview(sorted[0].url); setExtraRefs(sorted.slice(1));
-    setInputNumbers(order.map((i) => labels[i]));
-    setRegions((list) => reindexRegions(list, (i) => order.indexOf(i)));
+    setInputNumbers(numbers);
+    setRegions(movedRegions);
+    // Persist the reordered files and their identities together, without the typing debounce.
+    if (user) void saveDraft(user, { prompt, refNumbers: numbers, regions: movedRegions.length ? movedRegions : undefined,
+      images: sorted.map(({ file }) => ({ blob: file, name: file.name })) });
   }
 
   return (
@@ -2637,7 +2646,7 @@ export default function StudioPage() {
           网站已更新 · 点这里刷新
         </button>
       )}
-      {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} initial={regions} initialLabel={regionSession.label}
+      {regionSession && sessionValid && <KreaRegionEditor images={regionSession.images} numbers={labels} initial={regions} initialLabel={regionSession.label}
         onClose={() => setRegionSession(null)} onSave={(next) => {
           // 用户 2026-11-11 (深度思考点不开): boxes switch 深度思考 on once (more precise), but it stays the user's choice.
           if (next.length && !regions.length) setThinking(true);
@@ -3145,13 +3154,13 @@ export default function StudioPage() {
                     <button
                       key={url}
                       type="button"
-                      data-tip={`和图${i + 1}对比`}
+                      data-tip={`和图${compareNumbers[i]}对比`}
                       onClick={() => setCompareIdx(i)}
                       className={`relative h-8 w-8 overflow-hidden rounded-lg transition ${compareIdx === i ? "ring-2 ring-accent" : "opacity-60 hover:opacity-100"}`}
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={url} alt={`图${i + 1}`} className="h-full w-full object-cover" />
-                      <span className="absolute inset-x-0 bottom-0 bg-black/55 text-[8px] leading-[11px] text-white">图{i + 1}</span>
+                      <img src={url} alt={`图${compareNumbers[i]}`} className="h-full w-full object-cover" />
+                      <span className="absolute inset-x-0 bottom-0 bg-black/55 text-[8px] leading-[11px] text-white">图{compareNumbers[i]}</span>
                     </button>
                   ))}
                 </div>
@@ -3276,7 +3285,25 @@ export default function StudioPage() {
                     {[...(preview ? [{ url: preview, file: null as File | null }] : []), ...(canvasOn ? extraRefs : extraRefs.slice(0, Math.max(0, (modelParams.maxRefs ?? 1) - 1)))].map((r, i) => (
                       <span key={r.url + ":" + labels[i]} tabIndex={0} data-ref-slot={i} data-drop-slot={dropSlot === i || undefined}
                         draggable={labels.length > 1}
-                        onDragStart={(e) => { dragRefSlot.current = i; setDropSlot(null); setDragState("none"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData(REF_ORDER_DRAG, String(i)); e.stopPropagation(); }}
+                        onDragStart={(e) => {
+                          dragRefSlot.current = i; setDropSlot(null); setDragState("none");
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData(REF_ORDER_DRAG, String(i));
+                          // Capture only the picture, outside the composer's transformed / blurred layers.
+                          const image = e.currentTarget.querySelector("img");
+                          if (image?.complete && image.naturalWidth) {
+                            const ghost = document.createElement("canvas");
+                            const scale = 64 / Math.max(image.naturalWidth, image.naturalHeight);
+                            ghost.width = Math.max(1, Math.round(image.naturalWidth * scale));
+                            ghost.height = Math.max(1, Math.round(image.naturalHeight * scale));
+                            const ctx = ghost.getContext("2d");
+                            if (ctx) {
+                              ctx.drawImage(image, 0, 0, ghost.width, ghost.height);
+                              e.dataTransfer.setDragImage(ghost, ghost.width / 2, ghost.height / 2);
+                            }
+                          }
+                          e.stopPropagation();
+                        }}
                         onDragEnter={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); setDropSlot(i); } }}
                         onDragOver={(e) => { if (isReferenceReorder(e.dataTransfer) && dragRefSlot.current !== null) { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "move"; setDropSlot(i); } }}
                         onDragLeave={(e) => { if (isReferenceReorder(e.dataTransfer) && !e.currentTarget.contains(e.relatedTarget as Node)) setDropSlot(null); }}
@@ -3415,7 +3442,7 @@ export default function StudioPage() {
                             <RegionMark region={r} color={color} />
                           </button>
                           <span className="shrink-0 rounded px-1 text-[11px] font-bold leading-4 text-white" style={{ background: color }}>@{r.label}</span>
-                          {regionImages.length > 1 && <span className="shrink-0 text-[11px] text-muted">图{r.image_idx + 1}</span>}
+                          {regionImages.length > 1 && <span className="shrink-0 text-[11px] text-muted">图{labels[r.image_idx]}</span>}
                           <textarea rows={1} value={r.note} maxLength={600} placeholder={r.image_idx === 0 ? "这里怎么改？" : "这处素材怎么用？"}
                             aria-label={`选区 ${r.label} 的修改要求`}
                             onChange={(e) => { const note = e.target.value; setRegions((list) => list.map((v) => v.label === r.label ? { ...v, note } : v)); }}
@@ -3763,7 +3790,7 @@ export default function StudioPage() {
                       setRegions((list) => list.filter((r) => r.image_idx !== slot));
                       setExtraRefs((list) => list.map((x, j) => (j === slot - 1 ? { file: files[0], url: URL.createObjectURL(files[0]) } : x)));
                     }
-                    flash(`已换掉图${slot + 1}`);
+                    flash(`已换掉图${labels[slot]}`);
                     return;
                   }
                   addRefs(files);

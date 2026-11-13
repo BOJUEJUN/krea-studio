@@ -37,5 +37,9 @@ export async function saveDraft(user: string, draft: Draft): Promise<void> {
     const tx = db.transaction(STORE, "readwrite");
     if (!draft.prompt && !draft.images.length) tx.objectStore(STORE).delete(user);
     else tx.objectStore(STORE).put(draft, user);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
   } catch {}
 }

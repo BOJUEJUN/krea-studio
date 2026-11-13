@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     if (!prompt && !regions.some((r) => r.note)) {
       return NextResponse.json({ ok: false, error: "请输入提示词" }, { status: 400 });
     }
-    const recordedPrompt = prompt || regionDescription(regions);
+    const recordedPrompt = prompt || regionDescription(regions, numbers);
     const hosted = !!RH_HOSTED_MODELS[model.id] || krea;
     const spec = gptModel || hosted ? null : workflowFor(model.id, "i2i");
     if (!spec && !gptModel && !hosted) {
